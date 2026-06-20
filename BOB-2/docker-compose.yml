@@ -53,7 +53,8 @@ services:
     depends_on:
       - backend
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
+      # Must be the externally-accessible backend URL (browser-side requests).
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
 

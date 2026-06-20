@@ -25,6 +25,7 @@ async def lifespan(app: FastAPI):
             settings.validate_secret_key()
         except ValueError as e:
             logger.critical("Security validation failed: %s", e)
+            raise
 
     run_seed()
     try:
@@ -74,8 +75,8 @@ app.add_middleware(
     max_age=600,  # Cache preflight requests for 10 minutes
 )
 
-# Trusted host middleware — hosts driven by TRUSTED_HOSTS env var
-if settings.is_production:
+# Trusted host middleware — only active when TRUSTED_HOSTS is explicitly configured
+if settings.is_production and settings.TRUSTED_HOSTS:
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=settings.trusted_host_list,

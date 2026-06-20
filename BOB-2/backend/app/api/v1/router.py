@@ -1,0 +1,9 @@
+﻿from fastapi import APIRouter
+from app.api.v1.system import router as system_router
+from app.api.v1.auth import router as auth_router
+from app.api.v1.erp import router as erp_router
+
+api_router = APIRouter()
+api_router.include_router(system_router, prefix="/system", tags=["System"])
+api_router.include_router(auth_router, prefix="/auth", tags=["Security"])
+api_router.include_router(erp_router, prefix="/erp", tags=["ERP"])

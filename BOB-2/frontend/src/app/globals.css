@@ -1,0 +1,148 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: dark;
+  --wood-dark: #160b04;
+  --wood-mid: #5a2f12;
+  --wood-gold: #d9a441;
+  --wood-gold-soft: rgba(217, 164, 65, 0.28);
+  --panel: rgba(42, 20, 8, 0.74);
+  --panel-border: rgba(238, 190, 91, 0.38);
+}
+
+html[lang="ar"] * {
+  font-family: var(--font-cairo), sans-serif !important;
+}
+
+html[lang="en"] * {
+  font-family: var(--font-outfit), sans-serif !important;
+}
+
+
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  color: #fff5df;
+  font-family: Georgia, "Times New Roman", serif;
+  background:
+    radial-gradient(circle at 72% 20%, rgba(255, 203, 96, 0.18), transparent 22rem),
+    linear-gradient(90deg, rgba(16, 8, 3, 0.95), rgba(38, 18, 6, 0.93)),
+    repeating-linear-gradient(
+      90deg,
+      #2a1306 0px,
+      #4b240d 70px,
+      #6a3514 120px,
+      #2a1306 190px
+    );
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.wood-shell {
+  position: relative;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+.wood-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255,255,255,0.04), transparent 20%, rgba(0,0,0,0.28)),
+    repeating-linear-gradient(
+      7deg,
+      rgba(255,255,255,0.025) 0px,
+      transparent 2px,
+      transparent 18px
+    );
+  mix-blend-mode: soft-light;
+}
+
+.wood-panel {
+  border: 1px solid var(--panel-border);
+  background:
+    linear-gradient(145deg, rgba(102, 53, 19, 0.76), rgba(30, 13, 4, 0.82)),
+    radial-gradient(circle at top left, rgba(255, 208, 117, 0.20), transparent 18rem);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.18),
+    inset 0 -8px 18px rgba(0,0,0,0.28),
+    0 22px 70px rgba(0,0,0,0.48);
+  backdrop-filter: blur(12px);
+}
+
+.wood-card {
+  border: 1px solid var(--panel-border);
+  border-radius: 22px;
+  background:
+    linear-gradient(145deg, rgba(90, 45, 15, 0.74), rgba(23, 10, 3, 0.84)),
+    radial-gradient(circle at 20% 0%, rgba(255, 214, 128, 0.18), transparent 15rem);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.16),
+    0 18px 45px rgba(0,0,0,0.45);
+  padding: 24px;
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.wood-card:hover {
+  transform: translateY(-3px);
+  border-color: rgba(255, 209, 119, 0.72);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,0.20),
+    0 24px 65px rgba(0,0,0,0.58),
+    0 0 25px rgba(217,164,65,0.16);
+}
+
+.gold-text {
+  color: var(--wood-gold);
+}
+
+.gold-divider {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(217,164,65,0.9), transparent);
+}
+
+.green-lamp {
+  width: 210px;
+  height: 88px;
+  border-radius: 90px 90px 22px 22px;
+  background:
+    radial-gradient(circle at 50% 20%, #9cff73, transparent 26%),
+    linear-gradient(180deg, #1fd34d, #087225 70%, #034715);
+  box-shadow:
+    0 0 35px rgba(66,255,99,0.55),
+    0 35px 90px rgba(71,255,76,0.20);
+  border: 2px solid rgba(255,230,139,0.65);
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #34d399;
+  box-shadow: 0 0 20px rgba(52,211,153,0.95);
+}
+
+.fade-in {
+  animation: fadeIn 420ms ease both;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

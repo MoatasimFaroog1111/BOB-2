@@ -1,0 +1,27 @@
+# Web framework
+fastapi>=0.115.0,<1.0.0
+uvicorn>=0.30.0,<1.0.0
+starlette>=0.40.0,<1.0.0
+
+# Database
+sqlalchemy>=2.0.0,<3.0.0
+psycopg2-binary>=2.9.0,<3.0.0
+alembic>=1.13.0,<2.0.0
+
+# Authentication & Security
+python-jose[cryptography]>=3.3.0,<4.0.0
+bcrypt>=4.1.0,<5.0.0
+cryptography>=42.0.0,<45.0.0
+
+# Configuration
+pydantic>=2.7.0,<3.0.0
+pydantic-settings>=2.3.0,<3.0.0
+pydantic[email]>=2.7.0,<3.0.0
+
+# Form data / file uploads
+python-multipart>=0.0.9,<1.0.0
+
+# Document processing (OCR)
+PyMuPDF>=1.24.0,<2.0.0
+Pillow>=10.3.0,<12.0.0
+pytesseract>=0.3.10,<1.0.0

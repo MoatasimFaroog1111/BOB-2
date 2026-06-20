@@ -1,8 +1,10 @@
 import logging
+import os
+
 from sqlalchemy.orm import Session
 from app.db.database import SessionLocal
 from app.models.core import Organization, User
-from app.security.auth import hash_password
+from app.security.auth import hash_password, validate_password_strength
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,9 @@ def seed_db(db: Session) -> None:
             email="owner@guardian.local",
             full_name="System Owner",
             role="owner",
-            hashed_password=hash_password("admin123"),
+            hashed_password=hash_password(
+                os.environ.get("GUARDIAN_SEED_PASSWORD", "Owner@Seed#2026!")
+            ),
             is_active=True,
         )
         db.add(user)

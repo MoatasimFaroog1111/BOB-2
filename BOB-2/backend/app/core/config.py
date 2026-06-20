@@ -24,9 +24,10 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = "postgresql+psycopg2://guardian:guardian@localhost:5432/guardianai"
 
-    # SECRET_KEY must be at least 32 characters for security
-    # In production, this should be a strong random key (use: openssl rand -hex 64)
-    SECRET_KEY: str = "CHANGE_ME_IN_PRODUCTION_MIN_32_CHARS_LONG"
+    # SECRET_KEY must be at least 32 characters for security.
+    # In production set a strong random key (use: openssl rand -hex 64).
+    # In local/dev mode a random key is generated each startup when unset.
+    SECRET_KEY: str = ""
 
     # Token configuration
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30  # Reduced from 60 for better security
@@ -67,11 +68,21 @@ class Settings(BaseSettings):
                     "SECRET_KEY must be at least 32 characters long in production. "
                     "Generate a secure key with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
                 )
-            if self.SECRET_KEY in ["CHANGE_ME", "CHANGE_ME_IN_PRODUCTION_MIN_32_CHARS_LONG", "your-secret-key", "secret"]:
+            if self.SECRET_KEY in ["", "CHANGE_ME", "CHANGE_ME_IN_PRODUCTION_MIN_32_CHARS_LONG", "your-secret-key", "secret"]:
                 raise ValueError(
                     "SECRET_KEY cannot use default values in production. "
                     "Please set a strong random secret key."
                 )
+
+    def model_post_init(self, __context: object) -> None:
+        if not self.SECRET_KEY:
+            if self.is_production:
+                raise ValueError(
+                    "SECRET_KEY must be set in production. "
+                    "Generate one with: openssl rand -hex 64"
+                )
+            # Auto-generate a random key for local/dev mode
+            object.__setattr__(self, "SECRET_KEY", generate_secret_key())
 
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),

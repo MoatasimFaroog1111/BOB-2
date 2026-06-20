@@ -79,10 +79,6 @@ export default function TeamPage() {
   const [showPartnerDropdown, setShowPartnerDropdown] = useState(false);
   const [activeRegisterFile, setActiveRegisterFile] = useState<any>(null);
 
-  React.useEffect(() => {
-    fetchPartners();
-  }, []);
-
   const fetchPartners = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/erp/partners`);
@@ -95,7 +91,11 @@ export default function TeamPage() {
     }
   };
 
-  const getFileTypeByName = (name: string): string => {
+  React.useEffect(() => {
+    fetchPartners();
+  }, []);
+
+  const _getFileTypeByName = (name: string): string => {
     const ext = name.split(".").pop()?.toLowerCase();
     if (["txt", "md"].includes(ext || "")) return "text/plain";
     if (["json"].includes(ext || "")) return "application/json";
@@ -344,7 +344,7 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
               matchedMoves: null,
             });
           }
-        } catch (e) {
+        } catch {
           results.push({
             name: file.name,
             content: `حدث خطأ أثناء قراءة الملف: ${file.name}`,
@@ -1029,7 +1029,7 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
                 </div>
               ) : readResults[activeFileIndex]?.matchedMoves === null ? (
                 <div className="mb-4 p-3.5 rounded-xl border border-white/5 bg-white/5 text-[10px] text-white/40 select-none">
-                  ℹ️ يرجى الضغط على زر "مطابقة وإرفاق" للبحث عن المعاملات المطابقة في Odoo.
+                  ℹ️ يرجى الضغط على زر &quot;مطابقة وإرفاق&quot; للبحث عن المعاملات المطابقة في Odoo.
                 </div>
               ) : readResults[activeFileIndex]?.matchedMoves && readResults[activeFileIndex].matchedMoves!.length === 0 ? (
                 <div className="mb-4 p-4 rounded-xl border border-red-500/20 bg-red-500/5 text-[11px] text-white/80 select-none flex justify-between items-center gap-3">

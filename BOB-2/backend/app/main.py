@@ -9,10 +9,12 @@ from app.core.logging import configure_logging
 from app.middleware.audit import AuditLogMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 
+import logging
 from contextlib import asynccontextmanager
 from app.db.seed import run_seed
 
 configure_logging()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -22,21 +24,20 @@ async def lifespan(app: FastAPI):
         try:
             settings.validate_secret_key()
         except ValueError as e:
-            print(f"[CRITICAL] Security validation failed: {e}")
-            # Don't exit, but log prominently
+            logger.critical("Security validation failed: %s", e)
 
     run_seed()
     try:
         from app.services.telegram_bot import start_telegram_bot
         start_telegram_bot()
     except Exception as start_err:
-        print(f"[Lifespan Startup] Failed to start Telegram bot: {start_err}")
+        logger.warning("Failed to start Telegram bot: %s", start_err)
     yield
     try:
         from app.services.telegram_bot import stop_telegram_bot
         stop_telegram_bot()
     except Exception as stop_err:
-        print(f"[Lifespan Shutdown] Failed to stop Telegram bot: {stop_err}")
+        logger.warning("Failed to stop Telegram bot: %s", stop_err)
 
 
 app = FastAPI(
@@ -88,10 +89,7 @@ if settings.is_production:
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     """Global exception handler that doesn't expose sensitive information."""
-    # Log the full error internally
-    import logging
-    logger = logging.getLogger(__name__)
-    logger.error(f"Unhandled exception at {request.url.path}: {exc}", exc_info=True)
+    logger.error("Unhandled exception at %s: %s", request.url.path, exc, exc_info=True)
 
     # Return generic error to client
     return JSONResponse(

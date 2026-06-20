@@ -51,11 +51,6 @@ export default function AuditPage() {
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [searched, setSearched] = useState(false);
 
-  // Fetch accounts on mount
-  useEffect(() => {
-    fetchAccounts();
-  }, []);
-
   const fetchAccounts = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/erp/accounts`);
@@ -67,6 +62,11 @@ export default function AuditPage() {
       console.error("Failed to fetch accounts:", err);
     }
   };
+
+  // Fetch accounts on mount
+  useEffect(() => {
+    fetchAccounts();
+  }, []);
 
   const handleDetectAttachments = async () => {
     setLoading(true);
@@ -633,7 +633,7 @@ export default function AuditPage() {
           <span className="text-3xl mb-3">📁</span>
           <h3 className="text-sm font-bold text-gray-300">لم يتم إجراء عملية الكشف بعد</h3>
           <p className="text-xs text-gray-500 mt-1 max-w-sm">
-            حدد خيارات التصفية بالأعلى (النطاق الزمني والحساب المحاسبي)، ثم اضغط على زر "الكشف عن المرفقات" للبحث والتصنيف التلقائي.
+            حدد خيارات التصفية بالأعلى (النطاق الزمني والحساب المحاسبي)، ثم اضغط على زر &quot;الكشف عن المرفقات&quot; للبحث والتصنيف التلقائي.
           </p>
         </div>
       )}

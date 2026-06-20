@@ -80,7 +80,7 @@ export default function DocumentIntelligencePage() {
   // Odoo Structural Data
   const [accounts, setAccounts] = useState<OdooAccount[]>([]);
   const [partners, setPartners] = useState<OdooPartner[]>([]);
-  const [loadingKB, setLoadingKB] = useState(false);
+  const [, setLoadingKB] = useState(false);
   
   // Odoo Submission Modal States
   const [showOdooModal, setShowOdooModal] = useState(false);
@@ -401,9 +401,9 @@ export default function DocumentIntelligencePage() {
             const rIdx = idx + 1;
             if (rIdx >= DEFAULT_ROWS) return;
 
-            let accCode = "";
-            let accName = line.account_name || "";
+            const accName = line.account_name || "";
             const matchCode = accName.match(/^(\d+)/);
+            let accCode = "";
             if (matchCode) {
               accCode = matchCode[1];
             } else {
@@ -1906,7 +1906,7 @@ export default function DocumentIntelligencePage() {
                     💡 <strong>طريقة الكتابة/اللصق:</strong>
                     <ul className="list-disc list-inside mt-1.5 flex flex-col gap-1 pr-2">
                       <li>تستطيع لصق صفوف جدول من إكسيل مباشرة في المربع أدناه.</li>
-                      <li>أو اكتب نصاً حراً مثل: <i>"التاريخ: 2026-06-07، من حساب 101001 شريك شركة الرياض مدين 5000 إلى حساب 102014 دائن 5000"</i>.</li>
+                      <li>أو اكتب نصاً حراً مثل: <i>&quot;التاريخ: 2026-06-07، من حساب 101001 شريك شركة الرياض مدين 5000 إلى حساب 102014 دائن 5000&quot;</i>.</li>
                     </ul>
                   </>
                 ) : (
@@ -1914,7 +1914,7 @@ export default function DocumentIntelligencePage() {
                     💡 <strong>Format Guide:</strong>
                     <ul className="list-disc list-inside mt-1.5 flex flex-col gap-1 pl-2 text-left">
                       <li>You can paste table rows copied directly from Excel.</li>
-                      <li>Or write free-text: <i>"Date: 2026-06-07, Account 101001 debit 5000, Account 102014 credit 5000"</i>.</li>
+                      <li>Or write free-text: <i>&quot;Date: 2026-06-07, Account 101001 debit 5000, Account 102014 credit 5000&quot;</i>.</li>
                     </ul>
                   </>
                 )}

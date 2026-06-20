@@ -23,10 +23,6 @@ export default function ERPDiscoveryPage() {
   const [message, setMessage] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
 
-  useEffect(() => {
-    fetchDiscoveryData();
-  }, []);
-
   const fetchDiscoveryData = async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/erp/discovery`);
@@ -42,6 +38,10 @@ export default function ERPDiscoveryPage() {
       setStatus("idle");
     }
   };
+
+  useEffect(() => {
+    fetchDiscoveryData();
+  }, []);
 
   const handleTriggerDiscovery = async () => {
     setStatus("discovering");

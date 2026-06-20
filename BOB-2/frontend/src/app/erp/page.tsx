@@ -27,10 +27,17 @@ export default function ERPConnectionPage() {
   const [telegramSuccessMsg, setTelegramSuccessMsg] = useState("");
   const [telegramErrorMsg, setTelegramErrorMsg] = useState("");
 
-  useEffect(() => {
-    fetchSavedConnection();
-    fetchTelegramConfig();
-  }, []);
+  const fetchCompanyInfo = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/erp/company-info-saved`);
+      if (response.ok) {
+        const data = await response.json();
+        setCompanyInfo(data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch company info:", err);
+    }
+  };
 
   const fetchSavedConnection = async () => {
     try {
@@ -63,6 +70,11 @@ export default function ERPConnectionPage() {
       console.error("Failed to fetch Telegram configuration:", err);
     }
   };
+
+  useEffect(() => {
+    fetchSavedConnection();
+    fetchTelegramConfig();
+  }, []);
 
   const handleSaveTelegram = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -116,18 +128,6 @@ export default function ERPConnectionPage() {
       setTelegramErrorMsg(err.message || "فشل التعطيل.");
     } finally {
       setTelegramLoading(false);
-    }
-  };
-
-  const fetchCompanyInfo = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/erp/company-info-saved`);
-      if (response.ok) {
-        const data = await response.json();
-        setCompanyInfo(data);
-      }
-    } catch (err) {
-      console.error("Failed to fetch company info:", err);
     }
   };
 

@@ -18,6 +18,9 @@ pydantic>=2.7.0,<3.0.0
 pydantic-settings>=2.3.0,<3.0.0
 pydantic[email]>=2.7.0,<3.0.0
 
+# Form data / file uploads
+python-multipart>=0.0.9,<1.0.0
+
 # Document processing (OCR)
 PyMuPDF>=1.24.0,<2.0.0
 Pillow>=10.3.0,<12.0.0

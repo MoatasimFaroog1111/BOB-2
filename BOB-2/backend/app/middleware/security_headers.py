@@ -6,6 +6,8 @@ from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
+from app.core.config import settings
+
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all HTTP responses."""
@@ -29,10 +31,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
         # Content Security Policy to prevent XSS and data injection
-        # In production, customize this based on your specific needs
         csp = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "  # Allow inline scripts for dev
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; "
             "font-src 'self'; "
@@ -56,9 +57,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
         response.headers["Permissions-Policy"] = permissions
 
-        # Strict Transport Security (only in production with HTTPS)
-        # Uncomment when HTTPS is enforced:
-        # response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains; preload"
+        # HSTS — enabled automatically when REQUIRE_HTTPS is true
+        if settings.REQUIRE_HTTPS:
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains; preload"
+            )
 
         # Hide server information
         response.headers["Server"] = "GuardianAI"

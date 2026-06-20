@@ -57,14 +57,10 @@ app.add_middleware(SecurityHeadersMiddleware)
 # Audit logging middleware
 app.add_middleware(AuditLogMiddleware)
 
-# CORS middleware with restricted settings
+# CORS middleware — origins driven by FRONTEND_ORIGIN + CORS_ORIGINS env vars
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        settings.FRONTEND_ORIGIN,
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=[
@@ -78,11 +74,11 @@ app.add_middleware(
     max_age=600,  # Cache preflight requests for 10 minutes
 )
 
-# Trusted host middleware (in production, restrict to specific hosts)
+# Trusted host middleware — hosts driven by TRUSTED_HOSTS env var
 if settings.is_production:
     app.add_middleware(
         TrustedHostMiddleware,
-        allowed_hosts=["yourdomain.com", "*.yourdomain.com", "localhost"],
+        allowed_hosts=settings.trusted_host_list,
     )
 
 

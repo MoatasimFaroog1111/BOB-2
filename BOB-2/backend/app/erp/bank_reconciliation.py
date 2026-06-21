@@ -260,13 +260,38 @@ def parse_file(file_path: str) -> List[Transaction]:
                 return parse_xls_file(file_path)
 
 
-def reconcile(statement_path: str, ledger_path: str) -> ReconciliationResult:
-    """
-    Compare bank statement and bank ledger transactions.
-    Returns transactions unique to each side and matched transactions.
-    """
-    statement_txns = parse_file(statement_path)
-    ledger_txns = parse_file(ledger_path)
+def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
+    """Convert Odoo account.move.line records to Transaction objects."""
+    transactions = []
+    for idx, line in enumerate(move_lines):
+        date_val = str(line.get("date", ""))
+        name = line.get("name") or ""
+        ref = line.get("ref") or ""
+        description = name if name else ref
+        if name and ref and name != ref:
+            description = f"{name} - {ref}"
+
+        debit = float(line.get("debit", 0))
+        credit = float(line.get("credit", 0))
+        amount = round(debit - credit, 2)
+
+        if amount == 0.0:
+            continue
+
+        transactions.append(Transaction(
+            date=_normalize_date(date_val),
+            description=description,
+            amount=amount,
+            row_number=idx + 1,
+        ))
+    return transactions
+
+
+def _run_matching(
+    statement_txns: List[Transaction],
+    ledger_txns: List[Transaction],
+) -> ReconciliationResult:
+    """Core matching logic shared by all reconcile entry points."""
 
     # Track which ledger transactions have been matched
     ledger_matched = [False] * len(ledger_txns)
@@ -315,3 +340,28 @@ def reconcile(statement_path: str, ledger_path: str) -> ReconciliationResult:
         statement_count=len(statement_txns),
         ledger_count=len(ledger_txns),
     )
+
+
+def reconcile(statement_path: str, ledger_path: str) -> ReconciliationResult:
+    """Compare bank statement file vs bank ledger file."""
+    statement_txns = parse_file(statement_path)
+    ledger_txns = parse_file(ledger_path)
+    return _run_matching(statement_txns, ledger_txns)
+
+
+def get_date_range(transactions: List[Transaction]) -> tuple:
+    """Extract min/max dates from transactions for Odoo query scoping."""
+    dates = [t.date for t in transactions if t.date and t.date >= "1900"]
+    if not dates:
+        return None, None
+    return min(dates), max(dates)
+
+
+def reconcile_with_odoo_data(
+    statement_path: str,
+    odoo_move_lines: list,
+) -> ReconciliationResult:
+    """Compare bank statement file vs Odoo bank account transactions."""
+    statement_txns = parse_file(statement_path)
+    ledger_txns = transactions_from_odoo_move_lines(odoo_move_lines)
+    return _run_matching(statement_txns, ledger_txns)

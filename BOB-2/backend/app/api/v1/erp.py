@@ -17,7 +17,7 @@ from app.security.encryption import encrypt_value, decrypt_value
 from app.erp.discovery import run_discovery_orchestrator, load_financial_kb
 from app.erp.document_ai import GuardianDocumentAI
 from app.erp.odoo_cache import get_cached, set_cached, invalidate as invalidate_odoo_cache
-from app.erp.bank_reconciliation import reconcile as bank_reconcile
+from app.erp.bank_reconciliation import reconcile as bank_reconcile, reconcile_with_odoo_data, parse_file as parse_statement_file, get_date_range, transactions_from_odoo_move_lines, _run_matching
 
 router = APIRouter()
 
@@ -3073,24 +3073,46 @@ def save_telegram_config(payload: TelegramConfigRequest):
 @router.post("/bank-reconciliation")
 def bank_reconciliation(
     statement: UploadFile = File(...),
-    ledger: UploadFile = File(...),
+    db: Session = Depends(get_db),
 ):
-    """Compare bank statement vs bank ledger and return discrepancies."""
+    """Compare bank statement vs Odoo bank account and return discrepancies."""
     import tempfile
     statement_path = ""
-    ledger_path = ""
     try:
+        # Save uploaded statement to temp file
         stmt_suffix = Path(statement.filename).suffix if statement.filename else ".csv"
         with tempfile.NamedTemporaryFile(delete=False, suffix=stmt_suffix) as f:
             shutil.copyfileobj(statement.file, f)
             statement_path = f.name
 
-        ledger_suffix = Path(ledger.filename).suffix if ledger.filename else ".csv"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=ledger_suffix) as f:
-            shutil.copyfileobj(ledger.file, f)
-            ledger_path = f.name
+        # Load Odoo connection and fetch bank transactions
+        conn = db.query(ERPConnection).filter(
+            ERPConnection.organization_id == 1,
+            ERPConnection.is_active == True
+        ).first()
+        if not conn:
+            raise ValueError("لا يوجد اتصال نشط بنظام ERP. يرجى إعداد اتصال Odoo أولاً من صفحة ERP.")
 
-        result = bank_reconcile(statement_path, ledger_path)
+        secret_data = json.loads(decrypt_value(conn.encrypted_secret_ref))
+        erp = get_erp_provider(
+            provider=conn.provider,
+            url=conn.base_url,
+            db=conn.database_name or "",
+            username=secret_data.get("username", ""),
+            password=secret_data.get("password", ""),
+        )
+
+        # Parse statement first to extract date range for scoped Odoo query
+        statement_txns = parse_statement_file(statement_path)
+        date_from, date_to = get_date_range(statement_txns)
+
+        odoo_move_lines = erp.fetch_bank_transactions(
+            date_from=date_from,
+            date_to=date_to,
+        )
+        ledger_txns = transactions_from_odoo_move_lines(odoo_move_lines)
+        result = _run_matching(statement_txns, ledger_txns)
+
         return {
             "status": "success",
             "statement_only": [t.model_dump() for t in result.statement_only],
@@ -3110,5 +3132,3 @@ def bank_reconciliation(
     finally:
         if statement_path and os.path.exists(statement_path):
             os.remove(statement_path)
-        if ledger_path and os.path.exists(ledger_path):
-            os.remove(ledger_path)

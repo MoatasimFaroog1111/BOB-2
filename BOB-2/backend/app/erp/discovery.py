@@ -2,14 +2,13 @@ import json
 import os
 import logging
 from typing import Any
+from app.core.config import settings
 from app.erp.providers.odoo import OdooProvider
 
 logger = logging.getLogger(__name__)
 
 # Path to local knowledge base file
-STORAGE_DIR = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..", "..", "storage")
-)
+STORAGE_DIR = str(settings.storage_path)
 KB_FILE_PATH = os.path.join(STORAGE_DIR, "financial_kb_org_1.json")
 
 

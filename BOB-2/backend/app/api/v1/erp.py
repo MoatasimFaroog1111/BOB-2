@@ -17,7 +17,7 @@ from app.security.encryption import encrypt_value, decrypt_value
 from app.erp.discovery import run_discovery_orchestrator, load_financial_kb
 from app.erp.document_ai import GuardianDocumentAI
 from app.erp.odoo_cache import get_cached, set_cached, invalidate as invalidate_odoo_cache
-from app.erp.bank_reconciliation import reconcile as bank_reconcile, reconcile_with_odoo_data
+from app.erp.bank_reconciliation import reconcile as bank_reconcile, reconcile_with_odoo_data, parse_file as parse_statement_file, get_date_range, transactions_from_odoo_move_lines, _run_matching
 
 router = APIRouter()
 
@@ -3102,8 +3102,16 @@ def bank_reconciliation(
             password=secret_data.get("password", ""),
         )
 
-        odoo_move_lines = erp.fetch_bank_transactions()
-        result = reconcile_with_odoo_data(statement_path, odoo_move_lines)
+        # Parse statement first to extract date range for scoped Odoo query
+        statement_txns = parse_statement_file(statement_path)
+        date_from, date_to = get_date_range(statement_txns)
+
+        odoo_move_lines = erp.fetch_bank_transactions(
+            date_from=date_from,
+            date_to=date_to,
+        )
+        ledger_txns = transactions_from_odoo_move_lines(odoo_move_lines)
+        result = _run_matching(statement_txns, ledger_txns)
 
         return {
             "status": "success",

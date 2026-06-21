@@ -275,7 +275,7 @@ def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
         credit = float(line.get("credit", 0))
         amount = round(debit - credit, 2)
 
-        if amount == 0.0 and not description:
+        if amount == 0.0:
             continue
 
         transactions.append(Transaction(
@@ -347,6 +347,14 @@ def reconcile(statement_path: str, ledger_path: str) -> ReconciliationResult:
     statement_txns = parse_file(statement_path)
     ledger_txns = parse_file(ledger_path)
     return _run_matching(statement_txns, ledger_txns)
+
+
+def get_date_range(transactions: List[Transaction]) -> tuple:
+    """Extract min/max dates from transactions for Odoo query scoping."""
+    dates = [t.date for t in transactions if t.date and t.date >= "1900"]
+    if not dates:
+        return None, None
+    return min(dates), max(dates)
 
 
 def reconcile_with_odoo_data(

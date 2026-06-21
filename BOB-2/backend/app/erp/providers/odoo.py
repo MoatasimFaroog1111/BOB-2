@@ -169,10 +169,21 @@ class OdooProvider:
 
         journal_ids = [j["id"] for j in bank_journals]
 
+        # Only include lines hitting the bank's liquidity account (not counterparts)
+        account_ids = []
+        for j in bank_journals:
+            def_acc = j.get("default_account_id")
+            if isinstance(def_acc, list) and def_acc:
+                account_ids.append(def_acc[0])
+            elif def_acc:
+                account_ids.append(def_acc)
+
         domain: list = [
             ["journal_id", "in", journal_ids],
             ["parent_state", "=", "posted"],
         ]
+        if account_ids:
+            domain.append(["account_id", "in", account_ids])
         if date_from:
             domain.append(["date", ">=", date_from])
         if date_to:

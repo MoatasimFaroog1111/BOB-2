@@ -59,7 +59,7 @@ export default function TeamPage() {
 
   // Bank reconciliation state
   const [bankStatementFile, setBankStatementFile] = useState<File | null>(null);
-  const [bankLedgerFile, setBankLedgerFile] = useState<File | null>(null);
+  // bankLedgerFile removed — ledger data now fetched from Odoo automatically
   const [isReconciling, setIsReconciling] = useState(false);
   const [showReconResults, setShowReconResults] = useState(false);
   const [reconResults, setReconResults] = useState<{
@@ -73,7 +73,7 @@ export default function TeamPage() {
     ledger_count: number;
   } | null>(null);
   const bankStatementInputRef = useRef<HTMLInputElement>(null);
-  const bankLedgerInputRef = useRef<HTMLInputElement>(null);
+  // bankLedgerInputRef removed — no longer needed
 
   // New States for Partners and Proposal Preview
   const [partners, setPartners] = useState<{ id: number; name: string }[]>([]);
@@ -590,7 +590,7 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
   };
 
   const handleBankReconciliation = async () => {
-    if (!bankStatementFile || !bankLedgerFile) {
+    if (!bankStatementFile) {
       alert(t("bankRecon.noFiles"));
       return;
     }
@@ -598,7 +598,6 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
     try {
       const formData = new FormData();
       formData.append("statement", bankStatementFile);
-      formData.append("ledger", bankLedgerFile);
 
       const response = await fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation`, {
         method: "POST",
@@ -751,42 +750,10 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
           className="hidden"
         />
 
-        {/* Bank Ledger Upload */}
-        <div
-          onClick={() => bankLedgerInputRef.current?.click()}
-          className={`h-6.5 px-3 border border-dashed rounded-full flex items-center justify-center text-[10px] font-bold cursor-pointer transition-all duration-300 gap-1.5
-                     ${bankLedgerFile 
-                       ? "border-green-400/60 bg-green-500/10 text-green-300" 
-                       : "border-[#d9a441]/60 bg-gradient-to-br from-[#221205]/60 to-[#0f0701]/60 text-[#d9a441]/90 shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_8px_rgba(217,164,65,0.4)] hover:shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_14px_rgba(217,164,65,0.85)] hover:scale-102 hover:text-[#ffca5f] hover:border-[#d9a441]"
-                     }`}
-        >
-          <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-          </svg>
-          {bankLedgerFile ? (
-            <span className="truncate max-w-[120px]">{bankLedgerFile.name}</span>
-          ) : (
-            t("bankRecon.uploadLedger")
-          )}
-          {bankLedgerFile && (
-            <button
-              onClick={(e) => { e.stopPropagation(); setBankLedgerFile(null); }}
-              className="text-red-400 hover:text-red-300 font-bold text-xs leading-none ml-1"
-            >×</button>
-          )}
-        </div>
-        <input
-          type="file"
-          ref={bankLedgerInputRef}
-          onChange={(e) => { if (e.target.files?.[0]) setBankLedgerFile(e.target.files[0]); }}
-          accept=".csv,.xlsx,.xls"
-          className="hidden"
-        />
-
         {/* Reconcile Button */}
         <button
           onClick={handleBankReconciliation}
-          disabled={isReconciling || !bankStatementFile || !bankLedgerFile}
+          disabled={isReconciling || !bankStatementFile}
           className="px-3.5 h-6.5 rounded-full flex items-center justify-center gap-1.5 transition-all duration-300 cursor-pointer
                      bg-gradient-to-br from-[#221205] to-[#0f0701] border border-[#d9a441]/85 text-[#d9a441] text-[10px] font-bold
                      shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_8px_rgba(217,164,65,0.7)]
@@ -1433,7 +1400,7 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
                   {t("bankRecon.resultsTitle")}
                 </h2>
                 <span className="text-[9.5px] text-white/50">
-                  {bankStatementFile?.name} ↔ {bankLedgerFile?.name}
+                  {bankStatementFile?.name} ↔ Odoo
                 </span>
               </div>
               <button

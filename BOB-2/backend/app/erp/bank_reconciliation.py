@@ -194,7 +194,7 @@ def parse_csv_file(file_path: str) -> List[Transaction]:
 
 
 def parse_xlsx_file(file_path: str) -> List[Transaction]:
-    """Parse transactions from an XLSX/XLS file."""
+    """Parse transactions from an XLSX file (Office Open XML)."""
     import openpyxl
 
     wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
@@ -211,20 +211,53 @@ def parse_xlsx_file(file_path: str) -> List[Transaction]:
     return _extract_transactions_from_rows(rows, has_header=True)
 
 
+def parse_xls_file(file_path: str) -> List[Transaction]:
+    """Parse transactions from a legacy XLS file (BIFF format)."""
+    import xlrd
+
+    wb = xlrd.open_workbook(file_path)
+    ws = wb.sheet_by_index(0)
+
+    rows = []
+    for row_idx in range(ws.nrows):
+        row_cells = []
+        for col in range(ws.ncols):
+            cell_type = ws.cell_type(row_idx, col)
+            cell_value = ws.cell_value(row_idx, col)
+            if cell_type == xlrd.XL_CELL_DATE:
+                try:
+                    dt = xlrd.xldate_as_datetime(cell_value, wb.datemode)
+                    row_cells.append(dt.strftime("%Y-%m-%d"))
+                except Exception:
+                    row_cells.append(str(cell_value))
+            elif cell_value != "":
+                row_cells.append(str(cell_value))
+            else:
+                row_cells.append("")
+        rows.append(row_cells)
+
+    return _extract_transactions_from_rows(rows, has_header=True)
+
+
 def parse_file(file_path: str) -> List[Transaction]:
     """Parse transactions from a file (auto-detect format)."""
     ext = Path(file_path).suffix.lower()
 
-    if ext in (".xlsx", ".xls"):
+    if ext == ".xlsx":
         return parse_xlsx_file(file_path)
+    elif ext == ".xls":
+        return parse_xls_file(file_path)
     elif ext == ".csv":
         return parse_csv_file(file_path)
     else:
-        # Try CSV first
+        # Try CSV first, then XLSX, then XLS
         try:
             return parse_csv_file(file_path)
         except Exception:
-            return parse_xlsx_file(file_path)
+            try:
+                return parse_xlsx_file(file_path)
+            except Exception:
+                return parse_xls_file(file_path)
 
 
 def reconcile(statement_path: str, ledger_path: str) -> ReconciliationResult:

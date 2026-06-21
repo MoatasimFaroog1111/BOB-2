@@ -78,14 +78,14 @@ class GuardianDocumentAI:
             try:
                 # Convert to grayscale
                 img = image.convert('L')
-                # Resize 2x
+                # Resize 1.5x (balances OCR accuracy vs speed)
                 w, h = img.size
                 try:
                     resample = Image.Resampling.LANCZOS
                 except AttributeError:
-                    resample = 1 # Fallback to ANTIALIAS/LANCZOS value in older Pillow versions
+                    resample = 1  # Fallback for older Pillow versions
                 
-                img = img.resize((w * 2, h * 2), resample)
+                img = img.resize((int(w * 1.5), int(h * 1.5)), resample)
                 # Enhance Contrast
                 img = ImageEnhance.Contrast(img).enhance(2.5)
                 # Enhance Sharpness

@@ -17,6 +17,27 @@ configure_logging()
 logger = logging.getLogger(__name__)
 
 
+def _run_migrations() -> None:
+    """Run Alembic migrations to ensure the database schema is up to date."""
+    try:
+        from alembic.config import Config
+        from alembic import command
+        import os
+
+        alembic_ini = os.path.join(os.path.dirname(__file__), "..", "alembic.ini")
+        alembic_cfg = Config(alembic_ini)
+        alembic_cfg.set_main_option(
+            "script_location",
+            os.path.join(os.path.dirname(__file__), "..", "migrations"),
+        )
+        alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Database migrations applied successfully.")
+    except Exception as e:
+        logger.error("Failed to run migrations: %s", e)
+        raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Validate security configuration on startup
@@ -27,6 +48,7 @@ async def lifespan(app: FastAPI):
             logger.critical("Security validation failed: %s", e)
             raise
 
+    _run_migrations()
     run_seed()
     try:
         from app.services.telegram_bot import start_telegram_bot

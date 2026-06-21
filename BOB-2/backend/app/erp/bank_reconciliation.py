@@ -220,8 +220,21 @@ def parse_xls_file(file_path: str) -> List[Transaction]:
 
     rows = []
     for row_idx in range(ws.nrows):
-        cells = [str(ws.cell_value(row_idx, col)) if ws.cell_value(row_idx, col) != "" else "" for col in range(ws.ncols)]
-        rows.append(cells)
+        row_cells = []
+        for col in range(ws.ncols):
+            cell_type = ws.cell_type(row_idx, col)
+            cell_value = ws.cell_value(row_idx, col)
+            if cell_type == xlrd.XL_CELL_DATE:
+                try:
+                    dt = xlrd.xldate_as_datetime(cell_value, wb.datemode)
+                    row_cells.append(dt.strftime("%Y-%m-%d"))
+                except Exception:
+                    row_cells.append(str(cell_value))
+            elif cell_value != "":
+                row_cells.append(str(cell_value))
+            else:
+                row_cells.append("")
+        rows.append(row_cells)
 
     return _extract_transactions_from_rows(rows, has_header=True)
 

@@ -2,7 +2,6 @@ import json
 import os
 import shutil
 import tempfile
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
@@ -17,7 +16,7 @@ from app.erp.factory import get_erp_provider
 from app.security.encryption import encrypt_value, decrypt_value
 from app.erp.discovery import run_discovery_orchestrator, load_financial_kb
 from app.erp.document_ai import GuardianDocumentAI
-from app.erp.odoo_cache import get_cached, set_cached
+from app.erp.odoo_cache import get_cached, set_cached, invalidate as invalidate_odoo_cache
 
 router = APIRouter()
 
@@ -103,6 +102,8 @@ def save_erp_connection(payload: ERPConnectionRequest, db: Session = Depends(get
 
     db.commit()
     db.refresh(conn)
+
+    invalidate_odoo_cache(conn.base_url, conn.database_name or "")
 
     return ERPConnectionResponse(
         id=conn.id,
@@ -1190,44 +1191,29 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
             except Exception as pe2:
                 print(f"[DIAGNOSTIC] Partner search by name failed: {pe2}")
 
-        # 3. Fetch default accounts (cached + parallel)
+        # 3. Fetch default accounts (cached, sequential — xmlrpc is not thread-safe)
         cache_db = conn.database_name or ""
-
-        def _fetch_accounts(erp_inst, company_id):
-            """Fetch expense, payable, and suspense accounts in one batch."""
-            cache_key_suffix = f"accounts_{company_id or 'all'}"
-            cached = get_cached(conn.base_url, cache_db, cache_key_suffix)
-            if cached is not None:
-                return cached
-
-            results = {"expense": [], "payable": [], "suspense": [], "fallback": []}
-
-            def _q(kind, domain):
-                if company_id:
-                    domain = domain + [("company_ids", "in", [company_id])]
+        accts_cache_key = f"accounts_{user_company_id or 'all'}"
+        accts = get_cached(conn.base_url, cache_db, accts_cache_key)
+        if accts is None:
+            accts = {"expense": [], "payable": [], "suspense": [], "fallback": []}
+            for kind, domain in [
+                ("expense", [("account_type", "=", "expense")]),
+                ("payable", [("account_type", "=", "liability_payable")]),
+                ("suspense", [("name", "ilike", "suspense")]),
+                ("fallback", []),
+            ]:
+                d = list(domain)
+                if user_company_id:
+                    d.append(("company_ids", "in", [user_company_id]))
                 try:
-                    return (kind, erp_inst.execute_kw(
+                    accts[kind] = erp.execute_kw(
                         "account.account", "search_read",
-                        [domain], {"fields": ["id", "name", "code"], "limit": 1}
-                    ))
+                        [d], {"fields": ["id", "name", "code"], "limit": 1}
+                    )
                 except Exception:
-                    return (kind, [])
-
-            with ThreadPoolExecutor(max_workers=4) as pool:
-                futs = [
-                    pool.submit(_q, "expense", [("account_type", "=", "expense")]),
-                    pool.submit(_q, "payable", [("account_type", "=", "liability_payable")]),
-                    pool.submit(_q, "suspense", [("name", "ilike", "suspense")]),
-                    pool.submit(_q, "fallback", []),
-                ]
-                for f in as_completed(futs):
-                    kind, data = f.result()
-                    results[kind] = data
-
-            set_cached(conn.base_url, cache_db, cache_key_suffix, results)
-            return results
-
-        accts = _fetch_accounts(erp, user_company_id)
+                    pass
+            set_cached(conn.base_url, cache_db, accts_cache_key, accts)
 
         expense_account_id = False
         expense_account_name = "Expense Account"

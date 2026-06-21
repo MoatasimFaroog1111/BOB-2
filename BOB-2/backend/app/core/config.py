@@ -94,6 +94,15 @@ class Settings(BaseSettings):
                 )
 
     def model_post_init(self, __context: object) -> None:
+        # Normalise DATABASE_URL: Railway (and others) provide postgresql://
+        # but SQLAlchemy needs the psycopg2 driver suffix.
+        db_url = self.DATABASE_URL
+        if db_url.startswith("postgresql://"):
+            object.__setattr__(
+                self, "DATABASE_URL",
+                db_url.replace("postgresql://", "postgresql+psycopg2://", 1),
+            )
+
         if not self.SECRET_KEY:
             if self.is_production:
                 raise ValueError(

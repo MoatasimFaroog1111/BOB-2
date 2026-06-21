@@ -48,6 +48,7 @@ RUN mkdir -p /app/storage && chown guardian:guardian /app/storage
 USER guardian
 
 ENV PORT=8000
+ENV STORAGE_DIR=/app/storage
 EXPOSE ${PORT}
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \

@@ -1238,6 +1238,23 @@ export default function DocumentIntelligencePage() {
     setRenameSheetId(null);
   };
 
+  // Edit dropdown state
+  const [showEditMenu, setShowEditMenu] = useState(false);
+  const editMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close edit menu on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (editMenuRef.current && !editMenuRef.current.contains(e.target as Node)) {
+        setShowEditMenu(false);
+      }
+    }
+    if (showEditMenu) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [showEditMenu]);
+
   // Calculations for cells layout
   const gridRows = Array.from({ length: rowCount }, (_, r) => r);
   const gridCols = Array.from({ length: colCount }, (_, c) => c);
@@ -1274,56 +1291,59 @@ export default function DocumentIntelligencePage() {
           </Link>
         </div>
 
-        {/* Spreadsheet Action Toolbar */}
-        <div className="flex flex-wrap gap-2.5 mb-4 p-3 bg-black/40 border border-white/10 rounded-xl items-center select-none animate-fade-in">
-          <button
-            onClick={handleAddRow}
-            className="h-8 px-3.5 rounded-lg border border-[#d9a441]/30 hover:border-[#d9a441] text-[#d9a441] text-[10.5px] font-bold transition-all hover:bg-[#d9a441]/10 flex items-center gap-1 cursor-pointer"
-          >
-            ➕ {t("excel.addRow")}
-          </button>
-          <button
-            onClick={handleDeleteRow}
-            className="h-8 px-3.5 rounded-lg border border-red-500/30 hover:border-red-500 text-red-400 text-[10.5px] font-bold transition-all hover:bg-red-500/10 flex items-center gap-1 cursor-pointer"
-          >
-            ➖ {t("excel.deleteRow")}
-          </button>
+        {/* Spreadsheet Action Toolbar — simplified */}
+        <div className="flex items-center gap-2 mb-3 p-2 bg-black/40 border border-white/10 rounded-xl select-none">
+          {/* Edit Grid dropdown */}
+          <div className="relative" ref={editMenuRef}>
+            <button
+              onClick={() => setShowEditMenu(!showEditMenu)}
+              className="h-8 px-3 rounded-lg border border-white/15 hover:border-white/30 text-white/80 hover:text-white text-[11px] font-semibold transition-all hover:bg-white/5 flex items-center gap-1.5 cursor-pointer"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+              {t("excel.editMenu")}
+              <svg className={`w-3 h-3 transition-transform ${showEditMenu ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
 
-          <div className="w-[1px] h-6 bg-white/10 mx-1" />
-
-          <button
-            onClick={handleAddCol}
-            className="h-8 px-3.5 rounded-lg border border-[#d9a441]/30 hover:border-[#d9a441] text-[#d9a441] text-[10.5px] font-bold transition-all hover:bg-[#d9a441]/10 flex items-center gap-1 cursor-pointer"
-          >
-            ➕ {t("excel.addColumn")}
-          </button>
-          <button
-            onClick={handleDeleteCol}
-            className="h-8 px-3.5 rounded-lg border border-red-500/30 hover:border-red-500 text-red-400 text-[10.5px] font-bold transition-all hover:bg-red-500/10 flex items-center gap-1 cursor-pointer"
-          >
-            ➖ {t("excel.deleteColumn")}
-          </button>
-
-          <div className="w-[1px] h-6 bg-white/10 mx-1" />
-
-          <button
-            onClick={handleClearSheet}
-            className="h-8 px-3.5 rounded-lg border border-white/10 hover:border-white/30 text-white/70 text-[10.5px] font-bold transition-all hover:bg-white/5 flex items-center gap-1 cursor-pointer"
-          >
-            🗑️ {t("excel.clearGrid")}
-          </button>
-
-          <div className="w-[1px] h-6 bg-white/10 mx-1" />
+            {showEditMenu && (
+              <div className="absolute top-9 right-0 z-40 w-48 bg-[#1b0d04] border border-white/15 rounded-xl shadow-2xl py-1 text-[11px]">
+                <button onClick={() => { handleAddRow(); setShowEditMenu(false); }} className="w-full text-right px-3 py-2 hover:bg-white/5 text-white/80 hover:text-white flex items-center gap-2 cursor-pointer transition-colors">
+                  <svg className="w-3.5 h-3.5 text-[#d9a441]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                  {t("excel.addRow")}
+                </button>
+                <button onClick={() => { handleDeleteRow(); setShowEditMenu(false); }} className="w-full text-right px-3 py-2 hover:bg-white/5 text-white/80 hover:text-white flex items-center gap-2 cursor-pointer transition-colors">
+                  <svg className="w-3.5 h-3.5 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                  {t("excel.deleteRow")}
+                </button>
+                <div className="h-[1px] bg-white/10 my-1" />
+                <button onClick={() => { handleAddCol(); setShowEditMenu(false); }} className="w-full text-right px-3 py-2 hover:bg-white/5 text-white/80 hover:text-white flex items-center gap-2 cursor-pointer transition-colors">
+                  <svg className="w-3.5 h-3.5 text-[#d9a441]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                  {t("excel.addColumn")}
+                </button>
+                <button onClick={() => { handleDeleteCol(); setShowEditMenu(false); }} className="w-full text-right px-3 py-2 hover:bg-white/5 text-white/80 hover:text-white flex items-center gap-2 cursor-pointer transition-colors">
+                  <svg className="w-3.5 h-3.5 text-red-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                  {t("excel.deleteColumn")}
+                </button>
+                <div className="h-[1px] bg-white/10 my-1" />
+                <button onClick={() => { handleClearSheet(); setShowEditMenu(false); }} className="w-full text-right px-3 py-2 hover:bg-red-500/10 text-red-400 hover:text-red-300 flex items-center gap-2 cursor-pointer transition-colors">
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                  {t("excel.clearGrid")}
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* Operation Type Dropdown */}
-          <div className="flex items-center gap-2 border border-[#d9a441]/40 rounded-lg px-2 bg-black/45 h-8 select-none">
-            <span className="text-[10px] text-[#d9a441] font-bold">
-              {language === "ar" ? "نوع العملية:" : "Operation Type:"}
+          <div className="flex items-center gap-1.5 border border-white/10 rounded-lg px-2.5 bg-black/30 h-8">
+            <span className="text-[10px] text-white/50 font-medium">
+              {language === "ar" ? "اليومية:" : "Journal:"}
             </span>
             {journalsLoading ? (
-              <span className="text-[10px] text-white/50 animate-pulse">
-                {language === "ar" ? "جاري التحميل..." : "Loading..."}
-              </span>
+              <span className="text-[10px] text-white/40 animate-pulse">...</span>
             ) : (
               <select
                 value={selectedJournalId || ""}
@@ -1331,7 +1351,7 @@ export default function DocumentIntelligencePage() {
                   const val = e.target.value ? parseInt(e.target.value) : null;
                   setSelectedJournalId(val);
                 }}
-                className="bg-transparent border-none outline-none text-[#d9a441] text-[10.5px] font-bold cursor-pointer focus:ring-0 focus:outline-none pr-1"
+                className="bg-transparent border-none outline-none text-white/80 text-[11px] font-medium cursor-pointer focus:ring-0 focus:outline-none"
               >
                 {journals.map((journal) => (
                   <option key={journal.id} value={journal.id} className="bg-[#1b0d04] text-white">
@@ -1342,30 +1362,44 @@ export default function DocumentIntelligencePage() {
             )}
           </div>
 
-          <div className="flex-1" />
-
+          {/* Export CSV — icon-only with tooltip */}
           <button
             onClick={handleExportCSV}
-            className="h-8 px-4 rounded-lg bg-white/5 border border-white/10 hover:border-white/30 text-white text-[10.5px] font-bold transition-all hover:bg-white/10 flex items-center gap-1.5 cursor-pointer"
+            title={t("excel.exportCSV")}
+            className="h-8 w-8 rounded-lg border border-white/10 hover:border-white/25 text-white/60 hover:text-white hover:bg-white/5 flex items-center justify-center cursor-pointer transition-all"
           >
-            📥 {t("excel.exportCSV")}
+            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
           </button>
 
+          <div className="flex-1" />
+
+          {/* Manual Entry */}
           <button
             onClick={() => {
               setManualInputText("");
               setShowManualInputModal(true);
             }}
-            className="h-8 px-4 rounded-lg bg-white/5 border border-[#d9a441]/40 hover:border-[#d9a441] text-[#d9a441] text-[10.5px] font-bold transition-all hover:bg-[#d9a441]/10 flex items-center gap-1.5 cursor-pointer"
+            className="h-8 px-3 rounded-lg border border-white/15 hover:border-[#d9a441]/50 text-white/70 hover:text-[#d9a441] text-[11px] font-semibold transition-all hover:bg-[#d9a441]/5 flex items-center gap-1.5 cursor-pointer"
           >
-            ✍️ {language === "ar" ? "لصق مباشر / كتابة يدوية" : "Direct Paste / Manual Entry"}
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
+            </svg>
+            {t("excel.manualEntry")}
           </button>
 
+          {/* Submit to Odoo — primary CTA */}
           <button
             onClick={handlePrepareOdooSubmission}
-            className="h-8 px-4 rounded-lg bg-gradient-to-br from-[#221205] to-[#0f0701] border border-[#d9a441] text-[#d9a441] text-[10.5px] font-bold shadow-[0_0_12px_rgba(217,164,65,0.25)] hover:shadow-[0_0_20px_rgba(217,164,65,0.5)] transition-all flex items-center gap-1.5 cursor-pointer"
+            className="h-8 px-4 rounded-lg bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-black text-[11px] font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-1.5 cursor-pointer active:scale-[0.98]"
           >
-            🏢 {t("excel.submitOdoo")}
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            {t("excel.submitOdoo")}
           </button>
         </div>
 

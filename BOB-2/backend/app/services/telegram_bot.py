@@ -170,7 +170,8 @@ def process_document(token: str, chat_id: int, file_id: str, filename: str):
             "amount": amount,
             "partner_name": proposal.get("suggested_partner_name") or partner_name,
             "partner_id": proposal.get("suggested_partner_id"),
-            "raw_text": raw_text
+            "raw_text": raw_text,
+            "local_path": str(local_path),
         }
         
         import html
@@ -219,6 +220,45 @@ def process_document(token: str, chat_id: int, file_id: str, filename: str):
             "chat_id": chat_id,
             "text": f"❌ حدث خطأ أثناء معالجة المستند: {str(e)}"
         })
+
+def _upload_attachment_to_odoo(move_id: int, filename: str, file_path: str, db_session) -> int:
+    """Upload a local file as ir.attachment linked to an account.move in Odoo."""
+    import base64
+    from app.erp.factory import get_erp_provider
+
+    conn = db_session.query(ERPConnection).filter(
+        ERPConnection.organization_id == 1,
+        ERPConnection.is_active.is_(True),
+    ).first()
+    if not conn:
+        raise RuntimeError("No active ERP connection.")
+
+    secret_data = json.loads(decrypt_value(conn.encrypted_secret_ref))
+    erp = get_erp_provider(
+        provider=conn.provider,
+        url=conn.base_url,
+        db=conn.database_name or "",
+        username=secret_data["username"],
+        password=secret_data["password"],
+    )
+
+    with open(file_path, "rb") as f:
+        file_data = base64.b64encode(f.read()).decode("utf-8")
+
+    attachment_id = erp.execute_kw(
+        "ir.attachment",
+        "create",
+        [{
+            "name": filename,
+            "type": "binary",
+            "datas": file_data,
+            "res_model": "account.move",
+            "res_id": move_id,
+        }],
+    )
+    print(f"[Telegram Bot] Attachment uploaded: id={attachment_id} for move={move_id}")
+    return attachment_id
+
 
 def handle_callback_query(token: str, query: dict):
     chat_id = query["message"]["chat"]["id"]
@@ -285,11 +325,24 @@ def handle_callback_query(token: str, query: dict):
             # Post to Odoo
             res = register_document(payload=reg_payload, db_session=db)
             
+            # Upload file as attachment to the created journal entry
+            attachment_id = None
+            move_id = res.get("move_id")
+            local_file = pending.get("local_path")
+            if move_id and local_file and Path(local_file).exists():
+                try:
+                    attachment_id = _upload_attachment_to_odoo(
+                        move_id, pending["filename"], local_file, db
+                    )
+                except Exception as att_err:
+                    print(f"[Telegram Bot] Attachment upload failed: {att_err}")
+            
             del PENDING_ENTRIES[chat_id]
             
             import html
             safe_res_message = html.escape(str(res.get('message') or ''))
-            safe_attachment_id = html.escape(str(res.get('attachment_id') or '-'))
+            att_label = str(attachment_id) if attachment_id else '-'
+            safe_attachment_id = html.escape(att_label)
             
             msg = (
                 "✅ <b>تم ترحيل القيد بنجاح إلى Odoo!</b>\n\n"

@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
@@ -16,6 +17,7 @@ from app.erp.factory import get_erp_provider
 from app.security.encryption import encrypt_value, decrypt_value
 from app.erp.discovery import run_discovery_orchestrator, load_financial_kb
 from app.erp.document_ai import GuardianDocumentAI
+from app.erp.odoo_cache import get_cached, set_cached
 
 router = APIRouter()
 
@@ -1044,12 +1046,15 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
         suggested_partner_name = ""
         
         try:
-            partners_list = erp.execute_kw(
-                "res.partner",
-                "search_read",
-                [[["active", "=", True]]],
-                {"fields": ["id", "name"], "limit": 5000}
-            )
+            partners_list = get_cached(conn.base_url, conn.database_name or "", "partners")
+            if partners_list is None:
+                partners_list = erp.execute_kw(
+                    "res.partner",
+                    "search_read",
+                    [[["active", "=", True]]],
+                    {"fields": ["id", "name"], "limit": 5000}
+                )
+                set_cached(conn.base_url, conn.database_name or "", "partners", partners_list)
             
             doc_text_lower = f"{(payload.raw_text or '')} {payload.filename} {payload.partner_name}".lower()
             
@@ -1185,77 +1190,65 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
             except Exception as pe2:
                 print(f"[DIAGNOSTIC] Partner search by name failed: {pe2}")
 
-        # 3. Fetch default accounts
+        # 3. Fetch default accounts (cached + parallel)
+        cache_db = conn.database_name or ""
+
+        def _fetch_accounts(erp_inst, company_id):
+            """Fetch expense, payable, and suspense accounts in one batch."""
+            cache_key_suffix = f"accounts_{company_id or 'all'}"
+            cached = get_cached(conn.base_url, cache_db, cache_key_suffix)
+            if cached is not None:
+                return cached
+
+            results = {"expense": [], "payable": [], "suspense": [], "fallback": []}
+
+            def _q(kind, domain):
+                if company_id:
+                    domain = domain + [("company_ids", "in", [company_id])]
+                try:
+                    return (kind, erp_inst.execute_kw(
+                        "account.account", "search_read",
+                        [domain], {"fields": ["id", "name", "code"], "limit": 1}
+                    ))
+                except Exception:
+                    return (kind, [])
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                futs = [
+                    pool.submit(_q, "expense", [("account_type", "=", "expense")]),
+                    pool.submit(_q, "payable", [("account_type", "=", "liability_payable")]),
+                    pool.submit(_q, "suspense", [("name", "ilike", "suspense")]),
+                    pool.submit(_q, "fallback", []),
+                ]
+                for f in as_completed(futs):
+                    kind, data = f.result()
+                    results[kind] = data
+
+            set_cached(conn.base_url, cache_db, cache_key_suffix, results)
+            return results
+
+        accts = _fetch_accounts(erp, user_company_id)
+
         expense_account_id = False
         expense_account_name = "Expense Account"
-        try:
-            domain = [("account_type", "=", "expense")]
-            if user_company_id:
-                domain.append(("company_ids", "in", [user_company_id]))
-            accs = erp.execute_kw(
-                "account.account",
-                "search_read",
-                [domain],
-                {"fields": ["id", "name", "code"], "limit": 1}
-            )
-            if accs:
-                expense_account_id = accs[0]["id"]
-                expense_account_name = f"{accs[0]['code']} {accs[0]['name']}"
-        except Exception:
-            pass
+        if accts["expense"]:
+            expense_account_id = accts["expense"][0]["id"]
+            expense_account_name = f"{accts['expense'][0]['code']} {accts['expense'][0]['name']}"
+        elif accts["fallback"]:
+            expense_account_id = accts["fallback"][0]["id"]
+            expense_account_name = f"{accts['fallback'][0]['code']} {accts['fallback'][0]['name']}"
 
         payable_account_id = False
         payable_account_name = "Payable Account"
-        try:
-            domain = [("account_type", "=", "liability_payable")]
-            if user_company_id:
-                domain.append(("company_ids", "in", [user_company_id]))
-            accs = erp.execute_kw(
-                "account.account",
-                "search_read",
-                [domain],
-                {"fields": ["id", "name", "code"], "limit": 1}
-            )
-            if accs:
-                payable_account_id = accs[0]["id"]
-                payable_account_name = f"{accs[0]['code']} {accs[0]['name']}"
-        except Exception:
-            pass
+        if accts["payable"]:
+            payable_account_id = accts["payable"][0]["id"]
+            payable_account_name = f"{accts['payable'][0]['code']} {accts['payable'][0]['name']}"
 
         suspense_account_id = False
         suspense_account_name = "Suspense Account"
-        try:
-            domain = [("name", "ilike", "suspense")]
-            if user_company_id:
-                domain.append(("company_ids", "in", [user_company_id]))
-            accs = erp.execute_kw(
-                "account.account",
-                "search_read",
-                [domain],
-                {"fields": ["id", "name", "code"], "limit": 1}
-            )
-            if accs:
-                suspense_account_id = accs[0]["id"]
-                suspense_account_name = f"{accs[0]['code']} {accs[0]['name']}"
-        except Exception:
-            pass
-
-        if not expense_account_id:
-            try:
-                domain = []
-                if user_company_id:
-                    domain.append(("company_ids", "in", [user_company_id]))
-                accs = erp.execute_kw(
-                    "account.account",
-                    "search_read",
-                    [domain],
-                    {"fields": ["id", "name", "code"], "limit": 1}
-                )
-                if accs:
-                    expense_account_id = accs[0]["id"]
-                    expense_account_name = f"{accs[0]['code']} {accs[0]['name']}"
-            except Exception:
-                pass
+        if accts["suspense"]:
+            suspense_account_id = accts["suspense"][0]["id"]
+            suspense_account_name = f"{accts['suspense'][0]['code']} {accts['suspense'][0]['name']}"
 
         if not payable_account_id:
             payable_account_id = expense_account_id
@@ -1264,7 +1257,7 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
             suspense_account_id = expense_account_id
             suspense_account_name = expense_account_name
 
-        # 4. Bank Rules / Reconcile Models Matching
+        # 4. Bank Rules / Reconcile Models Matching (cached)
         rule_matched = None
         rule_account_id = None
         rule_account_name = ""
@@ -1273,12 +1266,16 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
         if user_company_id:
             try:
                 import re
-                reconcile_models = erp.execute_kw(
-                    "account.reconcile.model",
-                    "search_read",
-                    [[["company_id", "=", user_company_id]]],
-                    {"fields": ["id", "name", "match_label", "match_label_param", "line_ids"], "order": "sequence"}
-                )
+                reconcile_cache_key = f"reconcile_{user_company_id}"
+                reconcile_models = get_cached(conn.base_url, cache_db, reconcile_cache_key)
+                if reconcile_models is None:
+                    reconcile_models = erp.execute_kw(
+                        "account.reconcile.model",
+                        "search_read",
+                        [[["company_id", "=", user_company_id]]],
+                        {"fields": ["id", "name", "match_label", "match_label_param", "line_ids"], "order": "sequence"}
+                    )
+                    set_cached(conn.base_url, cache_db, reconcile_cache_key, reconcile_models)
                 
                 doc_blob = f"{payload.filename} {payload.raw_text}".lower()
                 

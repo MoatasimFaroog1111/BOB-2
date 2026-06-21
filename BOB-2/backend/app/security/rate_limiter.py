@@ -1,6 +1,13 @@
 """
 Rate limiting utility for authentication endpoints.
 Prevents brute force attacks by limiting login attempts.
+
+NOTE — Scaling:
+    This implementation stores state in-process memory.  It works correctly
+    for single-instance deployments.  For horizontally-scaled deployments
+    behind a load-balancer, replace this with a Redis-backed store so that
+    counters are shared across all backend instances.  The public interface
+    (record_attempt / is_locked_out / check_rate_limit) stays the same.
 """
 import time
 from collections import defaultdict
@@ -10,13 +17,9 @@ from app.core.config import settings
 
 
 class LoginRateLimiter:
-    """
-    Simple in-memory rate limiter for login attempts.
-    In production, consider using Redis for distributed rate limiting.
-    """
+    """In-memory rate limiter for login attempts."""
 
     def __init__(self):
-        # Track failed attempts: {identifier: [(timestamp, count), ...]}
         self._attempts: Dict[str, list] = defaultdict(list)
         self._lockouts: Dict[str, float] = {}  # {identifier: lockout_until_timestamp}
 

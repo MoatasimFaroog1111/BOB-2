@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     BACKEND_PORT: int = 8000
 
     FRONTEND_ORIGIN: str = "http://localhost:3000"
+    CORS_ORIGINS: str = ""  # Comma-separated additional origins
+    TRUSTED_HOSTS: str = ""  # Comma-separated trusted hosts for production
 
     DATABASE_URL: str = "postgresql+psycopg2://guardian:guardian@localhost:5432/guardianai"
 
@@ -59,6 +61,23 @@ class Settings(BaseSettings):
     @property
     def allowed_upload_extensions_list(self) -> list:
         return [ext.strip().lower() for ext in self.ALLOWED_UPLOAD_EXTENSIONS.split(",")]
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """All allowed CORS origins, de-duplicated."""
+        origins = {self.FRONTEND_ORIGIN}
+        if not self.is_production:
+            origins.update(["http://localhost:3000", "http://127.0.0.1:3000"])
+        if self.CORS_ORIGINS:
+            origins.update(o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip())
+        return sorted(origins)
+
+    @property
+    def trusted_host_list(self) -> list[str]:
+        """Trusted hosts for TrustedHostMiddleware."""
+        if self.TRUSTED_HOSTS:
+            return [h.strip() for h in self.TRUSTED_HOSTS.split(",") if h.strip()]
+        return ["localhost"]
 
     def validate_secret_key(self) -> None:
         """Validate that SECRET_KEY is secure enough for production."""

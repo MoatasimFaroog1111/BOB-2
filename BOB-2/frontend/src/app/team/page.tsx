@@ -57,6 +57,24 @@ export default function TeamPage() {
   const [popoverTab, setPopoverTab] = useState<"lines" | "items">("lines");
   const [isRegistering, setIsRegistering] = useState<Record<string, boolean>>({});
 
+  // Bank reconciliation state
+  const [bankStatementFile, setBankStatementFile] = useState<File | null>(null);
+  const [bankLedgerFile, setBankLedgerFile] = useState<File | null>(null);
+  const [isReconciling, setIsReconciling] = useState(false);
+  const [showReconResults, setShowReconResults] = useState(false);
+  const [reconResults, setReconResults] = useState<{
+    statement_only: { date: string; description: string; amount: number; row_number: number }[];
+    ledger_only: { date: string; description: string; amount: number; row_number: number }[];
+    matched: { date: string; description: string; amount: number; row_number: number }[];
+    statement_total: number;
+    ledger_total: number;
+    difference: number;
+    statement_count: number;
+    ledger_count: number;
+  } | null>(null);
+  const bankStatementInputRef = useRef<HTMLInputElement>(null);
+  const bankLedgerInputRef = useRef<HTMLInputElement>(null);
+
   // New States for Partners and Proposal Preview
   const [partners, setPartners] = useState<{ id: number; name: string }[]>([]);
   const [showPreviewModal, setShowPreviewModal] = useState(false);
@@ -571,6 +589,41 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
     }
   };
 
+  const handleBankReconciliation = async () => {
+    if (!bankStatementFile || !bankLedgerFile) {
+      alert(t("bankRecon.noFiles"));
+      return;
+    }
+    setIsReconciling(true);
+    try {
+      const formData = new FormData();
+      formData.append("statement", bankStatementFile);
+      formData.append("ledger", bankLedgerFile);
+
+      const response = await fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(errText || "Bank reconciliation failed");
+      }
+
+      const data = await response.json();
+      if (data.status === "success") {
+        setReconResults(data);
+        setShowReconResults(true);
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(err);
+      alert(`خطأ في المطابقة البنكية: ${message}`);
+    } finally {
+      setIsReconciling(false);
+    }
+  };
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragActive(true);
@@ -661,6 +714,107 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
           }}
         >
           {t("team.accountant")}
+        </h1>
+      </div>
+
+      {/* Bank Reconciliation Row */}
+      <div className="absolute top-16 right-6 flex items-center gap-3 select-none">
+        {/* Bank Statement Upload */}
+        <div
+          onClick={() => bankStatementInputRef.current?.click()}
+          className={`h-6.5 px-3 border border-dashed rounded-full flex items-center justify-center text-[10px] font-bold cursor-pointer transition-all duration-300 gap-1.5
+                     ${bankStatementFile 
+                       ? "border-green-400/60 bg-green-500/10 text-green-300" 
+                       : "border-[#d9a441]/60 bg-gradient-to-br from-[#221205]/60 to-[#0f0701]/60 text-[#d9a441]/90 shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_8px_rgba(217,164,65,0.4)] hover:shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_14px_rgba(217,164,65,0.85)] hover:scale-102 hover:text-[#ffca5f] hover:border-[#d9a441]"
+                     }`}
+        >
+          <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+          </svg>
+          {bankStatementFile ? (
+            <span className="truncate max-w-[120px]">{bankStatementFile.name}</span>
+          ) : (
+            t("bankRecon.uploadStatement")
+          )}
+          {bankStatementFile && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setBankStatementFile(null); }}
+              className="text-red-400 hover:text-red-300 font-bold text-xs leading-none ml-1"
+            >×</button>
+          )}
+        </div>
+        <input
+          type="file"
+          ref={bankStatementInputRef}
+          onChange={(e) => { if (e.target.files?.[0]) setBankStatementFile(e.target.files[0]); }}
+          accept=".csv,.xlsx,.xls"
+          className="hidden"
+        />
+
+        {/* Bank Ledger Upload */}
+        <div
+          onClick={() => bankLedgerInputRef.current?.click()}
+          className={`h-6.5 px-3 border border-dashed rounded-full flex items-center justify-center text-[10px] font-bold cursor-pointer transition-all duration-300 gap-1.5
+                     ${bankLedgerFile 
+                       ? "border-green-400/60 bg-green-500/10 text-green-300" 
+                       : "border-[#d9a441]/60 bg-gradient-to-br from-[#221205]/60 to-[#0f0701]/60 text-[#d9a441]/90 shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_8px_rgba(217,164,65,0.4)] hover:shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_14px_rgba(217,164,65,0.85)] hover:scale-102 hover:text-[#ffca5f] hover:border-[#d9a441]"
+                     }`}
+        >
+          <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          {bankLedgerFile ? (
+            <span className="truncate max-w-[120px]">{bankLedgerFile.name}</span>
+          ) : (
+            t("bankRecon.uploadLedger")
+          )}
+          {bankLedgerFile && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setBankLedgerFile(null); }}
+              className="text-red-400 hover:text-red-300 font-bold text-xs leading-none ml-1"
+            >×</button>
+          )}
+        </div>
+        <input
+          type="file"
+          ref={bankLedgerInputRef}
+          onChange={(e) => { if (e.target.files?.[0]) setBankLedgerFile(e.target.files[0]); }}
+          accept=".csv,.xlsx,.xls"
+          className="hidden"
+        />
+
+        {/* Reconcile Button */}
+        <button
+          onClick={handleBankReconciliation}
+          disabled={isReconciling || !bankStatementFile || !bankLedgerFile}
+          className="px-3.5 h-6.5 rounded-full flex items-center justify-center gap-1.5 transition-all duration-300 cursor-pointer
+                     bg-gradient-to-br from-[#221205] to-[#0f0701] border border-[#d9a441]/85 text-[#d9a441] text-[10px] font-bold
+                     shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_8px_rgba(217,164,65,0.7)]
+                     hover:shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_16px_rgba(217,164,65,0.95)]
+                     hover:scale-105 active:scale-95 disabled:opacity-50"
+          title={t("bankRecon.reconcile")}
+        >
+          {isReconciling ? (
+            <svg className="animate-spin h-3 w-3 text-[#d9a441]" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+            </svg>
+          ) : (
+            <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+            </svg>
+          )}
+          {isReconciling ? t("bankRecon.reconciling") : t("bankRecon.reconcile")}
+        </button>
+
+        {/* Bank Accountant Title */}
+        <h1 
+          className="text-base font-bold bg-gradient-to-r from-cyan-300 via-blue-400 to-cyan-200 bg-clip-text text-transparent drop-shadow-[0_0_8px_rgba(56,189,248,0.5)]"
+          style={{ 
+            textShadow: "1px 1px 0px rgba(255,255,255,0.08), -1px -1px 0px rgba(0,0,0,0.9), 0 0 10px rgba(56,189,248,0.3)" 
+          }}
+        >
+          {t("bankRecon.title")}
         </h1>
       </div>
 
@@ -1263,6 +1417,183 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
                   </>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bank Reconciliation Results Modal */}
+      {showReconResults && reconResults && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-6 fade-in select-none">
+          <div className="wood-panel rounded-[24px] border border-cyan-500/30 shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden max-h-[85vh] font-sans">
+            {/* Header */}
+            <div className="flex justify-between items-center px-6 py-4 border-b border-white/10 bg-black/40">
+              <div className="flex flex-col gap-0.5 text-right" dir="rtl">
+                <h2 className="text-sm font-bold bg-gradient-to-r from-cyan-300 to-blue-400 bg-clip-text text-transparent drop-shadow-[0_0_6px_rgba(56,189,248,0.3)]">
+                  {t("bankRecon.resultsTitle")}
+                </h2>
+                <span className="text-[9.5px] text-white/50">
+                  {bankStatementFile?.name} ↔ {bankLedgerFile?.name}
+                </span>
+              </div>
+              <button
+                onClick={() => setShowReconResults(false)}
+                className="px-3 py-1.5 text-[10px] font-bold text-white/60 hover:text-white border border-white/10 hover:border-white/20 rounded-lg transition-all cursor-pointer"
+              >
+                {t("bankRecon.close")}
+              </button>
+            </div>
+
+            {/* Summary Cards */}
+            <div className="px-6 py-4 grid grid-cols-4 gap-3 border-b border-white/5 bg-black/20" dir="rtl">
+              <div className="flex flex-col items-center gap-1 p-3 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[9px] text-white/50 font-semibold">{t("bankRecon.statementFile")}</span>
+                <span className="text-lg font-bold text-cyan-400">{reconResults.statement_count}</span>
+                <span className="text-[9px] text-white/40">{reconResults.statement_total.toFixed(2)}</span>
+              </div>
+              <div className="flex flex-col items-center gap-1 p-3 rounded-xl bg-white/5 border border-white/10">
+                <span className="text-[9px] text-white/50 font-semibold">{t("bankRecon.ledgerFile")}</span>
+                <span className="text-lg font-bold text-blue-400">{reconResults.ledger_count}</span>
+                <span className="text-[9px] text-white/40">{reconResults.ledger_total.toFixed(2)}</span>
+              </div>
+              <div className="flex flex-col items-center gap-1 p-3 rounded-xl bg-green-500/5 border border-green-500/20">
+                <span className="text-[9px] text-green-400/70 font-semibold">{t("bankRecon.matched")}</span>
+                <span className="text-lg font-bold text-green-400">{reconResults.matched.length}</span>
+              </div>
+              <div className={`flex flex-col items-center gap-1 p-3 rounded-xl border ${reconResults.difference === 0 ? "bg-green-500/5 border-green-500/20" : "bg-red-500/5 border-red-500/20"}`}>
+                <span className="text-[9px] text-white/50 font-semibold">الفرق</span>
+                <span className={`text-lg font-bold ${reconResults.difference === 0 ? "text-green-400" : "text-red-400"}`}>
+                  {reconResults.difference.toFixed(2)}
+                </span>
+              </div>
+            </div>
+
+            {/* Results Content */}
+            <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 bg-black/20" dir="rtl">
+              {reconResults.statement_only.length === 0 && reconResults.ledger_only.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 gap-3">
+                  <span className="text-4xl">✅</span>
+                  <span className="text-sm font-bold text-green-400">{t("bankRecon.noDiscrepancies")}</span>
+                </div>
+              ) : (
+                <>
+                  {/* Statement Only */}
+                  {reconResults.statement_only.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-red-400 text-sm font-bold">⚠️</span>
+                        <h3 className="text-[11px] font-bold text-red-400">
+                          {t("bankRecon.inStatementOnly")} ({reconResults.statement_only.length})
+                        </h3>
+                      </div>
+                      <div className="bg-black/40 border border-red-500/20 rounded-xl overflow-hidden">
+                        <table className="w-full text-right text-[10px] border-collapse" dir="rtl">
+                          <thead>
+                            <tr className="bg-red-500/5 border-b border-red-500/10 text-red-300/80 font-semibold">
+                              <th className="p-2.5 w-8">#</th>
+                              <th className="p-2.5">{t("bankRecon.date")}</th>
+                              <th className="p-2.5">{t("bankRecon.description")}</th>
+                              <th className="p-2.5 text-left">{t("bankRecon.amount")}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reconResults.statement_only.map((txn, idx) => (
+                              <tr key={idx} className="border-b border-white/5 hover:bg-red-500/5 text-white/90">
+                                <td className="p-2.5 text-white/30">{txn.row_number}</td>
+                                <td className="p-2.5 text-white/60 font-mono text-[9px]">{txn.date}</td>
+                                <td className="p-2.5 truncate max-w-[250px]">{txn.description}</td>
+                                <td className="p-2.5 text-left font-bold text-red-400">{txn.amount.toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t border-red-500/20 bg-red-500/5">
+                              <td colSpan={3} className="p-2.5 text-[10px] font-bold text-red-300">{t("bankRecon.total")}</td>
+                              <td className="p-2.5 text-left font-bold text-red-400">
+                                {reconResults.statement_only.reduce((s, t) => s + t.amount, 0).toFixed(2)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Ledger Only */}
+                  {reconResults.ledger_only.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-amber-400 text-sm font-bold">⚠️</span>
+                        <h3 className="text-[11px] font-bold text-amber-400">
+                          {t("bankRecon.inLedgerOnly")} ({reconResults.ledger_only.length})
+                        </h3>
+                      </div>
+                      <div className="bg-black/40 border border-amber-500/20 rounded-xl overflow-hidden">
+                        <table className="w-full text-right text-[10px] border-collapse" dir="rtl">
+                          <thead>
+                            <tr className="bg-amber-500/5 border-b border-amber-500/10 text-amber-300/80 font-semibold">
+                              <th className="p-2.5 w-8">#</th>
+                              <th className="p-2.5">{t("bankRecon.date")}</th>
+                              <th className="p-2.5">{t("bankRecon.description")}</th>
+                              <th className="p-2.5 text-left">{t("bankRecon.amount")}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reconResults.ledger_only.map((txn, idx) => (
+                              <tr key={idx} className="border-b border-white/5 hover:bg-amber-500/5 text-white/90">
+                                <td className="p-2.5 text-white/30">{txn.row_number}</td>
+                                <td className="p-2.5 text-white/60 font-mono text-[9px]">{txn.date}</td>
+                                <td className="p-2.5 truncate max-w-[250px]">{txn.description}</td>
+                                <td className="p-2.5 text-left font-bold text-amber-400">{txn.amount.toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                          <tfoot>
+                            <tr className="border-t border-amber-500/20 bg-amber-500/5">
+                              <td colSpan={3} className="p-2.5 text-[10px] font-bold text-amber-300">{t("bankRecon.total")}</td>
+                              <td className="p-2.5 text-left font-bold text-amber-400">
+                                {reconResults.ledger_only.reduce((s, t) => s + t.amount, 0).toFixed(2)}
+                              </td>
+                            </tr>
+                          </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Matched Transactions (collapsed) */}
+                  {reconResults.matched.length > 0 && (
+                    <details className="group">
+                      <summary className="flex items-center gap-2 cursor-pointer text-[11px] font-bold text-green-400 hover:text-green-300 transition-all">
+                        <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                        </svg>
+                        {t("bankRecon.matched")} ({reconResults.matched.length})
+                      </summary>
+                      <div className="mt-2 bg-black/40 border border-green-500/20 rounded-xl overflow-hidden">
+                        <table className="w-full text-right text-[10px] border-collapse" dir="rtl">
+                          <thead>
+                            <tr className="bg-green-500/5 border-b border-green-500/10 text-green-300/80 font-semibold">
+                              <th className="p-2.5">{t("bankRecon.date")}</th>
+                              <th className="p-2.5">{t("bankRecon.description")}</th>
+                              <th className="p-2.5 text-left">{t("bankRecon.amount")}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reconResults.matched.map((txn, idx) => (
+                              <tr key={idx} className="border-b border-white/5 hover:bg-green-500/5 text-white/70">
+                                <td className="p-2.5 font-mono text-[9px]">{txn.date}</td>
+                                <td className="p-2.5 truncate max-w-[250px]">{txn.description}</td>
+                                <td className="p-2.5 text-left font-semibold text-green-400">{txn.amount.toFixed(2)}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </details>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>

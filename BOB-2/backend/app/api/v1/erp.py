@@ -17,6 +17,7 @@ from app.security.encryption import encrypt_value, decrypt_value
 from app.erp.discovery import run_discovery_orchestrator, load_financial_kb
 from app.erp.document_ai import GuardianDocumentAI
 from app.erp.odoo_cache import get_cached, set_cached, invalidate as invalidate_odoo_cache
+from app.erp.bank_reconciliation import reconcile as bank_reconcile
 
 router = APIRouter()
 
@@ -3067,3 +3068,47 @@ def save_telegram_config(payload: TelegramConfigRequest):
         start_telegram_bot()
 
     return {"status": "success", "message": "Telegram configuration saved successfully."}
+
+
+@router.post("/bank-reconciliation")
+def bank_reconciliation(
+    statement: UploadFile = File(...),
+    ledger: UploadFile = File(...),
+):
+    """Compare bank statement vs bank ledger and return discrepancies."""
+    import tempfile
+    statement_path = ""
+    ledger_path = ""
+    try:
+        stmt_suffix = Path(statement.filename).suffix if statement.filename else ".csv"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=stmt_suffix) as f:
+            shutil.copyfileobj(statement.file, f)
+            statement_path = f.name
+
+        ledger_suffix = Path(ledger.filename).suffix if ledger.filename else ".csv"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ledger_suffix) as f:
+            shutil.copyfileobj(ledger.file, f)
+            ledger_path = f.name
+
+        result = bank_reconcile(statement_path, ledger_path)
+        return {
+            "status": "success",
+            "statement_only": [t.model_dump() for t in result.statement_only],
+            "ledger_only": [t.model_dump() for t in result.ledger_only],
+            "matched": [t.model_dump() for t in result.matched],
+            "statement_total": result.statement_total,
+            "ledger_total": result.ledger_total,
+            "difference": result.difference,
+            "statement_count": result.statement_count,
+            "ledger_count": result.ledger_count,
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bank reconciliation failed: {str(e)}"
+        )
+    finally:
+        if statement_path and os.path.exists(statement_path):
+            os.remove(statement_path)
+        if ledger_path and os.path.exists(ledger_path):
+            os.remove(ledger_path)

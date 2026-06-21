@@ -14,8 +14,8 @@ jobs:
   ci:
     uses: ./.github/workflows/ci.yml
 
-  deploy-backend:
-    name: Deploy Backend
+  deploy:
+    name: Deploy to Railway
     needs: [ci]
     runs-on: ubuntu-latest
     environment: production
@@ -25,25 +25,8 @@ jobs:
       - name: Install Railway CLI
         run: npm install -g @railway/cli
 
-      - name: Deploy Backend
+      - name: Deploy
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --service backend --detach
+        run: railway up --detach
         working-directory: BOB-2
-
-  deploy-frontend:
-    name: Deploy Frontend
-    needs: [ci]
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Deploy Frontend
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway up --service frontend --detach
-        working-directory: BOB-2/frontend

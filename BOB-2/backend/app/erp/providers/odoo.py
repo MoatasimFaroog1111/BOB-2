@@ -169,7 +169,7 @@ class OdooProvider:
 
         journal_ids = [j["id"] for j in bank_journals]
 
-        # Only include lines hitting the bank's liquidity account (not counterparts)
+        # Collect liquidity account IDs from bank journals
         account_ids = []
         for j in bank_journals:
             def_acc = j.get("default_account_id")
@@ -178,27 +178,51 @@ class OdooProvider:
             elif def_acc:
                 account_ids.append(def_acc)
 
+        fields = ["date", "name", "ref", "debit", "credit", "balance", "move_id", "account_id"]
+
         domain: list = [
             ["journal_id", "in", journal_ids],
             ["parent_state", "=", "posted"],
         ]
-        if account_ids:
-            domain.append(["account_id", "in", account_ids])
         if date_from:
             domain.append(["date", ">=", date_from])
         if date_to:
             domain.append(["date", "<=", date_to])
 
+        # Try with account_id filter first (liquidity account lines only)
+        if account_ids:
+            filtered_domain = domain + [["account_id", "in", account_ids]]
+            move_lines = self.execute_kw(
+                "account.move.line",
+                "search_read",
+                [filtered_domain],
+                {"fields": fields, "order": "date asc, id asc", "limit": 10000},
+            )
+            if move_lines:
+                return move_lines
+
+        # Fallback: query without account_id filter, then deduplicate
+        # by keeping only one line per move_id (the one with the largest
+        # abs(debit - credit), which is typically the bank-side line).
         move_lines = self.execute_kw(
             "account.move.line",
             "search_read",
             [domain],
-            {
-                "fields": ["date", "name", "ref", "debit", "credit", "balance", "move_id"],
-                "order": "date asc, id asc",
-                "limit": 10000,
-            },
+            {"fields": fields, "order": "date asc, id asc", "limit": 10000},
         )
+
+        if not account_ids and move_lines:
+            # No account_id filter was possible; deduplicate by move_id
+            seen_moves: dict[int, dict] = {}
+            for line in move_lines:
+                mid = line.get("move_id")
+                if isinstance(mid, list):
+                    mid = mid[0]
+                amt = abs(float(line.get("debit", 0)) - float(line.get("credit", 0)))
+                prev = seen_moves.get(mid)
+                if prev is None or amt > abs(float(prev.get("debit", 0)) - float(prev.get("credit", 0))):
+                    seen_moves[mid] = line
+            move_lines = list(seen_moves.values())
 
         return move_lines
 

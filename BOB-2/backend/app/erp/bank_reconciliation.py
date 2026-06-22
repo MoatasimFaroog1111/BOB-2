@@ -6,6 +6,7 @@ extracts transactions, and compares them to find discrepancies.
 """
 import csv
 import io
+import json
 import re
 from datetime import datetime
 from pathlib import Path
@@ -21,10 +22,18 @@ class Transaction(BaseModel):
     row_number: int
 
 
+class SmartMatch(BaseModel):
+    statement_txn: Transaction
+    ledger_txn: Transaction
+    confidence: float
+    reason: str
+
+
 class ReconciliationResult(BaseModel):
     statement_only: List[Transaction]
     ledger_only: List[Transaction]
     matched: List[Transaction]
+    smart_matched: List[SmartMatch] = []
     statement_total: float
     ledger_total: float
     difference: float
@@ -290,6 +299,101 @@ def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
     return transactions
 
 
+def _smart_match(
+    statement_only: List[Transaction],
+    ledger_only: List[Transaction],
+    confidence_threshold: float = 0.6,
+) -> List[SmartMatch]:
+    """Use LLM to match remaining unmatched transactions by description similarity."""
+    if not statement_only or not ledger_only:
+        return []
+
+    # Limit to avoid excessively large prompts
+    max_items = 30
+    stmt_subset = statement_only[:max_items]
+    ledg_subset = ledger_only[:max_items]
+
+    stmt_lines = "\n".join(
+        f"  S{i+1}: date={t.date} amount={t.amount} desc=\"{t.description}\""
+        for i, t in enumerate(stmt_subset)
+    )
+    ledg_lines = "\n".join(
+        f"  L{i+1}: date={t.date} amount={t.amount} desc=\"{t.description}\""
+        for i, t in enumerate(ledg_subset)
+    )
+
+    system_prompt = (
+        "You are a bank reconciliation assistant. You receive two lists of "
+        "unmatched financial transactions: one from a bank statement and one "
+        "from the accounting system (Odoo). Your job is to find likely matches "
+        "based on description similarity, considering:\n"
+        "- Arabic/English translations of the same entity\n"
+        "- Abbreviations and partial matches\n"
+        "- Similar dates (within ~7 days)\n"
+        "- Amounts that are close but not exact (fees, rounding)\n"
+        "Return ONLY a JSON array. Each element: "
+        '{\"s\": <S-index>, \"l\": <L-index>, \"confidence\": <0.0-1.0>, \"reason\": \"<brief explanation>\"}\n'
+        "Only include pairs with confidence >= 0.5. If no matches found, return [].\n"
+        "Return raw JSON only, no markdown code blocks."
+    )
+    user_prompt = (
+        f"Bank Statement (unmatched):\n{stmt_lines}\n\n"
+        f"Accounting System (unmatched):\n{ledg_lines}"
+    )
+
+    try:
+        from app.services.llm_service import chat
+        raw = chat(system_prompt, user_prompt, temperature=0.0, timeout=60)
+        if not raw:
+            return []
+
+        # Strip markdown code fences if present
+        text = raw.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```\w*\n?", "", text)
+            text = re.sub(r"\n?```$", "", text)
+        text = text.strip()
+
+        pairs = json.loads(text)
+        if not isinstance(pairs, list):
+            return []
+
+        results: List[SmartMatch] = []
+        used_s: set[int] = set()
+        used_l: set[int] = set()
+
+        for pair in pairs:
+            try:
+                s_idx = int(pair.get("s", 0)) - 1
+                l_idx = int(pair.get("l", 0)) - 1
+                conf = float(pair.get("confidence", 0))
+                reason = str(pair.get("reason", ""))
+            except (TypeError, ValueError):
+                continue
+
+            if conf < confidence_threshold:
+                continue
+            if s_idx < 0 or s_idx >= len(stmt_subset):
+                continue
+            if l_idx < 0 or l_idx >= len(ledg_subset):
+                continue
+            if s_idx in used_s or l_idx in used_l:
+                continue
+
+            used_s.add(s_idx)
+            used_l.add(l_idx)
+            results.append(SmartMatch(
+                statement_txn=stmt_subset[s_idx],
+                ledger_txn=ledg_subset[l_idx],
+                confidence=round(conf, 2),
+                reason=reason,
+            ))
+
+        return results
+    except Exception:
+        return []
+
+
 def _run_matching(
     statement_txns: List[Transaction],
     ledger_txns: List[Transaction],
@@ -330,6 +434,15 @@ def _run_matching(
     statement_only = [t for i, t in enumerate(statement_txns) if not statement_matched[i]]
     ledger_only = [t for i, t in enumerate(ledger_txns) if not ledger_matched[i]]
 
+    # Pass 3: AI-powered smart matching on remaining unmatched transactions
+    smart_matches = _smart_match(statement_only, ledger_only)
+
+    # Remove smart-matched transactions from the "only" lists
+    smart_stmt_rows = {sm.statement_txn.row_number for sm in smart_matches}
+    smart_ledg_rows = {sm.ledger_txn.row_number for sm in smart_matches}
+    statement_only = [t for t in statement_only if t.row_number not in smart_stmt_rows]
+    ledger_only = [t for t in ledger_only if t.row_number not in smart_ledg_rows]
+
     stmt_total = sum(t.amount for t in statement_txns)
     ledg_total = sum(t.amount for t in ledger_txns)
 
@@ -337,6 +450,7 @@ def _run_matching(
         statement_only=statement_only,
         ledger_only=ledger_only,
         matched=matched_pairs,
+        smart_matched=smart_matches,
         statement_total=round(stmt_total, 2),
         ledger_total=round(ledg_total, 2),
         difference=round(stmt_total - ledg_total, 2),

@@ -68,6 +68,12 @@ export default function TeamPage() {
     statement_only: { date: string; description: string; amount: number; row_number: number }[];
     ledger_only: { date: string; description: string; amount: number; row_number: number }[];
     matched: { date: string; description: string; amount: number; row_number: number }[];
+    smart_matched: {
+      statement_txn: { date: string; description: string; amount: number; row_number: number };
+      ledger_txn: { date: string; description: string; amount: number; row_number: number };
+      confidence: number;
+      reason: string;
+    }[];
     statement_total: number;
     ledger_total: number;
     difference: number;
@@ -1466,7 +1472,7 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
             </div>
 
             {/* Summary Cards */}
-            <div className="px-6 py-4 grid grid-cols-4 gap-3 border-b border-white/5 bg-black/20" dir="rtl">
+            <div className="px-6 py-4 grid grid-cols-5 gap-3 border-b border-white/5 bg-black/20" dir="rtl">
               <div className="flex flex-col items-center gap-1 p-3 rounded-xl bg-white/5 border border-white/10">
                 <span className="text-[9px] text-white/50 font-semibold">{t("bankRecon.statementFile")}</span>
                 <span className="text-lg font-bold text-cyan-400">{reconResults.statement_count}</span>
@@ -1481,6 +1487,10 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
                 <span className="text-[9px] text-green-400/70 font-semibold">{t("bankRecon.matched")}</span>
                 <span className="text-lg font-bold text-green-400">{reconResults.matched.length}</span>
               </div>
+              <div className="flex flex-col items-center gap-1 p-3 rounded-xl bg-purple-500/5 border border-purple-500/20">
+                <span className="text-[9px] text-purple-400/70 font-semibold">🤖 AI</span>
+                <span className="text-lg font-bold text-purple-400">{reconResults.smart_matched?.length || 0}</span>
+              </div>
               <div className={`flex flex-col items-center gap-1 p-3 rounded-xl border ${reconResults.difference === 0 ? "bg-green-500/5 border-green-500/20" : "bg-red-500/5 border-red-500/20"}`}>
                 <span className="text-[9px] text-white/50 font-semibold">الفرق</span>
                 <span className={`text-lg font-bold ${reconResults.difference === 0 ? "text-green-400" : "text-red-400"}`}>
@@ -1491,7 +1501,7 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
 
             {/* Results Content */}
             <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 bg-black/20" dir="rtl">
-              {reconResults.statement_only.length === 0 && reconResults.ledger_only.length === 0 ? (
+              {reconResults.statement_only.length === 0 && reconResults.ledger_only.length === 0 && (!reconResults.smart_matched || reconResults.smart_matched.length === 0) ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-3">
                   <span className="text-4xl">✅</span>
                   <span className="text-sm font-bold text-green-400">{t("bankRecon.noDiscrepancies")}</span>
@@ -1577,6 +1587,56 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
                               </td>
                             </tr>
                           </tfoot>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Smart Matched Transactions (AI) */}
+                  {reconResults.smart_matched && reconResults.smart_matched.length > 0 && (
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-purple-400 text-sm font-bold">🤖</span>
+                        <h3 className="text-[11px] font-bold text-purple-400">
+                          {t("bankRecon.smartMatched")} ({reconResults.smart_matched.length})
+                        </h3>
+                      </div>
+                      <div className="bg-black/40 border border-purple-500/20 rounded-xl overflow-hidden">
+                        <table className="w-full text-right text-[10px] border-collapse" dir="rtl">
+                          <thead>
+                            <tr className="bg-purple-500/5 border-b border-purple-500/10 text-purple-300/80 font-semibold">
+                              <th className="p-2.5">{t("bankRecon.statementSide")}</th>
+                              <th className="p-2.5">{t("bankRecon.systemSide")}</th>
+                              <th className="p-2.5 w-16">{t("bankRecon.confidence")}</th>
+                              <th className="p-2.5">{t("bankRecon.reason")}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {reconResults.smart_matched.map((sm, idx) => (
+                              <tr key={idx} className="border-b border-white/5 hover:bg-purple-500/5 text-white/90">
+                                <td className="p-2.5">
+                                  <div className="text-[9px] text-white/50 font-mono">{sm.statement_txn.date}</div>
+                                  <div className="truncate max-w-[160px]">{sm.statement_txn.description}</div>
+                                  <div className="text-[9px] font-bold text-cyan-400">{sm.statement_txn.amount.toFixed(2)}</div>
+                                </td>
+                                <td className="p-2.5">
+                                  <div className="text-[9px] text-white/50 font-mono">{sm.ledger_txn.date}</div>
+                                  <div className="truncate max-w-[160px]">{sm.ledger_txn.description}</div>
+                                  <div className="text-[9px] font-bold text-blue-400">{sm.ledger_txn.amount.toFixed(2)}</div>
+                                </td>
+                                <td className="p-2.5 text-center">
+                                  <span className={`inline-block px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
+                                    sm.confidence >= 0.8 ? "bg-green-500/20 text-green-400" :
+                                    sm.confidence >= 0.6 ? "bg-yellow-500/20 text-yellow-400" :
+                                    "bg-orange-500/20 text-orange-400"
+                                  }`}>
+                                    {Math.round(sm.confidence * 100)}%
+                                  </span>
+                                </td>
+                                <td className="p-2.5 text-[9px] text-white/60 max-w-[150px] truncate">{sm.reason}</td>
+                              </tr>
+                            ))}
+                          </tbody>
                         </table>
                       </div>
                     </div>

@@ -50,6 +50,9 @@ export const translations: Record<string, any> = {
       ledgerFile: "حساب البنك (Odoo)",
       noFiles: "يرجى إرفاق كشف البنك أولاً.",
       close: "إغلاق",
+      dateRange: "نطاق التاريخ",
+      dateFrom: "من",
+      dateTo: "إلى",
     },
     erp: {
       back: "← العودة إلى مركز التحكم",
@@ -222,6 +225,9 @@ export const translations: Record<string, any> = {
       ledgerFile: "Bank Account (Odoo)",
       noFiles: "Please upload bank statement first.",
       close: "Close",
+      dateRange: "Date Range",
+      dateFrom: "From",
+      dateTo: "To",
     },
     erp: {
       back: "← Back to Command Center",

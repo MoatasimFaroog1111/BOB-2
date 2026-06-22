@@ -3074,6 +3074,8 @@ def save_telegram_config(payload: TelegramConfigRequest):
 def bank_reconciliation(
     statement: UploadFile = File(...),
     db: Session = Depends(get_db),
+    date_from: Optional[str] = Form(None),
+    date_to: Optional[str] = Form(None),
 ):
     """Compare bank statement vs Odoo bank account and return discrepancies."""
     import tempfile
@@ -3102,9 +3104,12 @@ def bank_reconciliation(
             password=secret_data.get("password", ""),
         )
 
-        # Parse statement first to extract date range for scoped Odoo query
+        # Use user-supplied date range if provided, otherwise extract from statement
         statement_txns = parse_statement_file(statement_path)
-        date_from, date_to = get_date_range(statement_txns)
+        if not date_from or not date_to:
+            auto_from, auto_to = get_date_range(statement_txns)
+            date_from = date_from or auto_from
+            date_to = date_to or auto_to
 
         odoo_move_lines = erp.fetch_bank_transactions(
             date_from=date_from,

@@ -59,7 +59,9 @@ export default function TeamPage() {
 
   // Bank reconciliation state
   const [bankStatementFile, setBankStatementFile] = useState<File | null>(null);
-  // bankLedgerFile removed — ledger data now fetched from Odoo automatically
+  const [reconDateFrom, setReconDateFrom] = useState("");
+  const [reconDateTo, setReconDateTo] = useState("");
+  const [showDateRangePicker, setShowDateRangePicker] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
   const [showReconResults, setShowReconResults] = useState(false);
   const [reconResults, setReconResults] = useState<{
@@ -598,6 +600,8 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
     try {
       const formData = new FormData();
       formData.append("statement", bankStatementFile);
+      if (reconDateFrom) formData.append("date_from", reconDateFrom);
+      if (reconDateTo) formData.append("date_to", reconDateTo);
 
       const response = await fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation`, {
         method: "POST",
@@ -749,6 +753,56 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
           accept=".csv,.xlsx,.xls"
           className="hidden"
         />
+
+        {/* Date Range Picker */}
+        <div className="relative">
+          <div
+            onClick={() => setShowDateRangePicker(!showDateRangePicker)}
+            className={`h-6.5 px-3 border rounded-full flex items-center justify-center text-[10px] font-bold cursor-pointer transition-all duration-300 gap-1.5
+                       ${reconDateFrom || reconDateTo
+                         ? "border-green-400/60 bg-green-500/10 text-green-300"
+                         : "border-[#d9a441]/60 bg-gradient-to-br from-[#221205]/60 to-[#0f0701]/60 text-[#d9a441]/90 shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_8px_rgba(217,164,65,0.4)] hover:shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_14px_rgba(217,164,65,0.85)] hover:scale-102 hover:text-[#ffca5f] hover:border-[#d9a441]"
+                       }`}
+            title={t("bankRecon.dateRange")}
+          >
+            <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            {reconDateFrom || reconDateTo ? (
+              <span className="truncate max-w-[140px]">
+                {reconDateFrom || "..."} → {reconDateTo || "..."}
+              </span>
+            ) : (
+              t("bankRecon.dateRange")
+            )}
+            {(reconDateFrom || reconDateTo) && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setReconDateFrom(""); setReconDateTo(""); }}
+                className="text-red-400 hover:text-red-300 font-bold text-xs leading-none ml-1"
+              >×</button>
+            )}
+          </div>
+          {showDateRangePicker && (
+            <div className="absolute top-8 left-1/2 -translate-x-1/2 z-50 wood-panel rounded-xl p-3 border border-[#d9a441]/30 shadow-[0_4px_20px_rgba(0,0,0,0.6)] min-w-[200px]">
+              <div className="flex flex-col gap-2">
+                <label className="text-[9px] text-[#d9a441]/80 font-bold">{t("bankRecon.dateFrom")}</label>
+                <input
+                  type="date"
+                  value={reconDateFrom}
+                  onChange={(e) => setReconDateFrom(e.target.value)}
+                  className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-white/90 focus:border-[#d9a441]/60 focus:outline-none"
+                />
+                <label className="text-[9px] text-[#d9a441]/80 font-bold">{t("bankRecon.dateTo")}</label>
+                <input
+                  type="date"
+                  value={reconDateTo}
+                  onChange={(e) => setReconDateTo(e.target.value)}
+                  className="bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-[10px] text-white/90 focus:border-[#d9a441]/60 focus:outline-none"
+                />
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Reconcile Button */}
         <button

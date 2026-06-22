@@ -3122,7 +3122,7 @@ def bank_reconciliation(
             "status": "success",
             "statement_only": [t.model_dump() for t in result.statement_only],
             "ledger_only": [t.model_dump() for t in result.ledger_only],
-            "matched": [t.model_dump() for t in result.matched],
+            "matched": [mp.model_dump() for mp in result.matched],
             "smart_matched": [sm.model_dump() for sm in result.smart_matched],
             "statement_total": result.statement_total,
             "ledger_total": result.ledger_total,

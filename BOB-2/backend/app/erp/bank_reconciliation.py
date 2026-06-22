@@ -22,6 +22,11 @@ class Transaction(BaseModel):
     row_number: int
 
 
+class MatchedPair(BaseModel):
+    statement_txn: Transaction
+    ledger_txn: Transaction
+
+
 class SmartMatch(BaseModel):
     statement_txn: Transaction
     ledger_txn: Transaction
@@ -32,7 +37,7 @@ class SmartMatch(BaseModel):
 class ReconciliationResult(BaseModel):
     statement_only: List[Transaction]
     ledger_only: List[Transaction]
-    matched: List[Transaction]
+    matched: List[MatchedPair]
     smart_matched: List[SmartMatch] = []
     statement_total: float
     ledger_total: float
@@ -403,7 +408,7 @@ def _run_matching(
     # Track which ledger transactions have been matched
     ledger_matched = [False] * len(ledger_txns)
     statement_matched = [False] * len(statement_txns)
-    matched_pairs: List[Transaction] = []
+    matched_pairs: List[MatchedPair] = []
 
     # Pass 1: exact amount + date match
     for s_idx, s_txn in enumerate(statement_txns):
@@ -415,7 +420,7 @@ def _run_matching(
             if abs(s_txn.amount - l_txn.amount) < 0.01 and s_txn.date == l_txn.date:
                 statement_matched[s_idx] = True
                 ledger_matched[l_idx] = True
-                matched_pairs.append(s_txn)
+                matched_pairs.append(MatchedPair(statement_txn=s_txn, ledger_txn=l_txn))
                 break
 
     # Pass 2: exact amount match (date may differ by a few days)
@@ -428,7 +433,7 @@ def _run_matching(
             if abs(s_txn.amount - l_txn.amount) < 0.01:
                 statement_matched[s_idx] = True
                 ledger_matched[l_idx] = True
-                matched_pairs.append(s_txn)
+                matched_pairs.append(MatchedPair(statement_txn=s_txn, ledger_txn=l_txn))
                 break
 
     statement_only = [t for i, t in enumerate(statement_txns) if not statement_matched[i]]

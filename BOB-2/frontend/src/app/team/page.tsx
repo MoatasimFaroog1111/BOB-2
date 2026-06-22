@@ -67,7 +67,10 @@ export default function TeamPage() {
   const [reconResults, setReconResults] = useState<{
     statement_only: { date: string; description: string; amount: number; row_number: number }[];
     ledger_only: { date: string; description: string; amount: number; row_number: number }[];
-    matched: { date: string; description: string; amount: number; row_number: number }[];
+    matched: {
+      statement_txn: { date: string; description: string; amount: number; row_number: number };
+      ledger_txn: { date: string; description: string; amount: number; row_number: number };
+    }[];
     smart_matched: {
       statement_txn: { date: string; description: string; amount: number; row_number: number };
       ledger_txn: { date: string; description: string; amount: number; row_number: number };
@@ -1540,11 +1543,11 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
                         const rows: UnifiedRow[] = [];
 
                         // Add matched transactions (Pass 1 & 2)
-                        for (const txn of reconResults.matched) {
+                        for (const mp of reconResults.matched) {
                           rows.push({
-                            date: txn.date,
-                            matchedBank: { description: txn.description, amount: txn.amount },
-                            matchedSystem: { description: txn.description, amount: txn.amount },
+                            date: mp.statement_txn.date,
+                            matchedBank: { description: mp.statement_txn.description, amount: mp.statement_txn.amount },
+                            matchedSystem: { description: mp.ledger_txn.description, amount: mp.ledger_txn.amount },
                           });
                         }
 

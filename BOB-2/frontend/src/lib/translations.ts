@@ -53,6 +53,11 @@ export const translations: Record<string, any> = {
       dateRange: "نطاق التاريخ",
       dateFrom: "من",
       dateTo: "إلى",
+      smartMatched: "مطابقة ذكية (Gemma AI)",
+      confidence: "نسبة الثقة",
+      reason: "السبب",
+      statementSide: "كشف البنك",
+      systemSide: "النظام",
     },
     erp: {
       back: "← العودة إلى مركز التحكم",
@@ -228,6 +233,11 @@ export const translations: Record<string, any> = {
       dateRange: "Date Range",
       dateFrom: "From",
       dateTo: "To",
+      smartMatched: "Smart Matched (Gemma AI)",
+      confidence: "Confidence",
+      reason: "Reason",
+      statementSide: "Bank Statement",
+      systemSide: "System",
     },
     erp: {
       back: "← Back to Command Center",

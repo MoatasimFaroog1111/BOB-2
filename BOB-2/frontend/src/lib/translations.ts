@@ -58,6 +58,10 @@ export const translations: Record<string, any> = {
       reason: "السبب",
       statementSide: "كشف البنك",
       systemSide: "النظام",
+      matchedBank: "كشف البنك (متطابق)",
+      matchedSystem: "النظام (متطابق)",
+      bankOnly: "كشف البنك فقط",
+      systemOnly: "النظام فقط",
     },
     erp: {
       back: "← العودة إلى مركز التحكم",
@@ -238,6 +242,10 @@ export const translations: Record<string, any> = {
       reason: "Reason",
       statementSide: "Bank Statement",
       systemSide: "System",
+      matchedBank: "Bank Statement (Matched)",
+      matchedSystem: "System (Matched)",
+      bankOnly: "Bank Only",
+      systemOnly: "System Only",
     },
     erp: {
       back: "← Back to Command Center",

@@ -363,10 +363,13 @@ def _smart_match(
         used_l: set[int] = set()
 
         for pair in pairs:
-            s_idx = int(pair.get("s", 0)) - 1
-            l_idx = int(pair.get("l", 0)) - 1
-            conf = float(pair.get("confidence", 0))
-            reason = str(pair.get("reason", ""))
+            try:
+                s_idx = int(pair.get("s", 0)) - 1
+                l_idx = int(pair.get("l", 0)) - 1
+                conf = float(pair.get("confidence", 0))
+                reason = str(pair.get("reason", ""))
+            except (TypeError, ValueError):
+                continue
 
             if conf < confidence_threshold:
                 continue

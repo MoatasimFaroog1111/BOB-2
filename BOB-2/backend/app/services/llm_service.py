@@ -96,7 +96,7 @@ def chat(
 ) -> Optional[str]:
     """Send a chat completion request. Tries Ollama first, then Grok."""
     result = _call_ollama(system_prompt, user_prompt, temperature, timeout)
-    if result is not None:
+    if result:
         logger.info("LLM response from Ollama/Gemma")
         return result
 

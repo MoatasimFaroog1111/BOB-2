@@ -91,14 +91,48 @@ document.querySelectorAll('button').forEach(btn => {
 ```
 
 ### Results Modal Structure
-- **Summary cards:** statement count/total, ledger count/total, matched count, difference (red if non-zero)
+- **Summary cards (5 columns):** statement count/total, ledger count/total, matched count, 🤖 AI count, difference (red if non-zero)
 - **Red table:** transactions in statement only (header includes count)
 - **Amber table:** transactions in ledger only
+- **Purple table:** smart matched (AI) transactions — side-by-side bank vs system with confidence badges (green ≥80%, yellow ≥60%, orange <60%) and reason text. Only visible when `smart_matched` array is non-empty.
 - **Green collapsible `<details>`:** matched transactions
 - **Close button:** "إغلاق" at top-left of modal
 
+### Testing Smart Matching UI Without LLM
+When no LLM provider (Ollama/Grok) is available, `smart_matched` will be empty. To test the smart matching UI rendering, intercept the fetch API to return mock data:
+```javascript
+const originalFetch = window.fetch;
+window.fetch = function(url, options) {
+  if (typeof url === 'string' && url.includes('bank-reconciliation')) {
+    const mockData = {
+      status: "success",
+      statement_only: [{ date: "2025-01-05", description: "Test", amount: 5000, row_number: 1 }],
+      ledger_only: [{ date: "2025-01-06", description: "Test", amount: 3000, row_number: 2 }],
+      matched: [{ date: "2025-01-01", description: "Rent", amount: 10000, row_number: 3 }],
+      smart_matched: [
+        {
+          statement_txn: { date: "2025-01-10", description: "Arabic Desc", amount: 7500, row_number: 4 },
+          ledger_txn: { date: "2025-01-11", description: "English Desc", amount: 7500, row_number: 5 },
+          confidence: 0.92, reason: "Match reason"
+        }
+      ],
+      statement_total: 12500, ledger_total: 10500, difference: 2000,
+      statement_count: 3, ledger_count: 3
+    };
+    return Promise.resolve(new Response(JSON.stringify(mockData), {
+      status: 200, headers: { 'Content-Type': 'application/json' }
+    }));
+  }
+  return originalFetch.apply(this, arguments);
+};
+```
+This approach lets you test all three confidence badge colors by providing entries with confidence values ≥0.8 (green), ≥0.6 (yellow), and <0.6 (orange).
+
+### Port Conflicts
+Port 3000 might be in use from a previous session. If you get `EADDRINUSE`, use a different port (e.g. `-p 3001`) or kill the process: `fuser -k 3000/tcp`.
+
 ### Backend API
-`POST /api/v1/erp/bank-reconciliation` with multipart form: `statement=<file>`, `ledger=<file>`. Returns JSON with `statement_only`, `ledger_only`, `matched` arrays plus totals.
+`POST /api/v1/erp/bank-reconciliation` with multipart form: `statement=<file>`, optional `date_from` and `date_to` fields. Returns JSON with `statement_only`, `ledger_only`, `matched`, `smart_matched` arrays plus totals.
 
 ## Devin Secrets Needed
 

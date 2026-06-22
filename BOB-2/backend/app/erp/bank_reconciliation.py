@@ -273,7 +273,10 @@ def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
 
         debit = float(line.get("debit", 0))
         credit = float(line.get("credit", 0))
-        amount = round(debit - credit, 2)
+        # Use credit - debit to align with bank statement convention where
+        # debit column = outflow (positive) and credit column = inflow (negative).
+        # Odoo's accounting convention is the opposite (debit on bank = money in).
+        amount = round(credit - debit, 2)
 
         if amount == 0.0:
             continue
@@ -349,12 +352,19 @@ def reconcile(statement_path: str, ledger_path: str) -> ReconciliationResult:
     return _run_matching(statement_txns, ledger_txns)
 
 
-def get_date_range(transactions: List[Transaction]) -> tuple:
-    """Extract min/max dates from transactions for Odoo query scoping."""
+def get_date_range(transactions: List[Transaction], buffer_days: int = 7) -> tuple:
+    """Extract min/max dates from transactions for Odoo query scoping.
+
+    Adds a buffer (default 7 days) on each side to allow Pass 2 matching
+    for transactions posted near period boundaries.
+    """
+    from datetime import datetime, timedelta
     dates = [t.date for t in transactions if t.date and t.date >= "1900"]
     if not dates:
         return None, None
-    return min(dates), max(dates)
+    min_date = datetime.strptime(min(dates), "%Y-%m-%d") - timedelta(days=buffer_days)
+    max_date = datetime.strptime(max(dates), "%Y-%m-%d") + timedelta(days=buffer_days)
+    return min_date.strftime("%Y-%m-%d"), max_date.strftime("%Y-%m-%d")
 
 
 def reconcile_with_odoo_data(

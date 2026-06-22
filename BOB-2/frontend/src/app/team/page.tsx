@@ -1499,181 +1499,141 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
               </div>
             </div>
 
-            {/* Results Content */}
-            <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-6 bg-black/20" dir="rtl">
+            {/* Results Content — Unified Table */}
+            <div className="flex-1 overflow-y-auto p-6 bg-black/20" dir="rtl">
               {reconResults.statement_only.length === 0 && reconResults.ledger_only.length === 0 && (!reconResults.smart_matched || reconResults.smart_matched.length === 0) ? (
                 <div className="flex flex-col items-center justify-center py-12 gap-3">
                   <span className="text-4xl">✅</span>
                   <span className="text-sm font-bold text-green-400">{t("bankRecon.noDiscrepancies")}</span>
                 </div>
               ) : (
-                <>
-                  {/* Statement Only */}
-                  {reconResults.statement_only.length > 0 && (
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-red-400 text-sm font-bold">⚠️</span>
-                        <h3 className="text-[11px] font-bold text-red-400">
-                          {t("bankRecon.inStatementOnly")} ({reconResults.statement_only.length})
-                        </h3>
-                      </div>
-                      <div className="bg-black/40 border border-red-500/20 rounded-xl overflow-hidden">
-                        <table className="w-full text-right text-[10px] border-collapse" dir="rtl">
-                          <thead>
-                            <tr className="bg-red-500/5 border-b border-red-500/10 text-red-300/80 font-semibold">
-                              <th className="p-2.5 w-8">#</th>
-                              <th className="p-2.5">{t("bankRecon.date")}</th>
-                              <th className="p-2.5">{t("bankRecon.description")}</th>
-                              <th className="p-2.5 text-left">{t("bankRecon.amount")}</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {reconResults.statement_only.map((txn, idx) => (
-                              <tr key={idx} className="border-b border-white/5 hover:bg-red-500/5 text-white/90">
-                                <td className="p-2.5 text-white/30">{txn.row_number}</td>
-                                <td className="p-2.5 text-white/60 font-mono text-[9px]">{txn.date}</td>
-                                <td className="p-2.5 truncate max-w-[250px]">{txn.description}</td>
-                                <td className="p-2.5 text-left font-bold text-red-400">{txn.amount.toFixed(2)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                          <tfoot>
-                            <tr className="border-t border-red-500/20 bg-red-500/5">
-                              <td colSpan={3} className="p-2.5 text-[10px] font-bold text-red-300">{t("bankRecon.total")}</td>
-                              <td className="p-2.5 text-left font-bold text-red-400">
-                                {reconResults.statement_only.reduce((s, t) => s + t.amount, 0).toFixed(2)}
-                              </td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-                    </div>
-                  )}
+                <div className="bg-black/40 border border-white/10 rounded-xl overflow-hidden">
+                  <table className="w-full text-right text-[10px] border-collapse" dir="rtl">
+                    <thead>
+                      <tr className="bg-white/5 border-b border-white/10 text-white/70 font-semibold">
+                        <th className="p-2.5 w-20 border-l border-white/5">{t("bankRecon.date")}</th>
+                        <th className="p-2.5 border-l border-white/5">
+                          <span className="text-green-400">{t("bankRecon.matchedBank")}</span>
+                        </th>
+                        <th className="p-2.5 border-l border-white/5">
+                          <span className="text-green-400">{t("bankRecon.matchedSystem")}</span>
+                        </th>
+                        <th className="p-2.5 border-l border-white/5">
+                          <span className="text-red-400">{t("bankRecon.bankOnly")}</span>
+                        </th>
+                        <th className="p-2.5">
+                          <span className="text-amber-400">{t("bankRecon.systemOnly")}</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(() => {
+                        type UnifiedRow = {
+                          date: string;
+                          matchedBank?: { description: string; amount: number };
+                          matchedSystem?: { description: string; amount: number };
+                          bankOnly?: { description: string; amount: number };
+                          systemOnly?: { description: string; amount: number };
+                          isSmartMatch?: boolean;
+                          confidence?: number;
+                        };
+                        const rows: UnifiedRow[] = [];
 
-                  {/* Ledger Only */}
-                  {reconResults.ledger_only.length > 0 && (
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-amber-400 text-sm font-bold">⚠️</span>
-                        <h3 className="text-[11px] font-bold text-amber-400">
-                          {t("bankRecon.inLedgerOnly")} ({reconResults.ledger_only.length})
-                        </h3>
-                      </div>
-                      <div className="bg-black/40 border border-amber-500/20 rounded-xl overflow-hidden">
-                        <table className="w-full text-right text-[10px] border-collapse" dir="rtl">
-                          <thead>
-                            <tr className="bg-amber-500/5 border-b border-amber-500/10 text-amber-300/80 font-semibold">
-                              <th className="p-2.5 w-8">#</th>
-                              <th className="p-2.5">{t("bankRecon.date")}</th>
-                              <th className="p-2.5">{t("bankRecon.description")}</th>
-                              <th className="p-2.5 text-left">{t("bankRecon.amount")}</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {reconResults.ledger_only.map((txn, idx) => (
-                              <tr key={idx} className="border-b border-white/5 hover:bg-amber-500/5 text-white/90">
-                                <td className="p-2.5 text-white/30">{txn.row_number}</td>
-                                <td className="p-2.5 text-white/60 font-mono text-[9px]">{txn.date}</td>
-                                <td className="p-2.5 truncate max-w-[250px]">{txn.description}</td>
-                                <td className="p-2.5 text-left font-bold text-amber-400">{txn.amount.toFixed(2)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                          <tfoot>
-                            <tr className="border-t border-amber-500/20 bg-amber-500/5">
-                              <td colSpan={3} className="p-2.5 text-[10px] font-bold text-amber-300">{t("bankRecon.total")}</td>
-                              <td className="p-2.5 text-left font-bold text-amber-400">
-                                {reconResults.ledger_only.reduce((s, t) => s + t.amount, 0).toFixed(2)}
-                              </td>
-                            </tr>
-                          </tfoot>
-                        </table>
-                      </div>
-                    </div>
-                  )}
+                        // Add matched transactions (Pass 1 & 2)
+                        for (const txn of reconResults.matched) {
+                          rows.push({
+                            date: txn.date,
+                            matchedBank: { description: txn.description, amount: txn.amount },
+                            matchedSystem: { description: txn.description, amount: txn.amount },
+                          });
+                        }
 
-                  {/* Smart Matched Transactions (AI) */}
-                  {reconResults.smart_matched && reconResults.smart_matched.length > 0 && (
-                    <div className="flex flex-col gap-2">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="text-purple-400 text-sm font-bold">🤖</span>
-                        <h3 className="text-[11px] font-bold text-purple-400">
-                          {t("bankRecon.smartMatched")} ({reconResults.smart_matched.length})
-                        </h3>
-                      </div>
-                      <div className="bg-black/40 border border-purple-500/20 rounded-xl overflow-hidden">
-                        <table className="w-full text-right text-[10px] border-collapse" dir="rtl">
-                          <thead>
-                            <tr className="bg-purple-500/5 border-b border-purple-500/10 text-purple-300/80 font-semibold">
-                              <th className="p-2.5">{t("bankRecon.statementSide")}</th>
-                              <th className="p-2.5">{t("bankRecon.systemSide")}</th>
-                              <th className="p-2.5 w-16">{t("bankRecon.confidence")}</th>
-                              <th className="p-2.5">{t("bankRecon.reason")}</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {reconResults.smart_matched.map((sm, idx) => (
-                              <tr key={idx} className="border-b border-white/5 hover:bg-purple-500/5 text-white/90">
-                                <td className="p-2.5">
-                                  <div className="text-[9px] text-white/50 font-mono">{sm.statement_txn.date}</div>
-                                  <div className="truncate max-w-[160px]">{sm.statement_txn.description}</div>
-                                  <div className="text-[9px] font-bold text-cyan-400">{sm.statement_txn.amount.toFixed(2)}</div>
-                                </td>
-                                <td className="p-2.5">
-                                  <div className="text-[9px] text-white/50 font-mono">{sm.ledger_txn.date}</div>
-                                  <div className="truncate max-w-[160px]">{sm.ledger_txn.description}</div>
-                                  <div className="text-[9px] font-bold text-blue-400">{sm.ledger_txn.amount.toFixed(2)}</div>
-                                </td>
-                                <td className="p-2.5 text-center">
-                                  <span className={`inline-block px-1.5 py-0.5 rounded-full text-[9px] font-bold ${
-                                    sm.confidence >= 0.8 ? "bg-green-500/20 text-green-400" :
-                                    sm.confidence >= 0.6 ? "bg-yellow-500/20 text-yellow-400" :
-                                    "bg-orange-500/20 text-orange-400"
-                                  }`}>
-                                    {Math.round(sm.confidence * 100)}%
-                                  </span>
-                                </td>
-                                <td className="p-2.5 text-[9px] text-white/60 max-w-[150px] truncate">{sm.reason}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
+                        // Add smart matched transactions (Pass 3 — AI)
+                        if (reconResults.smart_matched) {
+                          for (const sm of reconResults.smart_matched) {
+                            rows.push({
+                              date: sm.statement_txn.date,
+                              matchedBank: { description: sm.statement_txn.description, amount: sm.statement_txn.amount },
+                              matchedSystem: { description: sm.ledger_txn.description, amount: sm.ledger_txn.amount },
+                              isSmartMatch: true,
+                              confidence: sm.confidence,
+                            });
+                          }
+                        }
 
-                  {/* Matched Transactions (collapsed) */}
-                  {reconResults.matched.length > 0 && (
-                    <details className="group">
-                      <summary className="flex items-center gap-2 cursor-pointer text-[11px] font-bold text-green-400 hover:text-green-300 transition-all">
-                        <svg className="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                        </svg>
-                        {t("bankRecon.matched")} ({reconResults.matched.length})
-                      </summary>
-                      <div className="mt-2 bg-black/40 border border-green-500/20 rounded-xl overflow-hidden">
-                        <table className="w-full text-right text-[10px] border-collapse" dir="rtl">
-                          <thead>
-                            <tr className="bg-green-500/5 border-b border-green-500/10 text-green-300/80 font-semibold">
-                              <th className="p-2.5">{t("bankRecon.date")}</th>
-                              <th className="p-2.5">{t("bankRecon.description")}</th>
-                              <th className="p-2.5 text-left">{t("bankRecon.amount")}</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {reconResults.matched.map((txn, idx) => (
-                              <tr key={idx} className="border-b border-white/5 hover:bg-green-500/5 text-white/70">
-                                <td className="p-2.5 font-mono text-[9px]">{txn.date}</td>
-                                <td className="p-2.5 truncate max-w-[250px]">{txn.description}</td>
-                                <td className="p-2.5 text-left font-semibold text-green-400">{txn.amount.toFixed(2)}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </details>
-                  )}
-                </>
+                        // Add statement-only transactions
+                        for (const txn of reconResults.statement_only) {
+                          rows.push({
+                            date: txn.date,
+                            bankOnly: { description: txn.description, amount: txn.amount },
+                          });
+                        }
+
+                        // Add ledger-only transactions
+                        for (const txn of reconResults.ledger_only) {
+                          rows.push({
+                            date: txn.date,
+                            systemOnly: { description: txn.description, amount: txn.amount },
+                          });
+                        }
+
+                        // Sort by date
+                        rows.sort((a, b) => a.date.localeCompare(b.date));
+
+                        return rows.map((row, idx) => (
+                          <tr key={idx} className={`border-b border-white/5 hover:bg-white/[0.03] ${row.isSmartMatch ? "bg-purple-500/[0.03]" : ""}`}>
+                            <td className="p-2.5 text-white/50 font-mono text-[9px] border-l border-white/5 whitespace-nowrap">{row.date}</td>
+                            <td className="p-2.5 border-l border-white/5">
+                              {row.matchedBank ? (
+                                <div>
+                                  <div className="truncate max-w-[140px] text-white/80">{row.matchedBank.description}</div>
+                                  <div className={`text-[9px] font-bold ${row.isSmartMatch ? "text-purple-400" : "text-green-400"}`}>
+                                    {row.matchedBank.amount.toFixed(2)}
+                                    {row.isSmartMatch && row.confidence !== undefined && (
+                                      <span className={`mr-1.5 inline-block px-1 py-px rounded-full text-[8px] ${
+                                        row.confidence >= 0.8 ? "bg-green-500/20 text-green-400" :
+                                        row.confidence >= 0.6 ? "bg-yellow-500/20 text-yellow-400" :
+                                        "bg-orange-500/20 text-orange-400"
+                                      }`}>
+                                        🤖 {Math.round(row.confidence * 100)}%
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              ) : <span className="text-white/10">—</span>}
+                            </td>
+                            <td className="p-2.5 border-l border-white/5">
+                              {row.matchedSystem ? (
+                                <div>
+                                  <div className="truncate max-w-[140px] text-white/80">{row.matchedSystem.description}</div>
+                                  <div className={`text-[9px] font-bold ${row.isSmartMatch ? "text-purple-400" : "text-green-400"}`}>
+                                    {row.matchedSystem.amount.toFixed(2)}
+                                  </div>
+                                </div>
+                              ) : <span className="text-white/10">—</span>}
+                            </td>
+                            <td className="p-2.5 border-l border-white/5">
+                              {row.bankOnly ? (
+                                <div>
+                                  <div className="truncate max-w-[140px] text-white/80">{row.bankOnly.description}</div>
+                                  <div className="text-[9px] font-bold text-red-400">{row.bankOnly.amount.toFixed(2)}</div>
+                                </div>
+                              ) : <span className="text-white/10">—</span>}
+                            </td>
+                            <td className="p-2.5">
+                              {row.systemOnly ? (
+                                <div>
+                                  <div className="truncate max-w-[140px] text-white/80">{row.systemOnly.description}</div>
+                                  <div className="text-[9px] font-bold text-amber-400">{row.systemOnly.amount.toFixed(2)}</div>
+                                </div>
+                              ) : <span className="text-white/10">—</span>}
+                            </td>
+                          </tr>
+                        ));
+                      })()}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           </div>

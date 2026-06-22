@@ -3128,6 +3128,8 @@ def bank_reconciliation(
             "difference": result.difference,
             "statement_count": result.statement_count,
             "ledger_count": result.ledger_count,
+            "odoo_raw_count": len(odoo_move_lines),
+            "date_range_used": {"from": date_from, "to": date_to},
         }
     except Exception as e:
         raise HTTPException(

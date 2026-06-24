@@ -3,6 +3,13 @@ Bank reconciliation engine.
 
 Parses bank statement and bank ledger files (CSV/XLSX/XLS),
 extracts transactions, and compares them to find discrepancies.
+
+Convention used throughout:
+  - Deposits / money-in  → positive amount
+  - Withdrawals / money-out → negative amount
+
+This applies to BOTH bank statement parsing and Odoo move lines conversion
+so that amounts can be compared directly.
 """
 import csv
 import io
@@ -110,12 +117,21 @@ def _normalize_date(date_str: str) -> str:
 
 
 def _detect_columns(headers: List[str]) -> dict:
-    """Auto-detect which columns contain date, description, and amount."""
-    date_keywords = ["date", "تاريخ", "التاريخ", "value date", "posting date"]
-    desc_keywords = ["description", "الوصف", "البيان", "memo", "details", "تفاصيل", "narrative", "reference", "المرجع"]
-    amount_keywords = ["amount", "المبلغ", "مبلغ", "debit", "credit", "مدين", "دائن", "balance", "الرصيد", "withdrawal", "deposit"]
-    debit_keywords = ["debit", "مدين", "withdrawal", "سحب"]
-    credit_keywords = ["credit", "دائن", "deposit", "إيداع"]
+    """Auto-detect which columns contain date, description, and amount.
+
+    Priority order for amount columns:
+      1. Explicit debit column
+      2. Explicit credit column
+      3. Generic amount/balance column
+    debit/credit keywords are intentionally separated from amount_keywords
+    to avoid double-detection conflicts.
+    """
+    date_keywords = ["date", "\u062a\u0627\u0631\u064a\u062e", "\u0627\u0644\u062a\u0627\u0631\u064a\u062e", "value date", "posting date"]
+    desc_keywords = ["description", "\u0627\u0644\u0648\u0635\u0641", "\u0627\u0644\u0628\u064a\u0627\u0646", "memo", "details", "\u062a\u0641\u0627\u0635\u064a\u0644", "narrative", "reference", "\u0627\u0644\u0645\u0631\u062c\u0639"]
+    # FIX: removed "debit"/"credit" from amount_keywords to avoid conflict with debit/credit columns
+    amount_keywords = ["amount", "\u0627\u0644\u0645\u0628\u0644\u063a", "\u0645\u0628\u0644\u063a", "balance", "\u0627\u0644\u0631\u0635\u064a\u062f", "withdrawal", "deposit"]
+    debit_keywords = ["debit", "\u0645\u062f\u064a\u0646", "withdrawal", "\u0633\u062d\u0628"]
+    credit_keywords = ["credit", "\u062f\u0627\u0626\u0646", "deposit", "\u0625\u064a\u062f\u0627\u0639"]
 
     result = {"date": -1, "description": -1, "amount": -1, "debit": -1, "credit": -1}
 
@@ -136,7 +152,14 @@ def _detect_columns(headers: List[str]) -> dict:
 
 
 def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = True) -> List[Transaction]:
-    """Extract transactions from parsed rows."""
+    """Extract transactions from parsed rows.
+
+    Amount sign convention (matches Odoo and bank statement):
+      deposit  (credit / money-in)  → positive
+      withdrawal (debit / money-out) → negative
+    When separate debit/credit columns exist: amount = credit - debit
+    When a single signed amount column exists: value is used as-is.
+    """
     if not rows or len(rows) < 2:
         return []
 
@@ -163,7 +186,9 @@ def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = Tr
             credit_str = cells[col_map["credit"]] if col_map["credit"] < len(cells) else ""
             debit = _parse_number(debit_str) or 0.0
             credit = _parse_number(credit_str) or 0.0
-            amount_val = debit - credit
+            # FIX: credit - debit → deposit positive, withdrawal negative
+            # This aligns with Odoo convention and standard bank statement sign
+            amount_val = credit - debit
         elif col_map["amount"] >= 0 and col_map["amount"] < len(cells):
             parsed = _parse_number(cells[col_map["amount"]])
             if parsed is not None:
@@ -275,7 +300,19 @@ def parse_file(file_path: str) -> List[Transaction]:
 
 
 def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
-    """Convert Odoo account.move.line records to Transaction objects."""
+    """Convert Odoo account.move.line records to Transaction objects.
+
+    Odoo accounting convention for a bank account journal:
+      debit  = money INTO the bank  (positive from customer perspective) → deposit
+      credit = money OUT of the bank (negative from customer perspective) → withdrawal
+
+    We convert to the unified sign convention:
+      deposit  (debit in Odoo)  → positive
+      withdrawal (credit in Odoo) → negative
+    So: amount = debit - credit
+    This matches the sign produced by _extract_transactions_from_rows (credit - debit
+    on a bank statement where credit = deposit column, debit = withdrawal column).
+    """
     transactions = []
     for idx, line in enumerate(move_lines):
         date_val = str(line.get("date", ""))
@@ -287,10 +324,9 @@ def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
 
         debit = float(line.get("debit", 0))
         credit = float(line.get("credit", 0))
-        # Use credit - debit to align with bank statement convention where
-        # debit column = outflow (positive) and credit column = inflow (negative).
-        # Odoo's accounting convention is the opposite (debit on bank = money in).
-        amount = round(credit - debit, 2)
+        # FIX: debit - credit so that money-in (Odoo debit) = positive,
+        # money-out (Odoo credit) = negative. Consistent with statement parsing.
+        amount = round(debit - credit, 2)
 
         if amount == 0.0:
             continue
@@ -410,7 +446,7 @@ def _run_matching(
     statement_matched = [False] * len(statement_txns)
     matched_pairs: List[MatchedPair] = []
 
-    # Pass 1: exact amount + date match
+    # Pass 1: exact amount + exact date match
     for s_idx, s_txn in enumerate(statement_txns):
         if statement_matched[s_idx]:
             continue
@@ -423,7 +459,9 @@ def _run_matching(
                 matched_pairs.append(MatchedPair(statement_txn=s_txn, ledger_txn=l_txn))
                 break
 
-    # Pass 2: exact amount match (date may differ by a few days)
+    # Pass 2: exact amount + date within 7-day window
+    # FIX: replaced blind "same amount regardless of date" with a date-proximity check
+    # to prevent false matches on recurring identical amounts (e.g. monthly rent).
     for s_idx, s_txn in enumerate(statement_txns):
         if statement_matched[s_idx]:
             continue
@@ -431,10 +469,18 @@ def _run_matching(
             if ledger_matched[l_idx]:
                 continue
             if abs(s_txn.amount - l_txn.amount) < 0.01:
-                statement_matched[s_idx] = True
-                ledger_matched[l_idx] = True
-                matched_pairs.append(MatchedPair(statement_txn=s_txn, ledger_txn=l_txn))
-                break
+                # Only match if both dates are valid and within 7 days of each other
+                try:
+                    s_date = datetime.strptime(s_txn.date, "%Y-%m-%d")
+                    l_date = datetime.strptime(l_txn.date, "%Y-%m-%d")
+                    if abs((s_date - l_date).days) <= 7:
+                        statement_matched[s_idx] = True
+                        ledger_matched[l_idx] = True
+                        matched_pairs.append(MatchedPair(statement_txn=s_txn, ledger_txn=l_txn))
+                        break
+                except (ValueError, TypeError):
+                    # If dates can't be parsed, skip to avoid false matches
+                    continue
 
     statement_only = [t for i, t in enumerate(statement_txns) if not statement_matched[i]]
     ledger_only = [t for i, t in enumerate(ledger_txns) if not ledger_matched[i]]

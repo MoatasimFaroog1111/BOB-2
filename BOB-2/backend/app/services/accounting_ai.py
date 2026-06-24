@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import math
+import os
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -10,6 +10,19 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.models.ai_accounting import AIAccountingSuggestion, AIDecisionAuditLog, AIDocumentEmbedding, AIDocumentMatch
+
+DEFAULT_EMBEDDING_MODEL_NAME = "BAAI/bge-m3"
+
+
+def resolve_embedding_model_name(model_name: str | None = None) -> str:
+    """Resolve the embedding model without depending on shared Settings.
+
+    This intentionally uses the EMBEDDING_MODEL_NAME environment variable so
+    accounting AI can be configured without editing app.core.config, which is
+    a shared file that often changes on the main branch.
+    """
+    return model_name or os.getenv("EMBEDDING_MODEL_NAME") or DEFAULT_EMBEDDING_MODEL_NAME
+
 
 DOC_LABELS = {"invoice": ["invoice", "tax invoice", "فاتورة", "ضريبية"], "receipt": ["receipt", "ايصال", "إيصال", "سند قبض"], "payment_voucher": ["payment voucher", "سند صرف", "voucher"], "purchase_order": ["purchase order", "po", "أمر شراء"], "bank_statement": ["bank statement", "كشف حساب", "حساب بنكي", "iban"], "journal_entry": ["journal entry", "قيد يومية", "debit", "credit", "مدين", "دائن"], "trial_balance": ["trial balance", "ميزان مراجعة"], "vendor_bill": ["vendor bill", "supplier bill", "فاتورة مورد"]}
 CATEGORIES = {"payment": ["paid", "payment", "سداد", "دفع", "تحويل"], "accrual": ["accrual", "accrued", "مستحق"], "expense": ["expense", "fee", "rent", "مصروف", "رسوم", "ايجار", "إيجار"], "asset": ["asset", "fixed asset", "أصل", "اصول"], "liability": ["liability", "payable", "التزام", "دائنون"], "revenue": ["revenue", "sales", "income", "مبيعات", "ايراد", "إيراد"], "bank_transaction": ["bank", "iban", "transfer", "بنك", "تحويل"], "payroll": ["salary", "payroll", "wage", "راتب", "رواتب"], "petty_cash": ["petty cash", "cash", "عهدة", "نقد"]}
@@ -34,7 +47,7 @@ def cosine(a: list[float], b: list[float]) -> float:
 
 class EmbeddingProvider:
     def __init__(self, model_name: str | None = None):
-        self.model_name = model_name or os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
+        self.model_name = resolve_embedding_model_name(model_name)
         self._model = None
 
     def embed(self, text: str) -> tuple[list[float], str]:

@@ -5,6 +5,41 @@ import Link from "next/link";
 import { useLanguage } from "@/lib/LanguageContext";
 import { API_BASE_URL } from "@/lib/api";
 
+
+type BankLine = { transaction_date: string; value_date?: string | null; description: string; debit: number; credit: number; balance?: number | null; reference?: string | null; counterparty?: string | null };
+type OdooLine = { move_date: string; journal_entry_number?: string | null; partner?: string | null; label: string; debit: number; credit: number; payment_reference?: string | null };
+type BankReconciliationReport = {
+  summary: Record<string, number>;
+  matched_lines: { bank_line: BankLine; odoo_line: OdooLine; match_status: string; confidence_score: number; match_reason: string; compared_fields: Record<string, number | string | null> }[];
+  unmatched_bank_lines: { bank_line: BankLine; suggested_action: string; reason: string }[];
+  missing_in_bank_statement: { odoo_line: OdooLine; suggested_action: string; reason: string }[];
+  amount_mismatches: { bank_line: BankLine; odoo_line: OdooLine; amount_difference: number; likely_reason: string; confidence_score: number }[];
+  duplicate_risks: { bank_line?: BankLine | null; odoo_line?: OdooLine | null; possible_odoo_matches: OdooLine[]; possible_bank_matches: BankLine[]; reason: string }[];
+  warnings?: string[];
+  errors?: string[];
+};
+
+
+function exportReconCsv(report: BankReconciliationReport) {
+  const rows = [["status", "confidence", "bank_date", "bank_description", "bank_debit", "bank_credit", "odoo_date", "odoo_entry", "odoo_partner", "odoo_label", "odoo_debit", "odoo_credit", "reason"]];
+  report.matched_lines.forEach((row) => rows.push([row.match_status, String(row.confidence_score), row.bank_line.transaction_date, row.bank_line.description, String(row.bank_line.debit), String(row.bank_line.credit), row.odoo_line.move_date, row.odoo_line.journal_entry_number || "", row.odoo_line.partner || "", row.odoo_line.label, String(row.odoo_line.debit), String(row.odoo_line.credit), row.match_reason]));
+  const csv = rows.map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "bank-reconciliation-report.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function ReportSection({ title, count, children }: { title: string; count: number; children: React.ReactNode }) {
+  return <section className="rounded-2xl border border-white/10 bg-black/35 overflow-hidden"><h3 className="flex items-center justify-between bg-white/5 px-4 py-3 text-xs font-extrabold text-white"><span>{title}</span><span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-cyan-200">{count}</span></h3><div className="overflow-x-auto p-3">{count === 0 ? <p className="text-[11px] text-white/35">—</p> : children}</div></section>;
+}
+
+function SimpleBankTable({ rows }: { rows: (BankLine & { action: string; reason: string })[] }) {
+  return <table className="w-full text-[10px] text-right"><tbody>{rows.map((row, idx) => <tr key={idx} className="border-b border-white/5"><td className="p-2 font-mono">{row.transaction_date}</td><td className="p-2">{row.description}</td><td className="p-2 text-red-300">{row.debit.toFixed(2)}</td><td className="p-2 text-green-300">{row.credit.toFixed(2)}</td><td className="p-2">{row.reference || "—"}</td><td className="p-2 text-amber-300">{row.action}</td><td className="p-2 text-white/50">{row.reason}</td></tr>)}</tbody></table>;
+}
+
 export default function TeamPage() {
   const { t } = useLanguage();
   const [files, setFiles] = useState<File[]>([]);
@@ -64,25 +99,12 @@ export default function TeamPage() {
   const [showDateRangePicker, setShowDateRangePicker] = useState(false);
   const [isReconciling, setIsReconciling] = useState(false);
   const [showReconResults, setShowReconResults] = useState(false);
-  const [reconResults, setReconResults] = useState<{
-    statement_only: { date: string; description: string; amount: number; row_number: number }[];
-    ledger_only: { date: string; description: string; amount: number; row_number: number }[];
-    matched: {
-      statement_txn: { date: string; description: string; amount: number; row_number: number };
-      ledger_txn: { date: string; description: string; amount: number; row_number: number };
-    }[];
-    smart_matched: {
-      statement_txn: { date: string; description: string; amount: number; row_number: number };
-      ledger_txn: { date: string; description: string; amount: number; row_number: number };
-      confidence: number;
-      reason: string;
-    }[];
-    statement_total: number;
-    ledger_total: number;
-    difference: number;
-    statement_count: number;
-    ledger_count: number;
-  } | null>(null);
+  const [bankStatementText, setBankStatementText] = useState("");
+  const [odooBankJournalId, setOdooBankJournalId] = useState("");
+  const [odooBankAccountId, setOdooBankAccountId] = useState("");
+  const [dateToleranceDays, setDateToleranceDays] = useState("3");
+  const [showBankTextInput, setShowBankTextInput] = useState(false);
+  const [reconResults, setReconResults] = useState<BankReconciliationReport | null>(null);
   const bankStatementInputRef = useRef<HTMLInputElement>(null);
   // bankLedgerInputRef removed — no longer needed
 
@@ -601,18 +623,26 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
   };
 
   const handleBankReconciliation = async () => {
-    if (!bankStatementFile) {
+    if (!bankStatementFile && !bankStatementText.trim()) {
       alert(t("bankRecon.noFiles"));
+      return;
+    }
+    if (!reconDateFrom || !reconDateTo) {
+      alert(t("bankRecon.dateRangeRequired"));
       return;
     }
     setIsReconciling(true);
     try {
       const formData = new FormData();
-      formData.append("statement", bankStatementFile);
-      if (reconDateFrom) formData.append("date_from", reconDateFrom);
-      if (reconDateTo) formData.append("date_to", reconDateTo);
+      if (bankStatementFile) formData.append("statement", bankStatementFile);
+      if (bankStatementText.trim()) formData.append("pasted_text", bankStatementText);
+      formData.append("date_from", reconDateFrom);
+      formData.append("date_to", reconDateTo);
+      if (odooBankJournalId) formData.append("odoo_bank_journal_id", odooBankJournalId);
+      if (odooBankAccountId) formData.append("odoo_bank_account_id", odooBankAccountId);
+      formData.append("date_tolerance_days", dateToleranceDays || "3");
 
-      const response = await fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation`, {
+      const response = await fetch(`${API_BASE_URL}/api/v1/bank-reconciliation/match`, {
         method: "POST",
         body: formData,
       });
@@ -763,6 +793,33 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
           className="hidden"
         />
 
+        <button
+          onClick={() => setShowBankTextInput(!showBankTextInput)}
+          className="h-6.5 px-3 border border-cyan-400/50 rounded-full text-[10px] font-bold text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20"
+          title={t("bankRecon.pasteStatement")}
+        >
+          {t("bankRecon.pasteStatement")}
+        </button>
+
+        <input
+          value={odooBankJournalId}
+          onChange={(e) => setOdooBankJournalId(e.target.value.replace(/\D/g, ""))}
+          placeholder={t("bankRecon.journalId")}
+          className="h-6.5 w-24 rounded-full border border-white/10 bg-black/40 px-3 text-[10px] text-white/80 outline-none focus:border-[#d9a441]/60"
+        />
+        <input
+          value={odooBankAccountId}
+          onChange={(e) => setOdooBankAccountId(e.target.value.replace(/\D/g, ""))}
+          placeholder={t("bankRecon.accountId")}
+          className="h-6.5 w-24 rounded-full border border-white/10 bg-black/40 px-3 text-[10px] text-white/80 outline-none focus:border-[#d9a441]/60"
+        />
+        <input
+          value={dateToleranceDays}
+          onChange={(e) => setDateToleranceDays(e.target.value.replace(/\D/g, ""))}
+          title={t("bankRecon.toleranceDays")}
+          className="h-6.5 w-12 rounded-full border border-white/10 bg-black/40 px-2 text-center text-[10px] text-white/80 outline-none focus:border-[#d9a441]/60"
+        />
+
         {/* Date Range Picker */}
         <div className="relative">
           <div
@@ -816,7 +873,7 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
         {/* Reconcile Button */}
         <button
           onClick={handleBankReconciliation}
-          disabled={isReconciling || !bankStatementFile}
+          disabled={isReconciling || (!bankStatementFile && !bankStatementText.trim())}
           className="px-3.5 h-6.5 rounded-full flex items-center justify-center gap-1.5 transition-all duration-300 cursor-pointer
                      bg-gradient-to-br from-[#221205] to-[#0f0701] border border-[#d9a441]/85 text-[#d9a441] text-[10px] font-bold
                      shadow-[inset_0_1px_2px_rgba(0,0,0,0.9),_0_0_8px_rgba(217,164,65,0.7)]
@@ -834,7 +891,7 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
             </svg>
           )}
-          {isReconciling ? t("bankRecon.reconciling") : t("bankRecon.reconcile")}
+          {isReconciling ? t("bankRecon.reconciling") : t("bankRecon.matchingButton")}
         </button>
 
         {/* Bank Accountant Title */}
@@ -847,6 +904,18 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
           {t("bankRecon.title")}
         </h1>
       </div>
+
+      {showBankTextInput && (
+        <div className="absolute top-28 right-6 z-40 w-[560px] rounded-2xl border border-cyan-400/20 bg-black/80 p-4 shadow-2xl backdrop-blur" dir="rtl">
+          <label className="mb-2 block text-[11px] font-bold text-cyan-200">{t("bankRecon.pastedTextLabel")}</label>
+          <textarea
+            value={bankStatementText}
+            onChange={(e) => setBankStatementText(e.target.value)}
+            placeholder={t("bankRecon.pastedTextPlaceholder")}
+            className="h-40 w-full resize-none rounded-xl border border-white/10 bg-black/60 p-3 text-[11px] text-white/80 outline-none focus:border-cyan-400/50"
+          />
+        </div>
+      )}
 
       {/* Central File Uploader / Attached List Display area */}
       <div className="flex flex-col items-center justify-center w-full max-w-md h-[60%] select-none">
@@ -1452,192 +1521,69 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
         </div>
       )}
 
-      {/* Bank Reconciliation Results Modal */}
+      {/* Bank Reconciliation Matching Report Modal */}
       {showReconResults && reconResults && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-6 fade-in select-none">
-          <div className="wood-panel rounded-[24px] border border-cyan-500/30 shadow-2xl w-full max-w-4xl flex flex-col overflow-hidden max-h-[85vh] font-sans">
-            {/* Header */}
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 backdrop-blur-md p-5 fade-in select-none">
+          <div className="wood-panel rounded-[24px] border border-cyan-500/30 shadow-2xl w-full max-w-7xl flex flex-col overflow-hidden max-h-[90vh] font-sans">
             <div className="flex justify-between items-center px-6 py-4 border-b border-white/10 bg-black/40">
-              <div className="flex flex-col gap-0.5 text-right" dir="rtl">
-                <h2 className="text-sm font-bold bg-gradient-to-r from-cyan-300 to-blue-400 bg-clip-text text-transparent drop-shadow-[0_0_6px_rgba(56,189,248,0.3)]">
-                  {t("bankRecon.resultsTitle")}
+              <div className="flex flex-col gap-1 text-right" dir="rtl">
+                <h2 className="text-base font-extrabold bg-gradient-to-r from-cyan-300 to-blue-400 bg-clip-text text-transparent">
+                  {t("bankRecon.reportTitle")}
                 </h2>
-                <span className="text-[9.5px] text-white/50">
-                  {bankStatementFile?.name} ↔ Odoo
-                </span>
+                <span className="text-[10px] text-white/50">{reconDateFrom} → {reconDateTo} • {t("bankRecon.noAutoPost")}</span>
               </div>
-              <button
-                onClick={() => setShowReconResults(false)}
-                className="px-3 py-1.5 text-[10px] font-bold text-white/60 hover:text-white border border-white/10 hover:border-white/20 rounded-lg transition-all cursor-pointer"
-              >
-                {t("bankRecon.close")}
-              </button>
-            </div>
-
-            {/* Summary Cards */}
-            <div className="px-6 py-4 grid grid-cols-5 gap-3 border-b border-white/5 bg-black/20" dir="rtl">
-              <div className="flex flex-col items-center gap-1 p-3 rounded-xl bg-white/5 border border-white/10">
-                <span className="text-[9px] text-white/50 font-semibold">{t("bankRecon.statementFile")}</span>
-                <span className="text-lg font-bold text-cyan-400">{reconResults.statement_count}</span>
-                <span className="text-[9px] text-white/40">{reconResults.statement_total.toFixed(2)}</span>
-              </div>
-              <div className="flex flex-col items-center gap-1 p-3 rounded-xl bg-white/5 border border-white/10">
-                <span className="text-[9px] text-white/50 font-semibold">{t("bankRecon.ledgerFile")}</span>
-                <span className="text-lg font-bold text-blue-400">{reconResults.ledger_count}</span>
-                <span className="text-[9px] text-white/40">{reconResults.ledger_total.toFixed(2)}</span>
-              </div>
-              <div className="flex flex-col items-center gap-1 p-3 rounded-xl bg-green-500/5 border border-green-500/20">
-                <span className="text-[9px] text-green-400/70 font-semibold">{t("bankRecon.matched")}</span>
-                <span className="text-lg font-bold text-green-400">{reconResults.matched.length}</span>
-              </div>
-              <div className="flex flex-col items-center gap-1 p-3 rounded-xl bg-purple-500/5 border border-purple-500/20">
-                <span className="text-[9px] text-purple-400/70 font-semibold">🤖 AI</span>
-                <span className="text-lg font-bold text-purple-400">{reconResults.smart_matched?.length || 0}</span>
-              </div>
-              <div className={`flex flex-col items-center gap-1 p-3 rounded-xl border ${reconResults.difference === 0 ? "bg-green-500/5 border-green-500/20" : "bg-red-500/5 border-red-500/20"}`}>
-                <span className="text-[9px] text-white/50 font-semibold">الفرق</span>
-                <span className={`text-lg font-bold ${reconResults.difference === 0 ? "text-green-400" : "text-red-400"}`}>
-                  {reconResults.difference.toFixed(2)}
-                </span>
+              <div className="flex gap-2">
+                <button onClick={() => exportReconCsv(reconResults)} className="px-3 py-1.5 text-[10px] font-bold text-cyan-200 border border-cyan-400/30 rounded-lg hover:bg-cyan-500/10">CSV</button>
+                <button onClick={() => setShowReconResults(false)} className="px-3 py-1.5 text-[10px] font-bold text-white/60 hover:text-white border border-white/10 hover:border-white/20 rounded-lg transition-all cursor-pointer">{t("bankRecon.close")}</button>
               </div>
             </div>
 
-            {/* Results Content — Unified Table */}
-            <div className="flex-1 overflow-y-auto p-6 bg-black/20" dir="rtl">
-              {reconResults.statement_only.length === 0 && reconResults.ledger_only.length === 0 && (!reconResults.smart_matched || reconResults.smart_matched.length === 0) ? (
-                <div className="flex flex-col items-center justify-center py-12 gap-3">
-                  <span className="text-4xl">✅</span>
-                  <span className="text-sm font-bold text-green-400">{t("bankRecon.noDiscrepancies")}</span>
+            <div className="grid grid-cols-5 gap-3 p-5 border-b border-white/5 bg-black/20" dir="rtl">
+              {[
+                [t("bankRecon.totalBankLines"), reconResults.summary.total_bank_statement_lines],
+                [t("bankRecon.totalOdooLines"), reconResults.summary.total_odoo_ledger_lines],
+                [t("bankRecon.exact"), reconResults.summary.exact_matches_count],
+                [t("bankRecon.strong"), reconResults.summary.strong_matches_count],
+                [t("bankRecon.possible"), reconResults.summary.possible_matches_count],
+                [t("bankRecon.unmatchedBank"), reconResults.summary.unmatched_bank_lines_count],
+                [t("bankRecon.missingBank"), reconResults.summary.missing_in_bank_statement_count],
+                [t("bankRecon.amountMismatch"), reconResults.summary.amount_mismatch_count],
+                [t("bankRecon.duplicateRisk"), reconResults.summary.duplicate_risk_count],
+                [t("bankRecon.netDifference"), reconResults.summary.net_difference],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="rounded-xl border border-white/10 bg-white/5 p-3 text-center">
+                  <div className="text-[9px] font-semibold text-white/50">{label}</div>
+                  <div className="mt-1 text-lg font-extrabold text-cyan-300">{Number(value).toFixed(typeof value === "number" && !Number.isInteger(value) ? 2 : 0)}</div>
                 </div>
-              ) : (
-                <div className="bg-black/40 border border-white/10 rounded-xl overflow-hidden">
-                  <table className="w-full text-right text-[10px] border-collapse" dir="rtl">
-                    <thead>
-                      <tr className="bg-white/5 border-b border-white/10 text-white/70 font-semibold">
-                        <th className="p-2.5 w-20 border-l border-white/5">{t("bankRecon.date")}</th>
-                        <th className="p-2.5 border-l border-white/5">
-                          <span className="text-green-400">{t("bankRecon.matchedBank")}</span>
-                        </th>
-                        <th className="p-2.5 border-l border-white/5">
-                          <span className="text-green-400">{t("bankRecon.matchedSystem")}</span>
-                        </th>
-                        <th className="p-2.5 border-l border-white/5">
-                          <span className="text-red-400">{t("bankRecon.bankOnly")}</span>
-                        </th>
-                        <th className="p-2.5">
-                          <span className="text-amber-400">{t("bankRecon.systemOnly")}</span>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(() => {
-                        type UnifiedRow = {
-                          date: string;
-                          matchedBank?: { description: string; amount: number };
-                          matchedSystem?: { description: string; amount: number };
-                          bankOnly?: { description: string; amount: number };
-                          systemOnly?: { description: string; amount: number };
-                          isSmartMatch?: boolean;
-                          confidence?: number;
-                        };
-                        const rows: UnifiedRow[] = [];
+              ))}
+              <div className="col-span-5 grid grid-cols-4 gap-3 text-center text-[10px] text-white/60">
+                <span>{t("bankRecon.bankDebit")}: <b className="text-white">{reconResults.summary.bank_total_debit.toFixed(2)}</b></span>
+                <span>{t("bankRecon.bankCredit")}: <b className="text-white">{reconResults.summary.bank_total_credit.toFixed(2)}</b></span>
+                <span>{t("bankRecon.odooDebit")}: <b className="text-white">{reconResults.summary.odoo_total_debit.toFixed(2)}</b></span>
+                <span>{t("bankRecon.odooCredit")}: <b className="text-white">{reconResults.summary.odoo_total_credit.toFixed(2)}</b></span>
+              </div>
+            </div>
 
-                        // Add matched transactions (Pass 1 & 2)
-                        for (const mp of reconResults.matched) {
-                          rows.push({
-                            date: mp.statement_txn.date,
-                            matchedBank: { description: mp.statement_txn.description, amount: mp.statement_txn.amount },
-                            matchedSystem: { description: mp.ledger_txn.description, amount: mp.ledger_txn.amount },
-                          });
-                        }
+            <div className="flex-1 overflow-y-auto p-5 space-y-5 bg-black/20" dir="rtl">
+              <ReportSection title={t("bankRecon.matchedDetails")} count={reconResults.matched_lines.length}>
+                <table className="w-full text-[10px] text-right"><thead><tr className="text-white/60 border-b border-white/10"><th className="p-2">{t("bankRecon.date")}</th><th className="p-2">{t("bankRecon.bankDescription")}</th><th className="p-2">{t("bankRecon.bankDebit")}</th><th className="p-2">{t("bankRecon.bankCredit")}</th><th className="p-2">Odoo</th><th className="p-2">{t("bankRecon.partner")}</th><th className="p-2">{t("bankRecon.status")}</th><th className="p-2">{t("bankRecon.confidence")}</th><th className="p-2">{t("bankRecon.reason")}</th></tr></thead><tbody>{reconResults.matched_lines.map((row, idx) => <tr key={idx} className="border-b border-white/5"><td className="p-2 font-mono">{row.bank_line.transaction_date}</td><td className="p-2">{row.bank_line.description}</td><td className="p-2 text-red-300">{row.bank_line.debit.toFixed(2)}</td><td className="p-2 text-green-300">{row.bank_line.credit.toFixed(2)}</td><td className="p-2">{row.odoo_line.journal_entry_number}<br/><span className="text-white/40">{row.odoo_line.label}</span></td><td className="p-2">{row.odoo_line.partner || "—"}</td><td className="p-2 text-cyan-300">{row.match_status}</td><td className="p-2 font-bold">{row.confidence_score}%</td><td className="p-2 text-white/60">{row.match_reason}</td></tr>)}</tbody></table>
+              </ReportSection>
 
-                        // Add smart matched transactions (Pass 3 — AI)
-                        if (reconResults.smart_matched) {
-                          for (const sm of reconResults.smart_matched) {
-                            rows.push({
-                              date: sm.statement_txn.date,
-                              matchedBank: { description: sm.statement_txn.description, amount: sm.statement_txn.amount },
-                              matchedSystem: { description: sm.ledger_txn.description, amount: sm.ledger_txn.amount },
-                              isSmartMatch: true,
-                              confidence: sm.confidence,
-                            });
-                          }
-                        }
+              <ReportSection title={t("bankRecon.unmatchedBankLines")} count={reconResults.unmatched_bank_lines.length}>
+                <SimpleBankTable rows={reconResults.unmatched_bank_lines.map((row) => ({ ...row.bank_line, action: row.suggested_action, reason: row.reason }))} />
+              </ReportSection>
 
-                        // Add statement-only transactions
-                        for (const txn of reconResults.statement_only) {
-                          rows.push({
-                            date: txn.date,
-                            bankOnly: { description: txn.description, amount: txn.amount },
-                          });
-                        }
+              <ReportSection title={t("bankRecon.missingOdooLines")} count={reconResults.missing_in_bank_statement.length}>
+                <table className="w-full text-[10px] text-right"><tbody>{reconResults.missing_in_bank_statement.map((row, idx) => <tr key={idx} className="border-b border-white/5"><td className="p-2 font-mono">{row.odoo_line.move_date}</td><td className="p-2">{row.odoo_line.journal_entry_number}</td><td className="p-2">{row.odoo_line.partner || "—"}</td><td className="p-2">{row.odoo_line.label}</td><td className="p-2 text-red-300">{row.odoo_line.debit.toFixed(2)}</td><td className="p-2 text-green-300">{row.odoo_line.credit.toFixed(2)}</td><td className="p-2 text-amber-300">{row.suggested_action}</td></tr>)}</tbody></table>
+              </ReportSection>
 
-                        // Add ledger-only transactions
-                        for (const txn of reconResults.ledger_only) {
-                          rows.push({
-                            date: txn.date,
-                            systemOnly: { description: txn.description, amount: txn.amount },
-                          });
-                        }
+              <ReportSection title={t("bankRecon.amountMismatches")} count={reconResults.amount_mismatches.length}>
+                <table className="w-full text-[10px] text-right"><tbody>{reconResults.amount_mismatches.map((row, idx) => <tr key={idx} className="border-b border-white/5"><td className="p-2">{row.bank_line.description}</td><td className="p-2">{row.odoo_line.label}</td><td className="p-2 text-red-300">{row.amount_difference.toFixed(2)}</td><td className="p-2">{row.confidence_score}%</td><td className="p-2 text-white/60">{row.likely_reason}</td></tr>)}</tbody></table>
+              </ReportSection>
 
-                        // Sort by date
-                        rows.sort((a, b) => a.date.localeCompare(b.date));
-
-                        return rows.map((row, idx) => (
-                          <tr key={idx} className={`border-b border-white/5 hover:bg-white/[0.03] ${row.isSmartMatch ? "bg-purple-500/[0.03]" : ""}`}>
-                            <td className="p-2.5 text-white/50 font-mono text-[9px] border-l border-white/5 whitespace-nowrap">{row.date}</td>
-                            <td className="p-2.5 border-l border-white/5">
-                              {row.matchedBank ? (
-                                <div>
-                                  <div className="truncate max-w-[140px] text-white/80">{row.matchedBank.description}</div>
-                                  <div className={`text-[9px] font-bold ${row.isSmartMatch ? "text-purple-400" : "text-green-400"}`}>
-                                    {row.matchedBank.amount.toFixed(2)}
-                                    {row.isSmartMatch && row.confidence !== undefined && (
-                                      <span className={`mr-1.5 inline-block px-1 py-px rounded-full text-[8px] ${
-                                        row.confidence >= 0.8 ? "bg-green-500/20 text-green-400" :
-                                        row.confidence >= 0.6 ? "bg-yellow-500/20 text-yellow-400" :
-                                        "bg-orange-500/20 text-orange-400"
-                                      }`}>
-                                        🤖 {Math.round(row.confidence * 100)}%
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              ) : <span className="text-white/10">—</span>}
-                            </td>
-                            <td className="p-2.5 border-l border-white/5">
-                              {row.matchedSystem ? (
-                                <div>
-                                  <div className="truncate max-w-[140px] text-white/80">{row.matchedSystem.description}</div>
-                                  <div className={`text-[9px] font-bold ${row.isSmartMatch ? "text-purple-400" : "text-green-400"}`}>
-                                    {row.matchedSystem.amount.toFixed(2)}
-                                  </div>
-                                </div>
-                              ) : <span className="text-white/10">—</span>}
-                            </td>
-                            <td className="p-2.5 border-l border-white/5">
-                              {row.bankOnly ? (
-                                <div>
-                                  <div className="truncate max-w-[140px] text-white/80">{row.bankOnly.description}</div>
-                                  <div className="text-[9px] font-bold text-red-400">{row.bankOnly.amount.toFixed(2)}</div>
-                                </div>
-                              ) : <span className="text-white/10">—</span>}
-                            </td>
-                            <td className="p-2.5">
-                              {row.systemOnly ? (
-                                <div>
-                                  <div className="truncate max-w-[140px] text-white/80">{row.systemOnly.description}</div>
-                                  <div className="text-[9px] font-bold text-amber-400">{row.systemOnly.amount.toFixed(2)}</div>
-                                </div>
-                              ) : <span className="text-white/10">—</span>}
-                            </td>
-                          </tr>
-                        ));
-                      })()}
-                    </tbody>
-                  </table>
-                </div>
-              )}
+              <ReportSection title={t("bankRecon.duplicateRisks")} count={reconResults.duplicate_risks.length}>
+                {reconResults.duplicate_risks.map((risk, idx) => <div key={idx} className="rounded-xl border border-amber-400/20 bg-amber-500/5 p-3 text-[10px] text-white/70"><b className="text-amber-300">{risk.bank_line?.description || risk.odoo_line?.label}</b><p>{risk.reason}</p><p className="text-white/40">Odoo: {risk.possible_odoo_matches.map((line) => line.journal_entry_number || line.label).join(", ")} Bank: {risk.possible_bank_matches.map((line) => line.reference || line.description).join(", ")}</p></div>)}
+              </ReportSection>
             </div>
           </div>
         </div>

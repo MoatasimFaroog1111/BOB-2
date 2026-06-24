@@ -1,4 +1,10 @@
-﻿from app.models.core import (
+from app.models.ai_accounting import (
+    AIAccountingSuggestion,
+    AIDecisionAuditLog,
+    AIDocumentEmbedding,
+    AIDocumentMatch,
+)
+from app.models.core import (
     ApprovalRequest,
     AuditLog,
     Document,
@@ -9,6 +15,10 @@
 )
 
 __all__ = [
+    "AIAccountingSuggestion",
+    "AIDecisionAuditLog",
+    "AIDocumentEmbedding",
+    "AIDocumentMatch",
     "ApprovalRequest",
     "AuditLog",
     "Document",

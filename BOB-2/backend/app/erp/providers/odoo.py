@@ -226,6 +226,58 @@ class OdooProvider:
 
         return move_lines
 
+
+    def fetch_bank_ledger_lines(
+        self,
+        date_from: str,
+        date_to: str,
+        journal_id: int | None = None,
+        account_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        """Fetch posted Odoo bank ledger lines for professional reconciliation reporting."""
+        if not date_from or not date_to:
+            raise ValueError("date_from and date_to are required to fetch Odoo bank ledger lines.")
+
+        domain: list = [
+            ["parent_state", "=", "posted"],
+            ["date", ">=", date_from],
+            ["date", "<=", date_to],
+        ]
+        if journal_id:
+            domain.append(["journal_id", "=", journal_id])
+        if account_id:
+            domain.append(["account_id", "=", account_id])
+        if not journal_id and not account_id:
+            bank_journals = self.execute_kw(
+                "account.journal",
+                "search_read",
+                [[["type", "=", "bank"]]],
+                {"fields": ["id", "default_account_id"], "limit": 100},
+            )
+            if not bank_journals:
+                raise ValueError("No Odoo bank journal found. Select or configure a bank journal/account.")
+            journal_ids = [journal["id"] for journal in bank_journals]
+            account_ids = []
+            for journal in bank_journals:
+                default_account = journal.get("default_account_id")
+                if isinstance(default_account, list) and default_account:
+                    account_ids.append(default_account[0])
+            domain.append(["journal_id", "in", journal_ids])
+            if account_ids:
+                domain.append(["account_id", "in", account_ids])
+
+        fields = [
+            "id", "date", "date_maturity", "move_id", "move_name", "name", "ref", "payment_ref",
+            "partner_id", "debit", "credit", "balance", "amount_currency", "currency_id", "account_id",
+            "journal_id", "parent_state", "matched_debit_ids", "matched_credit_ids", "full_reconcile_id",
+        ]
+        return self.execute_kw(
+            "account.move.line",
+            "search_read",
+            [domain],
+            {"fields": fields, "order": "date asc, id asc", "limit": 20000},
+        )
+
     def discover_employees(self) -> list[dict[str, Any]]:
         try:
             return self.execute_kw(

@@ -8,7 +8,6 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.db.database import get_db
 from app.erp.factory import get_erp_provider
 from app.erp.providers.odoo import OdooProvider
@@ -29,8 +28,12 @@ def _get_odoo_provider(db: Session):
     if conn:
         secret_data = json.loads(decrypt_value(conn.encrypted_secret_ref)) if conn.encrypted_secret_ref else {}
         return get_erp_provider(provider=conn.provider, url=conn.base_url, db=conn.database_name or "", username=secret_data.get("username", ""), password=secret_data.get("password", ""))
-    if all([settings.ODOO_URL, settings.ODOO_DB, settings.ODOO_USERNAME, settings.ODOO_PASSWORD]):
-        return OdooProvider(settings.ODOO_URL, settings.ODOO_DB, settings.ODOO_USERNAME, settings.ODOO_PASSWORD)
+    odoo_url = os.getenv("ODOO_URL", "")
+    odoo_db = os.getenv("ODOO_DB", "")
+    odoo_username = os.getenv("ODOO_USERNAME", "")
+    odoo_password = os.getenv("ODOO_PASSWORD", "")
+    if all([odoo_url, odoo_db, odoo_username, odoo_password]):
+        return OdooProvider(odoo_url, odoo_db, odoo_username, odoo_password)
     raise ValueError("Odoo connection failure: no active BOB ERP connection and ODOO_URL/ODOO_DB/ODOO_USERNAME/ODOO_PASSWORD are not fully configured.")
 
 

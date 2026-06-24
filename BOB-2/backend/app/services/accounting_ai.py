@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import math
 import re
 from dataclasses import dataclass
@@ -8,7 +9,6 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.models.ai_accounting import AIAccountingSuggestion, AIDecisionAuditLog, AIDocumentEmbedding, AIDocumentMatch
 
 DOC_LABELS = {"invoice": ["invoice", "tax invoice", "فاتورة", "ضريبية"], "receipt": ["receipt", "ايصال", "إيصال", "سند قبض"], "payment_voucher": ["payment voucher", "سند صرف", "voucher"], "purchase_order": ["purchase order", "po", "أمر شراء"], "bank_statement": ["bank statement", "كشف حساب", "حساب بنكي", "iban"], "journal_entry": ["journal entry", "قيد يومية", "debit", "credit", "مدين", "دائن"], "trial_balance": ["trial balance", "ميزان مراجعة"], "vendor_bill": ["vendor bill", "supplier bill", "فاتورة مورد"]}
@@ -34,7 +34,7 @@ def cosine(a: list[float], b: list[float]) -> float:
 
 class EmbeddingProvider:
     def __init__(self, model_name: str | None = None):
-        self.model_name = model_name or settings.EMBEDDING_MODEL_NAME
+        self.model_name = model_name or os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
         self._model = None
 
     def embed(self, text: str) -> tuple[list[float], str]:

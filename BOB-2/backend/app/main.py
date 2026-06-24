@@ -4,6 +4,8 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.v1.router import api_router
+from app.api.v1.accounting_ai import router as accounting_ai_router
+from app.api.v1.bank_reconciliation import router as bank_reconciliation_router
 from app.core.config import settings
 from app.core.logging import configure_logging
 from app.middleware.audit import AuditLogMiddleware
@@ -146,3 +148,5 @@ def system_status():
 
 
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(accounting_ai_router, prefix="/api/v1/accounting-ai", tags=["Accounting AI Matching"])
+app.include_router(bank_reconciliation_router, prefix="/api/v1/bank-reconciliation", tags=["Bank Reconciliation"])

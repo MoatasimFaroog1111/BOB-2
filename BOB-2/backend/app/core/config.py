@@ -1,4 +1,4 @@
-﻿import secrets
+import secrets
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -49,6 +49,9 @@ class Settings(BaseSettings):
 
     # LLM provider (xAI Grok) API key. Must be provided via environment / .env.
     GROK_API_KEY: str = ""
+
+    # Local sentence-transformers compatible embedding model for Accounting AI Matching.
+    EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
 
     @property
     def storage_path(self) -> Path:

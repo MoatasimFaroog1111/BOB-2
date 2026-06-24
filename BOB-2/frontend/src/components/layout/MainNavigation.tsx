@@ -38,6 +38,20 @@ function AuditIcon({ className }: { className?: string }) {
   );
 }
 
+
+function AccountingAIIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 4h16v16H4z" />
+      <path d="M8 8h8" />
+      <path d="M8 12h3" />
+      <path d="M15 12h1" />
+      <path d="M8 16h2" />
+      <path d="M14 16h2" />
+    </svg>
+  );
+}
+
 function ERPIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -56,6 +70,7 @@ export function MainNavigation() {
     { href: "/team", label: t("sidebar.home"), icon: TeamIcon },
     { href: "/documents", label: t("sidebar.documents"), icon: DocumentIcon },
     { href: "/audit", label: t("sidebar.audit"), icon: AuditIcon },
+    { href: "/accounting-ai", label: t("sidebar.accountingAI"), icon: AccountingAIIcon },
     { href: "/erp", label: t("sidebar.erp"), icon: ERPIcon },
   ];
 

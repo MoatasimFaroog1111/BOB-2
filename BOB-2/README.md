@@ -99,3 +99,60 @@ Change this password immediately after first login.
 - Fernet encryption for stored credentials
 - Audit logging middleware
 - Bilingual UI (Arabic RTL / English LTR)
+
+## Accounting AI Matching Engine
+
+BOB includes an audit-safe Accounting & Finance AI Matching Engine for invoices, receipts, payment vouchers, purchase orders, bank statements, journal entries, trial balances, and vendor bills.
+
+### Install backend dependencies
+
+```bash
+cd BOB-2/backend
+pip install -r requirements.txt
+```
+
+The default embedding provider is sentence-transformers compatible and is configured with:
+
+```bash
+export EMBEDDING_MODEL_NAME=BAAI/bge-m3
+```
+
+BGE-M3-style models produce 1024-dimensional vectors. If the sentence-transformers model is unavailable in an offline environment, the backend falls back to a deterministic local accounting text embedding so the audit workflow remains usable without paid external APIs.
+
+### Database migration
+
+```bash
+cd BOB-2/backend
+alembic upgrade head
+```
+
+This creates:
+
+- `ai_document_embeddings`
+- `ai_document_matches`
+- `ai_accounting_suggestions`
+- `ai_decision_audit_log`
+
+### Run backend
+
+```bash
+cd BOB-2/backend
+DATABASE_URL="sqlite:///./local_accounting_ai.db" SECRET_KEY="local-secret-key-for-dev-1234567890abcdef" python -m uvicorn app.main:app --reload --port 8000
+```
+
+### Run frontend
+
+```bash
+cd BOB-2/frontend
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 npm run dev
+```
+
+Open `/accounting-ai`, paste extracted OCR/accounting text, choose the source type, and run analysis. The page shows document classification, semantic matches, a draft journal-entry suggestion, confidence scores, explanations, and approve/reject buttons. Approval only stores review status; it does not post entries to ERP automatically.
+
+### Test the AI matching flow
+
+1. Paste an invoice or vendor bill text with supplier, VAT, and amount details.
+2. Run **Analyze & Match**.
+3. Paste a related PO, payment voucher, or bank transaction and run analysis again.
+4. Review suggested matches and journal entry draft.
+5. Approve or reject the draft; the backend writes an AI decision audit log and performs no ERP posting.

@@ -151,6 +151,45 @@ def _detect_columns(headers: List[str]) -> dict:
     return result
 
 
+def _find_header_row_index(rows: List[List[str]], max_scan_rows: int = 20) -> int:
+    """Find the most likely header row index in files that contain preamble lines."""
+    scan_limit = min(len(rows), max_scan_rows)
+    best_idx = 0
+    best_score = -1
+
+    for idx in range(scan_limit):
+        row = rows[idx]
+        headers = [str(c).strip() if c is not None else "" for c in row]
+        if not any(headers):
+            continue
+
+        col_map = _detect_columns(headers)
+
+        has_date = col_map["date"] >= 0
+        has_amount_info = (
+            col_map["amount"] >= 0 or
+            col_map["debit"] >= 0 or
+            col_map["credit"] >= 0
+        )
+
+        score = 0
+        if has_date:
+            score += 2
+        if has_amount_info:
+            score += 2
+        if col_map["description"] >= 0:
+            score += 1
+
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+
+        if has_date and has_amount_info:
+            return idx
+
+    return best_idx
+
+
 def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = True) -> List[Transaction]:
     """Extract transactions from parsed rows.
 
@@ -163,8 +202,13 @@ def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = Tr
     if not rows or len(rows) < 2:
         return []
 
-    headers = [str(c).strip() for c in rows[0]] if has_header else []
-    data_rows = rows[1:] if has_header else rows
+    if has_header:
+        header_idx = _find_header_row_index(rows)
+        headers = [str(c).strip() if c is not None else "" for c in rows[header_idx]]
+        data_rows = rows[header_idx + 1:]
+    else:
+        headers = []
+        data_rows = rows
 
     if headers:
         col_map = _detect_columns(headers)
@@ -189,19 +233,27 @@ def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = Tr
             # FIX: credit - debit → deposit positive, withdrawal negative
             # This aligns with Odoo convention and standard bank statement sign
             amount_val = credit - debit
+        elif col_map["debit"] >= 0:
+            debit_str = cells[col_map["debit"]] if col_map["debit"] < len(cells) else ""
+            debit = _parse_number(debit_str) or 0.0
+            amount_val = -debit
+        elif col_map["credit"] >= 0:
+            credit_str = cells[col_map["credit"]] if col_map["credit"] < len(cells) else ""
+            credit = _parse_number(credit_str) or 0.0
+            amount_val = credit
         elif col_map["amount"] >= 0 and col_map["amount"] < len(cells):
             parsed = _parse_number(cells[col_map["amount"]])
             if parsed is not None:
                 amount_val = parsed
-
-        if amount_val == 0.0 and not desc_val:
-            continue
 
         # If no description column found, combine all non-date, non-amount cells
         if not desc_val and col_map["description"] == -1:
             skip_cols = {col_map["date"], col_map["amount"], col_map["debit"], col_map["credit"]}
             desc_parts = [cells[i] for i in range(len(cells)) if i not in skip_cols and cells[i]]
             desc_val = " ".join(desc_parts)
+
+        if amount_val == 0.0 and not desc_val:
+            continue
 
         transactions.append(Transaction(
             date=_normalize_date(date_val),

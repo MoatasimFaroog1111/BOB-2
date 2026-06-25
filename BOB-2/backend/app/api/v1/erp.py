@@ -18,6 +18,7 @@ from app.erp.discovery import run_discovery_orchestrator, load_financial_kb
 from app.erp.document_ai import GuardianDocumentAI
 from app.erp.odoo_cache import get_cached, set_cached, invalidate as invalidate_odoo_cache
 from app.erp.bank_reconciliation import reconcile as bank_reconcile, reconcile_with_odoo_data, parse_file as parse_statement_file, get_date_range, transactions_from_odoo_move_lines, _run_matching
+from app.services.llm_service import chat as llm_chat
 
 router = APIRouter()
 
@@ -2128,10 +2129,6 @@ class ChatSpreadsheetRequest(BaseModel):
 
 @router.post("/chat-spreadsheet")
 def chat_spreadsheet(payload: ChatSpreadsheetRequest, db_session: Session = Depends(get_db)):
-    import urllib.request
-    import json
-    from pathlib import Path
-
     # Find active sheet
     active_sheet = None
     for s in payload.sheets:
@@ -2140,14 +2137,6 @@ def chat_spreadsheet(payload: ChatSpreadsheetRequest, db_session: Session = Depe
             break
     if not active_sheet:
         active_sheet = payload.sheets[0]
-
-    # Try to load api key
-    grok_api_key = settings.GROK_API_KEY
-    if not grok_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI provider is not configured. Please set GROK_API_KEY.",
-        )
 
     # Fetch dynamic Odoo accounts, partners, and bank rules if connection is active
     odoo_accounts = []
@@ -2355,45 +2344,28 @@ def chat_spreadsheet(payload: ChatSpreadsheetRequest, db_session: Session = Depe
         f"{bank_rules_text[:15000]}\n"
     )
 
-    url = "https://api.x.ai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {grok_api_key}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "grok-4.3",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.0
-    }
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode("utf-8"),
-        headers=headers,
-        method="POST"
-    )
+    result = llm_chat(system_prompt, user_prompt)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI provider is not configured. Please set DEEPSEEK_API_KEY or start Ollama locally.",
+        )
+
+    content = result
+    # Clean markdown code blocks if present
+    if content.startswith("```"):
+        lines = content.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        content = "\n".join(lines).strip()
 
     try:
-        with urllib.request.urlopen(req, timeout=120) as response:
-            res_data = response.read().decode("utf-8")
-            res_json = json.loads(res_data)
-            content = res_json["choices"][0]["message"]["content"].strip()
-            
-            # Clean markdown code blocks if present
-            if content.startswith("```"):
-                lines = content.split("\n")
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                content = "\n".join(lines).strip()
-                
-            response_obj = json.loads(content)
-            return response_obj
+        response_obj = json.loads(content)
+        return response_obj
     except Exception as e:
-        print(f"[Spreadsheet Agent Error] Call failed: {e}")
+        print(f"[Spreadsheet Agent Error] JSON parse failed: {e}")
         return {
             "message": f"عذراً، حدث خطأ أثناء الاتصال بمساعد التنسيق: {str(e)}",
             "grid_data": None
@@ -2407,18 +2379,6 @@ class ParseManualTextRequest(BaseModel):
 
 @router.post("/parse-manual-text")
 def parse_manual_text(payload: ParseManualTextRequest, db_session: Session = Depends(get_db)):
-    import urllib.request
-    import json
-    from pathlib import Path
-
-    # Try to load api key
-    grok_api_key = settings.GROK_API_KEY
-    if not grok_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI provider is not configured. Please set GROK_API_KEY.",
-        )
-
     # Fetch dynamic Odoo accounts and partners if connection is active
     odoo_accounts = []
     odoo_partners = []
@@ -2526,90 +2486,73 @@ def parse_manual_text(payload: ParseManualTextRequest, db_session: Session = Dep
         f"{partners_text[:30000]}\n"
     )
 
-    url = "https://api.x.ai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {grok_api_key}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "grok-4.3",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
-        ],
-        "temperature": 0.0
-    }
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(data).encode("utf-8"),
-        headers=headers,
-        method="POST"
-    )
+    result = llm_chat(system_prompt, user_prompt)
+    if result is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="AI provider is not configured. Please set DEEPSEEK_API_KEY or start Ollama locally.",
+        )
+
+    content = result
+    # Clean markdown code blocks if present
+    if content.startswith("```"):
+        lines = content.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        content = "\n".join(lines).strip()
 
     try:
-        with urllib.request.urlopen(req, timeout=120) as response:
-            res_data = response.read().decode("utf-8")
-            res_json = json.loads(res_data)
-            content = res_json["choices"][0]["message"]["content"].strip()
-            
-            # Clean markdown code blocks if present
-            if content.startswith("```"):
-                lines = content.split("\n")
-                if lines[0].startswith("```"):
-                    lines = lines[1:]
-                if lines and lines[-1].strip() == "```":
-                    lines = lines[:-1]
-                content = "\n".join(lines).strip()
-                
-            parsed_data = json.loads(content)
-            
-            # Resolve accounts and partners context
-            resolved_lines = []
-            for line in parsed_data.get("lines", []):
-                parsed_code = str(line.get("account_code", "")).strip()
-                parsed_debit = float(line.get("debit") or 0.0)
-                parsed_credit = float(line.get("credit") or 0.0)
-                parsed_name = str(line.get("name", "")).strip()
-                parsed_partner = str(line.get("partner_name", "")).strip()
-                
-                # Match Account
-                matched_acc = None
-                if parsed_code and odoo_accounts:
-                    matched_acc = next((a for a in odoo_accounts if a["code"] == parsed_code), None)
-                    if not matched_acc:
-                        # Fuzzy match by code contains or name contains
-                        matched_acc = next((a for a in odoo_accounts if parsed_code.lower() in a["code"].lower() or (a["name"] and isinstance(a["name"], str) and parsed_code.lower() in a["name"].lower())), None)
-                        
-                # Match Partner
-                matched_partner_id = None
-                matched_partner_name = parsed_partner
-                if parsed_partner and odoo_partners:
-                    # Fuzzy match partner name
-                    matched_p = next((p for p in odoo_partners if p["name"] and isinstance(p["name"], str) and parsed_partner.lower() in p["name"].lower()), None)
-                    if matched_p:
-                        matched_partner_id = matched_p["id"]
-                        matched_partner_name = matched_p["name"]
-                        
-                resolved_lines.append({
-                    "account_id": matched_acc["id"] if matched_acc else 0,
-                    "account_name": f"{matched_acc['code']} {matched_acc['name']}" if matched_acc else (f"{parsed_code} (غير معرف)" if parsed_code else "حساب غير محدد"),
-                    "account_code": matched_acc["code"] if matched_acc else parsed_code,
-                    "debit": parsed_debit,
-                    "credit": parsed_credit,
-                    "name": parsed_name or "قيد يدوي",
-                    "partner_id": matched_partner_id,
-                    "partner_name": matched_partner_name
-                })
-                
-            return {
-                "status": "success",
-                "date": parsed_data.get("date") or "",
-                "ref": parsed_data.get("ref") or "",
-                "journal": parsed_data.get("journal") or "general_journal",
-                "lines": resolved_lines
-            }
+        parsed_data = json.loads(content)
+
+        # Resolve accounts and partners context
+        resolved_lines = []
+        for line in parsed_data.get("lines", []):
+            parsed_code = str(line.get("account_code", "")).strip()
+            parsed_debit = float(line.get("debit") or 0.0)
+            parsed_credit = float(line.get("credit") or 0.0)
+            parsed_name = str(line.get("name", "")).strip()
+            parsed_partner = str(line.get("partner_name", "")).strip()
+
+            # Match Account
+            matched_acc = None
+            if parsed_code and odoo_accounts:
+                matched_acc = next((a for a in odoo_accounts if a["code"] == parsed_code), None)
+                if not matched_acc:
+                    # Fuzzy match by code contains or name contains
+                    matched_acc = next((a for a in odoo_accounts if parsed_code.lower() in a["code"].lower() or (a["name"] and isinstance(a["name"], str) and parsed_code.lower() in a["name"].lower())), None)
+
+            # Match Partner
+            matched_partner_id = None
+            matched_partner_name = parsed_partner
+            if parsed_partner and odoo_partners:
+                # Fuzzy match partner name
+                matched_p = next((p for p in odoo_partners if p["name"] and isinstance(p["name"], str) and parsed_partner.lower() in p["name"].lower()), None)
+                if matched_p:
+                    matched_partner_id = matched_p["id"]
+                    matched_partner_name = matched_p["name"]
+
+            resolved_lines.append({
+                "account_id": matched_acc["id"] if matched_acc else 0,
+                "account_name": f"{matched_acc['code']} {matched_acc['name']}" if matched_acc else (f"{parsed_code} (غير معرف)" if parsed_code else "حساب غير محدد"),
+                "account_code": matched_acc["code"] if matched_acc else parsed_code,
+                "debit": parsed_debit,
+                "credit": parsed_credit,
+                "name": parsed_name or "قيد يدوي",
+                "partner_id": matched_partner_id,
+                "partner_name": matched_partner_name
+            })
+
+        return {
+            "status": "success",
+            "date": parsed_data.get("date") or "",
+            "ref": parsed_data.get("ref") or "",
+            "journal": parsed_data.get("journal") or "general_journal",
+            "lines": resolved_lines
+        }
     except Exception as e:
-        print(f"[Parse Manual Text Error] Call failed: {e}")
+        print(f"[Parse Manual Text Error] JSON parse failed: {e}")
         return {
             "status": "error",
             "message": f"عذراً، حدث خطأ أثناء تحليل النص المدخل: {str(e)}",

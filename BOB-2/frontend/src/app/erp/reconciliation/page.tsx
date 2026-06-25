@@ -316,6 +316,7 @@ ${result.ledger_only.length > 0 ? `
     <thead><tr><th>#</th><th>التاريخ / Date</th><th>الوصف / Description</th><th>المبلغ / Amount</th><th>الحالة / Status</th></tr></thead>
     <tbody>
       ${result.ledger_only.map((t, i) => `<tr><td>${i + 1}</td><td>${t.date}</td><td>${t.description || '—'}</td><td style="font-family:monospace;text-align:left">${fmt(t.amount)} SAR</td><td>في أودو فقط</td></tr>`).join('')}
+      <tr style="font-weight:bold;background:#e8e8e8"><td colspan="3">الإجمالي / Total</td><td style="font-family:monospace;text-align:left">${fmt(result.ledger_only.reduce((s, t) => s + t.amount, 0))} SAR</td><td></td></tr>
     </tbody>
   </table>
 </div>` : ''}
@@ -334,9 +335,9 @@ ${result.matched.length > 0 ? `
 <div class="section">
   <div class="section-title">الاعتماد | AUTHORIZATION</div>
   <div class="sig-row">
-    <div class="sig-box"><p class="sig-label">أعده / Prepared by</p><div class="sig-line"></div><p class="sig-sub">التوقيع / Signature</p><p class="sig-sub" style="margin-top:6px">التاريخ / Date: ___/___/______</p></div>
-    <div class="sig-box"><p class="sig-label">راجعه / Reviewed by</p><div class="sig-line"></div><p class="sig-sub">التوقيع / Signature</p><p class="sig-sub" style="margin-top:6px">التاريخ / Date: ___/___/______</p></div>
-    <div class="sig-box"><p class="sig-label">وافق عليه / Approved by</p><div class="sig-line"></div><p class="sig-sub">التوقيع / Signature</p><p class="sig-sub" style="margin-top:6px">التاريخ / Date: ___/___/______</p></div>
+    <div class="sig-box"><p class="sig-label">أعده / Prepared by</p><div class="sig-line"></div><p class="sig-sub">التوقيع / Signature</p><p class="sig-sub" style="margin-top:6px">التاريخ / Date</p></div>
+    <div class="sig-box"><p class="sig-label">راجعه / Reviewed by</p><div class="sig-line"></div><p class="sig-sub">التوقيع / Signature</p><p class="sig-sub" style="margin-top:6px">التاريخ / Date</p></div>
+    <div class="sig-box"><p class="sig-label">وافق عليه / Approved by</p><div class="sig-line"></div><p class="sig-sub">التوقيع / Signature</p><p class="sig-sub" style="margin-top:6px">التاريخ / Date</p></div>
   </div>
 </div>
 
@@ -396,13 +397,12 @@ export default function ReconciliationPage() {
     setEntryForms({});
 
     const formData = new FormData();
-    formData.append("statement_file", file);
-    if (journalId) formData.append("journal_id", journalId);
+    formData.append("statement", file);
     if (dateFrom) formData.append("date_from", dateFrom);
     if (dateTo) formData.append("date_to", dateTo);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/erp/reconcile`, {
+      const res = await fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation`, {
         method: "POST",
         body: formData,
       });
@@ -546,9 +546,8 @@ export default function ReconciliationPage() {
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2">
             {[
-              { label: isAr ? "رقم دفتر اليومية" : "Journal ID", val: journalId, set: setJournalId, type: "text", placeholder: isAr ? "اختياري" : "optional" },
               { label: isAr ? "من تاريخ" : "Date From", val: dateFrom, set: setDateFrom, type: "date" },
               { label: isAr ? "إلى تاريخ" : "Date To", val: dateTo, set: setDateTo, type: "date" },
             ].map(f => (
@@ -566,11 +565,12 @@ export default function ReconciliationPage() {
           )}
 
           <button onClick={handleRun} disabled={!file || loading}
-            className="w-full cursor-pointer bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 disabled:opacity-40 text-black font-bold py-2 rounded-xl text-xs transition-all shadow-lg active:scale-[0.98] flex items-center justify-center gap-2">
+            className="w-full cursor-pointer bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 disabled:opacity-40 text-black font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-2 transition-all"
+          >
             {loading ? (
               <><span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />{isAr ? "جاري المقارنة..." : "Running reconciliation..."}</>
             ) : (
-              isAr ? "▶ تشغيل التسوية" : "▶ Run Reconciliation"
+              <>{isAr ? "▶ تشغيل التسوية" : "▶ Run Reconciliation"}</>
             )}
           </button>
         </div>

@@ -331,7 +331,7 @@ export default function ERPConnectionPage() {
                 type="button"
                 onClick={handleSaveConnection}
                 disabled={loading || (!password && !savedConnection)}
-                className="flex-1 cursor-pointer bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-black font-bold py-1.5 px-3 rounded-lg text-xs transition-all shadow-lg active:scale-[0.98] disabled:opacity-50"
+                className="flex-1 cursor-pointer bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-black font-bold py-1.5 px-3 rounded-lg text-xs transition-all active:scale-[0.98] disabled:opacity-50"
               >
                 {loading ? t("erp.saving") : t("erp.saveBtn")}
               </button>
@@ -362,12 +362,21 @@ export default function ERPConnectionPage() {
                   <span className="text-white/50">{t("erp.username")}:</span>
                   <span className="font-semibold truncate max-w-[180px]">{savedConnection.username}</span>
                 </div>
-                <div className="pt-2">
+                <div className="pt-2 space-y-2">
                   <Link
                     href="/erp/discovery"
-                    className="w-full text-center block bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-black font-bold py-1.5 px-3 rounded-lg transition-all shadow-md text-xs active:scale-[0.98]"
+                    className="w-full text-center block bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-black font-bold py-1.5 px-3 rounded-lg transition-all active:scale-[0.98]"
                   >
                     {t("erp.goDiscovery")}
+                  </Link>
+                  
+                  {/* Bank Reconciliation Button */}
+                  <Link
+                    href="/erp/reconciliation"
+                    className="w-full text-center block bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700 text-white font-bold py-1.5 px-3 rounded-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2"
+                  >
+                    <span>🏦</span>
+                    <span>{language === "ar" ? "تسوية بنكية" : "Bank Reconciliation"}</span>
                   </Link>
                 </div>
               </div>
@@ -508,7 +517,7 @@ export default function ERPConnectionPage() {
                 <button
                   type="submit"
                   disabled={telegramLoading || !telegramToken}
-                  className="w-full cursor-pointer bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-black font-bold py-1 px-3 rounded-lg text-xs transition-all shadow-md active:scale-[0.98] disabled:opacity-50"
+                  className="w-full cursor-pointer bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 text-black font-bold py-1 px-3 rounded-lg text-xs transition-all active:scale-[0.98] disabled:opacity-50"
                 >
                   {telegramLoading ? (language === "ar" ? "جاري التفعيل..." : "Activating...") : (language === "ar" ? "تفعيل وحفظ البوت" : "Activate & Save Bot")}
                 </button>

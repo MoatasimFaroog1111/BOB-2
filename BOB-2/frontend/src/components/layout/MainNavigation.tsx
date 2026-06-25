@@ -67,11 +67,11 @@ export function MainNavigation() {
   const pathname = usePathname();
 
   const navItems = [
-    { href: "/team", label: t("sidebar.home"), icon: TeamIcon },
     { href: "/documents", label: t("sidebar.documents"), icon: DocumentIcon },
     { href: "/audit", label: t("sidebar.audit"), icon: AuditIcon },
     { href: "/accounting-ai", label: t("sidebar.accountingAI"), icon: AccountingAIIcon },
     { href: "/erp", label: t("sidebar.erp"), icon: ERPIcon },
+    { href: "/team", label: t("sidebar.home"), icon: TeamIcon },
   ];
 
   return (

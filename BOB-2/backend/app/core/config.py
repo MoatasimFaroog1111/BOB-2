@@ -47,8 +47,8 @@ class Settings(BaseSettings):
     # Local storage directory (telegram config/uploads, etc). Defaults to <project root>/storage.
     STORAGE_DIR: str = str(PROJECT_ROOT / "storage")
 
-    # LLM provider (xAI Grok) API key. Must be provided via environment / .env.
-    GROK_API_KEY: str = ""
+    # LLM provider (DeepSeek) API key. Must be provided via environment / .env.
+    DEEPSEEK_API_KEY: str = ""
 
     # Local sentence-transformers compatible embedding model for Accounting AI Matching.
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"

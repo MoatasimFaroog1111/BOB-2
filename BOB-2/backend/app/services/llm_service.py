@@ -1,7 +1,7 @@
 """
 Unified LLM service for GuardianAI.
 
-Tries Ollama (local Gemma) first, falls back to Grok API (xAI).
+Tries Ollama (local Gemma) first, falls back to DeepSeek API.
 Both expose an OpenAI-compatible chat completions interface.
 """
 import json
@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 
 OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_MODEL = "gemma2:9b"
-GROK_API_URL = "https://api.x.ai/v1/chat/completions"
-GROK_MODEL = "grok-3-mini"
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_MODEL = "deepseek-chat"
 
 
 def _call_ollama(
@@ -51,19 +51,19 @@ def _call_ollama(
         return None
 
 
-def _call_grok(
+def _call_deepseek(
     system_prompt: str,
     user_prompt: str,
     temperature: float = 0.0,
     timeout: int = 120,
 ) -> Optional[str]:
-    """Call xAI Grok API. Returns None if API key missing or call fails."""
-    api_key = settings.GROK_API_KEY
+    """Call DeepSeek API. Returns None if API key missing or call fails."""
+    api_key = settings.DEEPSEEK_API_KEY
     if not api_key:
         return None
 
     data = {
-        "model": GROK_MODEL,
+        "model": DEEPSEEK_MODEL,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -71,7 +71,7 @@ def _call_grok(
         "temperature": temperature,
     }
     req = urllib.request.Request(
-        GROK_API_URL,
+        DEEPSEEK_API_URL,
         data=json.dumps(data).encode("utf-8"),
         headers={
             "Authorization": f"Bearer {api_key}",
@@ -84,7 +84,7 @@ def _call_grok(
             res_json = json.loads(response.read().decode("utf-8"))
             return res_json["choices"][0]["message"]["content"].strip()
     except Exception as e:
-        logger.warning("Grok API call failed: %s", e)
+        logger.warning("DeepSeek API call failed: %s", e)
         return None
 
 
@@ -94,15 +94,15 @@ def chat(
     temperature: float = 0.0,
     timeout: int = 120,
 ) -> Optional[str]:
-    """Send a chat completion request. Tries Ollama first, then Grok."""
+    """Send a chat completion request. Tries Ollama first, then DeepSeek."""
     result = _call_ollama(system_prompt, user_prompt, temperature, timeout)
     if result:
         logger.info("LLM response from Ollama/Gemma")
         return result
 
-    result = _call_grok(system_prompt, user_prompt, temperature, timeout)
+    result = _call_deepseek(system_prompt, user_prompt, temperature, timeout)
     if result is not None:
-        logger.info("LLM response from Grok API")
+        logger.info("LLM response from DeepSeek API")
         return result
 
     logger.warning("No LLM provider available")

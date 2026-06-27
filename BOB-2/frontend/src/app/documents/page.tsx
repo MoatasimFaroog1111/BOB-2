@@ -44,6 +44,9 @@ interface Worksheet {
   colCount: number;
 }
 
+const normalizeLookupValue = (value: string): string =>
+  value.trim().replace(/\s+/g, " ").toLowerCase();
+
 export default function DocumentIntelligencePage() {
   const { t, language } = useLanguage();
   
@@ -532,6 +535,35 @@ export default function DocumentIntelligencePage() {
       setLoadingKB(false);
       setJournalsLoading(false);
     }
+  };
+
+  const resolveAccountFromValue = (rawValue: string): OdooAccount | null => {
+    const normalizedValue = normalizeLookupValue(rawValue);
+    if (!normalizedValue) return null;
+
+    const extractedCode = rawValue.trim().match(/^\d[\d.\-]*/)?.[0] || "";
+
+    return (
+      accounts.find((acc) => normalizeLookupValue(acc.code) === normalizedValue) ||
+      (extractedCode ? accounts.find((acc) => acc.code === extractedCode) : undefined) ||
+      accounts.find((acc) => normalizeLookupValue(`${acc.code} ${acc.name}`) === normalizedValue) ||
+      accounts.find((acc) => normalizeLookupValue(acc.name) === normalizedValue) ||
+      accounts.find((acc) => {
+        const accountCode = normalizeLookupValue(acc.code);
+        const accountName = normalizeLookupValue(acc.name);
+        const accountLabel = normalizeLookupValue(`${acc.code} ${acc.name}`);
+
+        return (
+          accountLabel.includes(normalizedValue) ||
+          normalizedValue.includes(accountLabel) ||
+          accountName.includes(normalizedValue) ||
+          normalizedValue.includes(accountName) ||
+          accountCode.includes(normalizedValue) ||
+          normalizedValue.includes(accountCode)
+        );
+      }) ||
+      null
+    );
   };
 
   // Helper to ensure input is fully visible in cell
@@ -1051,7 +1083,8 @@ export default function DocumentIntelligencePage() {
       const row = gridData[r];
       if (!row) continue;
 
-      const code = (row[codeCol] || "").trim();
+      const accountCellValue = (row[codeCol] || "").trim();
+      const code = accountCellValue;
       const debitVal = parseFloat((row[debitCol] || "").replace(/,/g, "")) || 0;
       const creditVal = parseFloat((row[creditCol] || "").replace(/,/g, "")) || 0;
       const label = (row[labelCol] || "").trim() || (language === "ar" ? "قيد محاسبي تفاعلي" : "Manual Spreadsheet Entry");
@@ -1072,9 +1105,7 @@ export default function DocumentIntelligencePage() {
         continue;
       }
 
-      const matchedAcc = accounts.find(
-        (acc) => acc.code === code || (acc.name && typeof acc.name === 'string' && acc.name.toLowerCase().includes(code.toLowerCase()))
-      );
+      const matchedAcc = resolveAccountFromValue(accountCellValue);
 
       let resolvedPartnerId: number | null = null;
       let resolvedPartnerName = partnerName;
@@ -1102,8 +1133,8 @@ export default function DocumentIntelligencePage() {
 
       lines.push({
         account_id: matchedAcc ? matchedAcc.id : 0,
-        account_name: matchedAcc ? `${matchedAcc.code} ${matchedAcc.name}` : (code ? `${code} (غير معرف)` : "حساب غير محدد"),
-        account_code: code,
+        account_name: matchedAcc ? `${matchedAcc.code} ${matchedAcc.name}` : (accountCellValue ? `${accountCellValue} (غير معرف)` : "حساب غير محدد"),
+        account_code: matchedAcc ? matchedAcc.code : accountCellValue,
         debit: debitVal,
         credit: creditVal,
         name: label,
@@ -1488,6 +1519,15 @@ export default function DocumentIntelligencePage() {
                     {c === 2 && <div className="text-[8.5px] font-normal text-[#107c41] font-semibold">{language === "ar" ? "مدين" : "Debit"}</div>}
                     {c === 3 && <div className="text-[8.5px] font-normal text-[#107c41] font-semibold">{language === "ar" ? "دائن" : "Credit"}</div>}
                     {c === 4 && <div className="text-[8.5px] font-normal text-[#107c41] font-semibold">{language === "ar" ? "اسم الشريك" : "Partner"}</div>}
+                    {c === 5 && (
+                      <div className="text-[8.5px] font-normal text-[#107c41] font-semibold flex items-center justify-center gap-1">
+                        <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M4 6h16M4 12h10M4 18h7" strokeLinecap="round" />
+                          <circle cx="18" cy="12" r="3" />
+                        </svg>
+                        <span>{language === "ar" ? "حساب تحليلي" : "Analytic Account"}</span>
+                      </div>
+                    )}
                   </th>
                 ))}
               </tr>
@@ -1550,7 +1590,15 @@ export default function DocumentIntelligencePage() {
                             className="w-full h-full bg-white text-gray-900 border-2 border-[#107c41] px-1.5 focus:outline-none text-right font-mono"
                           />
                         ) : (
-                          <div className="truncate w-full max-w-[124px] pr-0.5">{val}</div>
+                          <div className={`truncate w-full max-w-[124px] pr-0.5 ${c === 5 && val ? "inline-flex items-center gap-1 text-[#107c41] font-semibold" : ""}`}>
+                            {c === 5 && val && (
+                              <svg className="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M4 6h16M4 12h10M4 18h7" strokeLinecap="round" />
+                                <circle cx="18" cy="12" r="3" />
+                              </svg>
+                            )}
+                            <span className="truncate">{val}</span>
+                          </div>
                         )}
                       </td>
                     );

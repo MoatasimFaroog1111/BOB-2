@@ -1141,7 +1141,9 @@ export default function DocumentIntelligencePage() {
       startRowIndex = startR + 1;
       for (let c = startC; c <= endC; c++) {
         const val = (firstRowInRange[c] || "").toLowerCase().trim();
-        if (val.includes("رمز") || val.includes("code") || val.includes("حساب") || val.includes("account")) {
+        if (val.includes("تحليلي") || val.includes("analytic") || val.includes("مركز تكلفة") || val.includes("cost center")) {
+          analyticCol = c;
+        } else if ((val.includes("رمز") || val.includes("code") || val.includes("حساب") || val.includes("account")) && !val.includes("تحليلي") && !val.includes("analytic")) {
           codeCol = c;
         } else if (val.includes("بيان") || val.includes("label") || val.includes("وصف") || val.includes("description") || val.includes("name") || val === "الاسم" || val === "الأسم") {
           labelCol = c;
@@ -1151,8 +1153,6 @@ export default function DocumentIntelligencePage() {
           creditCol = c;
         } else if (val.includes("شريك") || val.includes("partner") || val.includes("مورد") || val.includes("عميل")) {
           partnerCol = c;
-        } else if (val.includes("تحليلي") || val.includes("analytic") || val.includes("مركز تكلفة") || val.includes("cost center")) {
-          analyticCol = c;
         } else if (val.includes("التاريخ") || val.includes("date")) {
           dateCol = c;
         } else if (val.includes("رقم") || val.includes("ref") || val.includes("move") || val.includes("قيد")) {
@@ -1166,7 +1166,9 @@ export default function DocumentIntelligencePage() {
       const mainHeaderRow = gridData[0];
       mainHeaderRow.forEach((val, index) => {
         const norm = val.toLowerCase().trim();
-        if (norm.includes("رمز") || norm.includes("code") || norm.includes("حساب") || norm.includes("account")) {
+        if (norm.includes("تحليلي") || norm.includes("analytic") || norm.includes("مركز تكلفة") || norm.includes("cost center")) {
+          analyticCol = index;
+        } else if ((norm.includes("رمز") || norm.includes("code") || norm.includes("حساب") || norm.includes("account")) && !norm.includes("تحليلي") && !norm.includes("analytic")) {
           codeCol = index;
         } else if (norm.includes("بيان") || norm.includes("label") || norm.includes("وصف") || norm.includes("description") || norm.includes("name") || norm === "الاسم" || norm === "الأسم") {
           labelCol = index;
@@ -1176,8 +1178,6 @@ export default function DocumentIntelligencePage() {
           creditCol = index;
         } else if (norm.includes("شريك") || norm.includes("partner") || norm.includes("مورد") || norm.includes("عميل")) {
           partnerCol = index;
-        } else if (norm.includes("تحليلي") || norm.includes("analytic") || norm.includes("مركز تكلفة") || norm.includes("cost center")) {
-          analyticCol = index;
         } else if (norm.includes("التاريخ") || norm.includes("date")) {
           dateCol = index;
         } else if (norm.includes("رقم") || norm.includes("ref") || norm.includes("move") || norm.includes("قيد")) {
@@ -1356,9 +1356,11 @@ export default function DocumentIntelligencePage() {
 
     setIsRegistering(true);
     try {
+      const selectedJournalObj = journals.find((j) => j.id === selectedJournalId);
       const payload = {
         filename: `spreadsheet_entry_${new Date().toISOString().slice(0, 10)}.pdf`,
-        document_class: customJournal || "general_journal",
+        document_class: customJournal || (selectedJournalObj ? selectedJournalObj.type : "general_journal"),
+        journal_id: selectedJournalId,
         amount: totalDebit,
         date: customDate || new Date().toISOString().slice(0, 10),
         partner_name: previewLines[0]?.partner_name || "",
@@ -1899,6 +1901,43 @@ export default function DocumentIntelligencePage() {
             {/* Scrollable Form Body */}
             <div className="flex-1 overflow-auto p-6 flex flex-col gap-5 text-right" dir={language === "ar" ? "rtl" : "ltr"}>
               
+              {/* Date / Reference / Journal Fields */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-white/50 font-semibold">{language === "ar" ? "التاريخ" : "Date"}</label>
+                  <input
+                    type="date"
+                    value={customDate}
+                    onChange={(e) => setCustomDate(e.target.value)}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500/50 focus:ring-0"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-white/50 font-semibold">{language === "ar" ? "رقم المرجع" : "Reference"}</label>
+                  <input
+                    type="text"
+                    value={customRef}
+                    onChange={(e) => setCustomRef(e.target.value)}
+                    placeholder={language === "ar" ? "رقم القيد..." : "Entry ref..."}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500/50 focus:ring-0 placeholder-white/25"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-white/50 font-semibold">{language === "ar" ? "اليومية" : "Journal"}</label>
+                  <select
+                    value={selectedJournalId || ""}
+                    onChange={(e) => setSelectedJournalId(e.target.value ? parseInt(e.target.value) : null)}
+                    className="w-full bg-black/40 border border-white/10 rounded-lg px-2 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500/50 focus:ring-0"
+                  >
+                    {journals.map((j) => (
+                      <option key={j.id} value={j.id} className="bg-[#1b0d04] text-white">
+                        {j.name} ({j.code})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               {/* Balanced Status */}
               <div className="flex justify-between items-center bg-black/20 p-3 border border-white/5 rounded-xl text-xs">
                 <div className="flex gap-4">

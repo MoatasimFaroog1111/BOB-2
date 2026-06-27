@@ -1,7 +1,11 @@
+import copy
 import json
+import math
 import os
+import re
 import shutil
 import tempfile
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
@@ -944,10 +948,13 @@ def attach_document(
 class JournalLineRequest(BaseModel):
     account_id: int
     account_name: str
+    account_code: str = ""
     debit: float
     credit: float
     name: str
     partner_id: Optional[int] = None
+    analytic_account_id: Optional[int] = None
+    analytic_account_name: str = ""
 
 
 class ProposeTransactionRequest(BaseModel):
@@ -1009,6 +1016,212 @@ def get_partners(db_session: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=f"Failed to fetch partners from Odoo: {str(e)}")
 
 
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^\w\u0600-\u06FF\s]", " ", (value or "").lower())).strip()
+
+
+def _safe_ratio(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def _amount_similarity(target: float, candidate: float) -> float:
+    if target <= 0 and candidate <= 0:
+        return 1.0
+    base = max(abs(target), abs(candidate), 1.0)
+    return max(0.0, 1.0 - (abs(target - candidate) / base))
+
+
+def _closest_partner_by_name(partners_list: list, partner_name: str) -> tuple[Optional[int], str, float]:
+    query = _normalize_text(partner_name or "")
+    if not query:
+        return None, "", 0.0
+
+    best = None
+    best_score = 0.0
+    query_tokens = set(query.split())
+    for partner in partners_list or []:
+        name = partner.get("name") or ""
+        candidate = _normalize_text(name)
+        if not candidate:
+            continue
+
+        ratio = _safe_ratio(query, candidate)
+        token_overlap = 0.0
+        candidate_tokens = set(candidate.split())
+        if query_tokens and candidate_tokens:
+            token_overlap = len(query_tokens & candidate_tokens) / max(len(query_tokens), len(candidate_tokens))
+        score = (ratio * 0.75) + (token_overlap * 0.25)
+
+        if score > best_score:
+            best = partner
+            best_score = score
+
+    if best and best_score >= 0.45:
+        return best.get("id"), best.get("name") or "", best_score
+    return None, "", 0.0
+
+
+def _extract_analytic_account_id(line: dict) -> Optional[int]:
+    analytic_distribution = line.get("analytic_distribution")
+    if isinstance(analytic_distribution, dict) and analytic_distribution:
+        top_id = None
+        top_weight = -1.0
+        for key, value in analytic_distribution.items():
+            try:
+                weight = float(value or 0.0)
+                acc_id = int(key)
+            except Exception:
+                continue
+            if weight > top_weight:
+                top_id = acc_id
+                top_weight = weight
+        if top_id:
+            return top_id
+
+    analytic_account = line.get("analytic_account_id")
+    if isinstance(analytic_account, list) and analytic_account:
+        try:
+            return int(analytic_account[0])
+        except Exception:
+            return None
+    if isinstance(analytic_account, int):
+        return analytic_account
+    return None
+
+
+def _suggest_lines_from_similar_move(
+    erp,
+    user_company_id: Optional[int],
+    amount: float,
+    filename: str,
+    raw_text: str,
+    partner_name: str,
+):
+    domain = [["state", "=", "posted"]]
+    if user_company_id:
+        domain.append(["company_id", "=", user_company_id])
+
+    moves = erp.execute_kw(
+        "account.move",
+        "search_read",
+        [domain],
+        {
+            "fields": ["id", "name", "ref", "amount_total", "partner_id", "line_ids"],
+            "order": "date desc, id desc",
+            "limit": 160,
+        },
+    )
+    if not moves:
+        return None
+
+    signal_text = _normalize_text(f"{filename} {raw_text}")
+    signal_partner = _normalize_text(partner_name)
+
+    best_move = None
+    best_score = 0.0
+    for move in moves:
+        candidate_text = _normalize_text(f"{move.get('name') or ''} {move.get('ref') or ''}")
+        amount_score = _amount_similarity(float(amount or 0.0), float(move.get("amount_total") or 0.0))
+        text_score = _safe_ratio(signal_text, candidate_text)
+
+        partner_field = move.get("partner_id")
+        candidate_partner_name = partner_field[1] if isinstance(partner_field, list) and len(partner_field) > 1 else ""
+        partner_score = _safe_ratio(signal_partner, _normalize_text(candidate_partner_name))
+
+        score = (amount_score * 0.45) + (text_score * 0.35) + (partner_score * 0.20)
+        if score > best_score:
+            best_score = score
+            best_move = move
+
+    if not best_move or best_score < 0.55:
+        return None
+
+    move_line_ids = [lid for lid in (best_move.get("line_ids") or []) if isinstance(lid, int)]
+    if not move_line_ids:
+        return None
+
+    move_lines = erp.execute_kw(
+        "account.move.line",
+        "search_read",
+        [[["id", "in", move_line_ids]]],
+        {
+            "fields": [
+                "account_id",
+                "name",
+                "debit",
+                "credit",
+                "partner_id",
+                "analytic_distribution",
+                "analytic_account_id",
+            ],
+            "order": "id asc",
+            "limit": 500,
+        },
+    )
+    if not move_lines:
+        return None
+
+    analytic_ids = set()
+    for line in move_lines:
+        analytic_id = _extract_analytic_account_id(line)
+        if analytic_id:
+            analytic_ids.add(analytic_id)
+
+    analytic_name_map = {}
+    if analytic_ids:
+        try:
+            analytic_accounts = erp.execute_kw(
+                "account.analytic.account",
+                "search_read",
+                [[["id", "in", list(analytic_ids)]]],
+                {"fields": ["id", "name"], "limit": len(analytic_ids)},
+            )
+            analytic_name_map = {a["id"]: a.get("name") or "" for a in analytic_accounts}
+        except Exception:
+            analytic_name_map = {}
+
+    suggested_lines = []
+    for line in move_lines:
+        debit = float(line.get("debit") or 0.0)
+        credit = float(line.get("credit") or 0.0)
+        if debit == 0.0 and credit == 0.0:
+            continue
+
+        account_info = line.get("account_id")
+        if not (isinstance(account_info, list) and len(account_info) >= 2):
+            continue
+
+        acc_label = account_info[1] or ""
+        acc_code = acc_label.split(" ")[0] if " " in acc_label else ""
+        partner_info = line.get("partner_id")
+        analytic_id = _extract_analytic_account_id(line)
+        suggested_lines.append(
+            {
+                "account_id": account_info[0],
+                "account_name": acc_label,
+                "account_code": acc_code,
+                "debit": debit,
+                "credit": credit,
+                "name": line.get("name") or f"قيد مشابه من {best_move.get('name') or 'Odoo'}",
+                "partner_id": partner_info[0] if isinstance(partner_info, list) and partner_info else None,
+                "partner_name": partner_info[1] if isinstance(partner_info, list) and len(partner_info) > 1 else "",
+                "analytic_account_id": analytic_id,
+                "analytic_account_name": analytic_name_map.get(analytic_id, "") if analytic_id else "",
+            }
+        )
+
+    if len(suggested_lines) < 2:
+        return None
+
+    return {
+        "score": round(best_score, 4),
+        "move_name": best_move.get("name") or "",
+        "lines": suggested_lines,
+    }
+
+
 @router.post("/propose-transaction")
 def propose_transaction(payload: ProposeTransactionRequest, db_session: Session = Depends(get_db)):
     conn = db_session.query(ERPConnection).filter(
@@ -1044,10 +1257,12 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
         )
         user_company_id = users[0]["company_id"][0] if users and users[0].get("company_id") else False
 
-        # 2. Extract Partner Name and find in Odoo
+        # 2. Resolve partner from Odoo by closest name (prefer explicit uploaded partner name)
         suggested_partner_id = None
         suggested_partner_name = ""
-        
+        partner_match_score = 0.0
+        partners_list = []
+
         try:
             partners_list = get_cached(conn.base_url, conn.database_name or "", "partners")
             if partners_list is None:
@@ -1058,126 +1273,20 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
                     {"fields": ["id", "name"], "limit": 5000}
                 )
                 set_cached(conn.base_url, conn.database_name or "", "partners", partners_list)
-            
-            doc_text_lower = f"{(payload.raw_text or '')} {payload.filename} {payload.partner_name}".lower()
-            
-            # Extract clean words from document text to enforce word-boundary matching
-            import re
-            doc_words = set(re.findall(r"[\w\u0600-\u06FF]+", doc_text_lower))
-            
-            ENGLISH_TO_ARABIC_MAP = {
-                "mohamed": ["محمد"],
-                "mohammed": ["محمد"],
-                "muhammad": ["محمد"],
-                "mohammad": ["محمد"],
-                "ahmed": ["احمد", "أحمد"],
-                "ahmad": ["احمد", "أحمد"],
-                "shaaban": ["شعبان"],
-                "shaban": ["شعبان"],
-                "ali": ["علي"],
-                "ibrahim": ["ابراهيم", "إبراهيم"],
-                "ebrahim": ["ابراهيم", "إبراهيم"],
-                "mahmoud": ["محمود"],
-                "saeed": ["سعيد"],
-                "said": ["سعيد"],
-                "abdullah": ["عبدالله", "عبد الله"],
-                "hussein": ["حسين"],
-                "huseyin": ["حسين"],
-                "hussain": ["حسين"],
-                "hassan": ["حسن"],
-                "hasan": ["حسن"],
-                "soliman": ["سليمان"],
-                "sulaiman": ["سليمان"],
-                "suleiman": ["سليمان"],
-                "sherif": ["شريف"],
-                "khaled": ["خالد"],
-                "khalid": ["خالد"],
-                "saleh": ["صالح"],
-                "saad": ["سعد", "سعيد"],
-                "youssef": ["يوسف"],
-                "yousef": ["يوسف"],
-                "emad": ["عماد"],
-                "nour": ["نور"],
-                "adel": ["عادل"],
-                "mustafa": ["مصطفى"],
-                "mostafa": ["مصطفى"],
-                "gamal": ["جمال"],
-                "jamal": ["جمال"],
-                "samir": ["سمير"],
-                "sameer": ["سمير"],
-                "fathy": ["فتحي"],
-                "fathi": ["فتحي"],
-                "tarek": ["طارق"],
-                "tariq": ["طارق"],
-                "hashem": ["هاشم", "هشام"],
-                "hisham": ["هشام", "هاشم"],
-                "ramadan": ["رمضان"],
-                "magdy": ["مجدي"],
-                "osama": ["اسامة", "أسامة"],
-                "reda": ["رضا"],
-                "anwar": ["انور", "أنور"],
-                "waqas": ["وقاص"],
-                "umar": ["عمر"],
-                "omar": ["عمر"],
-                "farooq": ["فاروق"],
-                "faroog": ["فاروق"],
-                "naser": ["ناصر", "نصير"],
-                "naseer": ["ناصر", "نصير"],
-            }
-            
-            best_score = -1.0
-            best_matched_count = 0
-            best_partner = None
-            
-            for partner in partners_list:
-                p_name = partner.get("name") or ""
-                name_clean = re.sub(r"[^\w\s]", " ", p_name.lower())
-                p_words = [w.strip() for w in name_clean.split() if len(w.strip()) >= 3]
-                if not p_words:
-                    continue
-                
-                matched_count = 0
-                for w in p_words:
-                    # Direct match in document words
-                    if w in doc_words:
-                        matched_count += 1
-                        continue
-                    # Arabic transliteration match in document words
-                    ar_vars = ENGLISH_TO_ARABIC_MAP.get(w)
-                    if ar_vars:
-                        matched = False
-                        for ar in ar_vars:
-                            if ar in doc_words:
-                                matched = True
-                                break
-                            # Prefix-aware regex matching (e.g. لمحمد matches محمد)
-                            pattern = r'(?:^|[^a-zA-Z0-9\u0600-\u06FF])[لبوف]?(?:ال)?' + re.escape(ar) + r'(?:$|[^a-zA-Z0-9\u0600-\u06FF])'
-                            if re.search(pattern, doc_text_lower):
-                                matched = True
-                                break
-                        if matched:
-                            matched_count += 1
-                            continue
-                
-                score = matched_count / len(p_words)
-                
-                # Apply tiny penalty for Petty Cash accounts to avoid shadowing actual partners in ties
-                is_petty_cash = any(k in p_name.lower() or k in p_name for k in ["petty", "cash", "بيتي", "كاش"])
-                adjusted_score = score - 0.01 if is_petty_cash else score
-                
-                if score >= 0.50:
-                    # Prioritize higher score first, or tie-break with more matched words
-                    if adjusted_score > best_score or (adjusted_score == best_score and matched_count > best_matched_count):
-                        best_score = adjusted_score
-                        best_matched_count = matched_count
-                        best_partner = partner
-            
-            if best_partner:
-                suggested_partner_id = best_partner["id"]
-                suggested_partner_name = best_partner["name"]
-                print(f"[DIAGNOSTIC] Smart partner match found: {suggested_partner_name} (Score: {best_score:.2f}, Matched Words: {best_matched_count})")
+            suggested_partner_id, suggested_partner_name, partner_match_score = _closest_partner_by_name(
+                partners_list, payload.partner_name or ""
+            )
+            if suggested_partner_id:
+                print(f"[DIAGNOSTIC] Closest partner by uploaded name: {suggested_partner_name} ({partner_match_score:.2f})")
+
+            if not suggested_partner_id:
+                suggested_partner_id, suggested_partner_name, partner_match_score = _closest_partner_by_name(
+                    partners_list, f"{payload.filename} {payload.raw_text}"
+                )
+                if suggested_partner_id:
+                    print(f"[DIAGNOSTIC] Closest partner by document text: {suggested_partner_name} ({partner_match_score:.2f})")
         except Exception as pe:
-            print(f"[DIAGNOSTIC] Partner scan failed: {pe}")
+            print(f"[DIAGNOSTIC] Partner matching failed: {pe}")
 
         if not suggested_partner_id and payload.partner_name:
             try:
@@ -1340,7 +1449,67 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
                 except Exception as override_err:
                     print(f"[DIAGNOSTIC] Failed to override petty cash account: {override_err}")
 
-        # 5. Build proposal based on type
+        # 5. Similar historical operation analysis from Odoo (amount + description + details)
+        similar_operation = None
+        try:
+            similar_operation = _suggest_lines_from_similar_move(
+                erp=erp,
+                user_company_id=user_company_id,
+                amount=float(payload.amount or 0.0),
+                filename=payload.filename or "",
+                raw_text=payload.raw_text or "",
+                partner_name=payload.partner_name or "",
+            )
+        except Exception as sm_err:
+            print(f"[DIAGNOSTIC] Similar move analysis failed: {sm_err}")
+
+        if similar_operation and similar_operation.get("lines"):
+            historical_lines = similar_operation["lines"]
+
+            if not suggested_partner_id:
+                partners_in_lines = [l for l in historical_lines if l.get("partner_id")]
+                if partners_in_lines:
+                    suggested_partner_id = partners_in_lines[0].get("partner_id")
+                    suggested_partner_name = partners_in_lines[0].get("partner_name") or ""
+
+            normalized_lines = []
+            for line in historical_lines:
+                normalized_lines.append(
+                    {
+                        "account_id": line.get("account_id"),
+                        "account_name": line.get("account_name") or "",
+                        "account_code": line.get("account_code") or "",
+                        "debit": float(line.get("debit") or 0.0),
+                        "credit": float(line.get("credit") or 0.0),
+                        "name": line.get("name") or f"عملية مشابهة من {similar_operation.get('move_name') or 'Odoo'}",
+                        "partner_id": line.get("partner_id") if line.get("partner_id") else suggested_partner_id,
+                        "partner_name": line.get("partner_name") or suggested_partner_name,
+                        "analytic_account_id": line.get("analytic_account_id"),
+                        "analytic_account_name": line.get("analytic_account_name") or "",
+                    }
+                )
+
+            for line in proposed_lines:
+                acc_name = line.get("account_name") or ""
+                if not line.get("account_code"):
+                    line["account_code"] = acc_name.split(" ")[0] if " " in acc_name else ""
+                line.setdefault("partner_id", suggested_partner_id)
+                line.setdefault("partner_name", suggested_partner_name)
+                line.setdefault("analytic_account_id", None)
+                line.setdefault("analytic_account_name", "")
+
+            return {
+                "status": "success",
+                "suggested_partner_id": suggested_partner_id,
+                "suggested_partner_name": suggested_partner_name,
+                "journal_name": "From Similar Odoo Entry",
+                "rule_matched": rule_matched,
+                "matched_move_name": similar_operation.get("move_name") or "",
+                "analysis_similarity_score": similar_operation.get("score") or 0.0,
+                "lines": normalized_lines,
+            }
+
+        # 6. Build proposal based on type
         doc_class = (payload.document_class or "").lower()
         filename_lower = (payload.filename or "").lower()
         raw_text_lower = (payload.raw_text or "").lower()
@@ -1791,6 +1960,11 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
         move_vals = {}
         journal_name = "Vendor Bills"
 
+        def _inject_analytic_fields(target_vals: dict, analytic_account_id: Optional[int]) -> None:
+            if analytic_account_id:
+                target_vals["analytic_account_id"] = analytic_account_id
+                target_vals["analytic_distribution"] = {str(int(analytic_account_id)): 100.0}
+
         if payload.lines:
             doc_class_lower = (payload.document_class or "").lower()
             is_bank_journal = (
@@ -1841,12 +2015,12 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
                     "invoice_date": invoice_date_val,
                     "ref": payload.ref or f"Doc {payload.filename}",
                     "invoice_line_ids": [
-                        (0, 0, {
+                        (0, 0, (lambda vals: (_inject_analytic_fields(vals, line.analytic_account_id), vals)[1])({
                             "name": line.name,
                             "quantity": 1.0,
                             "price_unit": line.debit or line.credit or payload.amount,
                             "account_id": line.account_id,
-                        }) for line in payload.lines
+                        })) for line in payload.lines
                     ]
                 }
             else:
@@ -1855,13 +2029,13 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
                     "date": invoice_date_val,
                     "ref": payload.ref or f"Doc {payload.filename}",
                     "line_ids": [
-                        (0, 0, {
+                        (0, 0, (lambda vals: (_inject_analytic_fields(vals, line.analytic_account_id), vals)[1])({
                             "account_id": line.account_id,
                             "name": line.name,
                             "debit": line.debit,
                             "credit": line.credit,
                             "partner_id": line.partner_id if line.partner_id is not None else (partner_id or False),
-                        }) for line in payload.lines
+                        })) for line in payload.lines
                     ]
                 }
                 
@@ -2073,12 +2247,38 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
 
                 journal_name = "Miscellaneous Operations"
 
-        # Create move
-        move_id = erp.execute_kw(
-            "account.move",
-            "create",
-            [move_vals]
-        )
+        # Create move (retry without analytic fields if remote Odoo does not support them)
+        try:
+            move_id = erp.execute_kw(
+                "account.move",
+                "create",
+                [move_vals]
+            )
+        except Exception as create_err:
+            err_text = str(create_err).lower()
+            if "analytic" not in err_text:
+                raise
+
+            sanitized_move_vals = copy.deepcopy(move_vals)
+            for field in ["line_ids", "invoice_line_ids"]:
+                if field not in sanitized_move_vals:
+                    continue
+                sanitized_lines = []
+                for cmd in sanitized_move_vals[field]:
+                    if isinstance(cmd, tuple) and len(cmd) == 3 and isinstance(cmd[2], dict):
+                        vals = dict(cmd[2])
+                        vals.pop("analytic_account_id", None)
+                        vals.pop("analytic_distribution", None)
+                        sanitized_lines.append((cmd[0], cmd[1], vals))
+                    else:
+                        sanitized_lines.append(cmd)
+                sanitized_move_vals[field] = sanitized_lines
+
+            move_id = erp.execute_kw(
+                "account.move",
+                "create",
+                [sanitized_move_vals]
+            )
 
         # Read the name of the created move
         move_name = f"BILL/{move_id}"
@@ -2826,6 +3026,44 @@ def get_accounts(db_session: Session = Depends(get_db)):
         return accounts
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch accounts: {str(e)}")
+
+
+@router.get("/analytic-accounts")
+def get_analytic_accounts(db_session: Session = Depends(get_db)):
+    conn = db_session.query(ERPConnection).filter(
+        ERPConnection.organization_id == 1,
+        ERPConnection.is_active == True
+    ).first()
+
+    if not conn:
+        raise HTTPException(status_code=404, detail="No active ERP connection found.")
+
+    try:
+        secret_data = json.loads(decrypt_value(conn.encrypted_secret_ref))
+        username = secret_data.get("username")
+        password = secret_data.get("password")
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to decrypt connection credentials.")
+
+    try:
+        erp = get_erp_provider(
+            provider=conn.provider,
+            url=conn.base_url,
+            db=conn.database_name or "",
+            username=username,
+            password=password,
+        )
+
+        domain = [["active", "=", True]]
+        analytic_accounts = erp.execute_kw(
+            "account.analytic.account",
+            "search_read",
+            [domain],
+            {"fields": ["id", "name"], "order": "name asc", "limit": 1000},
+        )
+        return analytic_accounts
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch analytic accounts: {str(e)}")
 
 
 @router.get("/attachment/{attachment_id}")

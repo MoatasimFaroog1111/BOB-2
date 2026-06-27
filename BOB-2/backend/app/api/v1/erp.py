@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import tempfile
+import unicodedata
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import List, Optional
@@ -1017,13 +1018,77 @@ def get_partners(db_session: Session = Depends(get_db)):
 
 
 def _normalize_text(value: str) -> str:
-    return re.sub(r"\s+", " ", re.sub(r"[^\w\u0600-\u06FF\s]", " ", (value or "").lower())).strip()
+    normalized = unicodedata.normalize("NFKD", (value or ""))
+    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+    normalized = normalized.lower()
+    normalized = re.sub(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]", "", normalized)
+    normalized = normalized.replace("ـ", "")
+    normalized = normalized.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
+    normalized = normalized.replace("ى", "ي").replace("ة", "ه")
+    normalized = re.sub(r"[^\w\u0600-\u06FF\s]", " ", normalized)
+    normalized = re.sub(
+        r"\b(company|co|corp|corporation|inc|ltd|llc|est)\b",
+        " ",
+        normalized,
+    )
+    normalized = re.sub(
+        r"(شركة|مؤسسه|مؤسسة|مكتب|مقاولات|التجارية|العامه|العامة)",
+        " ",
+        normalized,
+    )
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 def _safe_ratio(a: str, b: str) -> float:
     if not a or not b:
         return 0.0
     return SequenceMatcher(None, a, b).ratio()
+
+
+_ARABIC_TO_LATIN_MAP = {
+    "ا": "a", "أ": "a", "إ": "i", "آ": "a", "ء": "a", "ؤ": "o", "ئ": "e",
+    "ب": "b", "ت": "t", "ث": "th", "ج": "j", "ح": "h", "خ": "kh",
+    "د": "d", "ذ": "th", "ر": "r", "ز": "z", "س": "s", "ش": "sh",
+    "ص": "s", "ض": "d", "ط": "t", "ظ": "z", "ع": "a", "غ": "gh",
+    "ف": "f", "ق": "q", "ك": "k", "ل": "l", "م": "m", "ن": "n",
+    "ه": "h", "ة": "a", "و": "w", "ي": "y", "ى": "a",
+}
+
+
+def _transliterate_arabic_to_latin(value: str) -> str:
+    return re.sub(
+        r"\s+",
+        " ",
+        "".join(_ARABIC_TO_LATIN_MAP.get(ch, ch) for ch in (value or "")),
+    ).strip()
+
+
+def _token_overlap(a: str, b: str) -> float:
+    if not a or not b:
+        return 0.0
+    a_tokens = {t for t in a.split() if t}
+    b_tokens = {t for t in b.split() if t}
+    if not a_tokens or not b_tokens:
+        return 0.0
+    overlap = len(a_tokens & b_tokens)
+    return overlap / max(len(a_tokens), len(b_tokens))
+
+
+def _partner_name_similarity(query: str, candidate: str) -> float:
+    if not query or not candidate:
+        return 0.0
+
+    base_ratio = _safe_ratio(query, candidate)
+    token_overlap = _token_overlap(query, candidate)
+    contains_boost = 0.15 if query in candidate or candidate in query else 0.0
+    native_score = (base_ratio * 0.75) + (token_overlap * 0.25)
+
+    query_latin = _transliterate_arabic_to_latin(query)
+    candidate_latin = _transliterate_arabic_to_latin(candidate)
+    cross_lingual_score = (_safe_ratio(query_latin, candidate_latin) * 0.75) + (
+        _token_overlap(query_latin, candidate_latin) * 0.25
+    )
+    return min(1.0, max(native_score, cross_lingual_score) + contains_boost)
 
 
 def _amount_similarity(target: float, candidate: float) -> float:
@@ -1040,25 +1105,19 @@ def _closest_partner_by_name(partners_list: list, partner_name: str) -> tuple[Op
 
     best = None
     best_score = 0.0
-    query_tokens = set(query.split())
     for partner in partners_list or []:
         name = partner.get("name") or ""
         candidate = _normalize_text(name)
         if not candidate:
             continue
 
-        ratio = _safe_ratio(query, candidate)
-        token_overlap = 0.0
-        candidate_tokens = set(candidate.split())
-        if query_tokens and candidate_tokens:
-            token_overlap = len(query_tokens & candidate_tokens) / max(len(query_tokens), len(candidate_tokens))
-        score = (ratio * 0.75) + (token_overlap * 0.25)
+        score = _partner_name_similarity(query, candidate)
 
         if score > best_score:
             best = partner
             best_score = score
 
-    if best and best_score >= 0.45:
+    if best and best_score >= 0.5:
         return best.get("id"), best.get("name") or "", best_score
     return None, "", 0.0
 
@@ -1817,20 +1876,36 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
         partner_id = payload.partner_id
         if not partner_id and payload.partner_name:
             try:
-                partners = erp.execute_kw(
-                    "res.partner",
-                    "search",
-                    [[["name", "ilike", payload.partner_name]]],
-                    {"limit": 1}
-                )
-                if partners:
-                    partner_id = partners[0]
-                else:
-                    partner_id = erp.execute_kw(
+                partners_list = get_cached(conn.base_url, conn.database_name or "", "partners")
+                if partners_list is None:
+                    partners_list = erp.execute_kw(
                         "res.partner",
-                        "create",
-                        [{"name": payload.partner_name}]
+                        "search_read",
+                        [[["active", "=", True]]],
+                        {"fields": ["id", "name"], "limit": 5000},
                     )
+                    set_cached(conn.base_url, conn.database_name or "", "partners", partners_list)
+
+                best_partner_id, _, partner_match_score = _closest_partner_by_name(
+                    partners_list, payload.partner_name
+                )
+                if best_partner_id and partner_match_score >= 0.5:
+                    partner_id = best_partner_id
+                else:
+                    partners = erp.execute_kw(
+                        "res.partner",
+                        "search",
+                        [[["name", "ilike", payload.partner_name]]],
+                        {"limit": 1}
+                    )
+                    if partners:
+                        partner_id = partners[0]
+                    else:
+                        partner_id = erp.execute_kw(
+                            "res.partner",
+                            "create",
+                            [{"name": payload.partner_name}]
+                        )
             except Exception as pe:
                 print(f"[DIAGNOSTIC] Partner resolution failed: {pe}")
 
@@ -2727,11 +2802,9 @@ def parse_manual_text(payload: ParseManualTextRequest, db_session: Session = Dep
             matched_partner_id = None
             matched_partner_name = parsed_partner
             if parsed_partner and odoo_partners:
-                # Fuzzy match partner name
-                matched_p = next((p for p in odoo_partners if p["name"] and isinstance(p["name"], str) and parsed_partner.lower() in p["name"].lower()), None)
-                if matched_p:
-                    matched_partner_id = matched_p["id"]
-                    matched_partner_name = matched_p["name"]
+                matched_partner_id, matched_partner_name, _ = _closest_partner_by_name(
+                    odoo_partners, parsed_partner
+                )
 
             resolved_lines.append({
                 "account_id": matched_acc["id"] if matched_acc else 0,

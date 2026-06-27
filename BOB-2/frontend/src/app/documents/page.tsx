@@ -31,6 +31,11 @@ interface OdooPartner {
   name: string;
 }
 
+interface OdooAnalyticAccount {
+  id: number;
+  name: string;
+}
+
 interface Worksheet {
   id: string;
   name: string;
@@ -80,6 +85,7 @@ export default function DocumentIntelligencePage() {
   // Odoo Structural Data
   const [accounts, setAccounts] = useState<OdooAccount[]>([]);
   const [partners, setPartners] = useState<OdooPartner[]>([]);
+  const [analyticAccounts, setAnalyticAccounts] = useState<OdooAnalyticAccount[]>([]);
   const [, setLoadingKB] = useState(false);
   
   // Odoo Submission Modal States
@@ -93,12 +99,16 @@ export default function DocumentIntelligencePage() {
     name: string;
     partner_name: string;
     partner_id: number | null;
+    analytic_account_id: number | null;
+    analytic_account_name: string;
   }[]>([]);
   const [isRegistering, setIsRegistering] = useState(false);
   const [partnerDropdownRowIndex, setPartnerDropdownRowIndex] = useState<number | null>(null);
   const [accountDropdownRowIndex, setAccountDropdownRowIndex] = useState<number | null>(null);
+  const [analyticDropdownRowIndex, setAnalyticDropdownRowIndex] = useState<number | null>(null);
   const [accountSearchQuery, setAccountSearchQuery] = useState("");
   const [partnerSearchQuery, setPartnerSearchQuery] = useState("");
+  const [analyticSearchQuery, setAnalyticSearchQuery] = useState("");
   const [customDate, setCustomDate] = useState("");
   const [customRef, setCustomRef] = useState("");
   const [customJournal, setCustomJournal] = useState("");
@@ -130,7 +140,13 @@ export default function DocumentIntelligencePage() {
       }
 
       if (data.lines && data.lines.length > 0) {
-        setPreviewLines(data.lines);
+        setPreviewLines(
+          data.lines.map((line: any) => ({
+            ...line,
+            analytic_account_id: line.analytic_account_id ?? null,
+            analytic_account_name: line.analytic_account_name || "",
+          }))
+        );
         setCustomDate(data.date || "");
         setCustomRef(data.ref || "");
         setCustomJournal(data.journal || "");
@@ -396,25 +412,21 @@ export default function DocumentIntelligencePage() {
           newGrid[0][2] = language === "ar" ? "مدين" : "Debit";
           newGrid[0][3] = language === "ar" ? "دائن" : "Credit";
           newGrid[0][4] = language === "ar" ? "اسم الشريك" : "Partner";
+          newGrid[0][5] = language === "ar" ? "الحساب التحليلي" : "Analytic Account";
 
           proposedLines.forEach((line: any, idx: number) => {
             const rIdx = idx + 1;
             if (rIdx >= DEFAULT_ROWS) return;
 
             const accName = line.account_name || "";
-            const matchCode = accName.match(/^(\d+)/);
-            let accCode = "";
-            if (matchCode) {
-              accCode = matchCode[1];
-            } else {
-              accCode = accName;
-            }
+            const accCode = line.account_code || accName.match(/^(\d+)/)?.[1] || accName;
 
             newGrid[rIdx][0] = accCode;
             newGrid[rIdx][1] = line.name || "";
             newGrid[rIdx][2] = line.debit > 0 ? String(line.debit) : "";
             newGrid[rIdx][3] = line.credit > 0 ? String(line.credit) : "";
-            newGrid[rIdx][4] = proposeData.suggested_partner_name || partnerName || "";
+            newGrid[rIdx][4] = line.partner_name || proposeData.suggested_partner_name || partnerName || "";
+            newGrid[rIdx][5] = line.analytic_account_name || "";
           });
 
           return {
@@ -473,6 +485,13 @@ export default function DocumentIntelligencePage() {
       if (resPartners.ok) {
         const pData = await resPartners.json();
         setPartners(pData);
+      }
+      const resAnalytic = await fetch(`${API_BASE_URL}/api/v1/erp/analytic-accounts`);
+      if (resAnalytic.ok) {
+        const aData = await resAnalytic.json();
+        setAnalyticAccounts(aData);
+      } else {
+        setAnalyticAccounts([]);
       }
 
       // Fetch Journals
@@ -918,6 +937,7 @@ export default function DocumentIntelligencePage() {
     let debitCol = -1;
     let creditCol = -1;
     let partnerCol = -1;
+    let analyticCol = -1;
     let dateCol = -1;
     let refCol = -1;
     let journalCol = -1;
@@ -970,6 +990,8 @@ export default function DocumentIntelligencePage() {
           creditCol = c;
         } else if (val.includes("شريك") || val.includes("partner") || val.includes("مورد") || val.includes("عميل")) {
           partnerCol = c;
+        } else if (val.includes("تحليلي") || val.includes("analytic") || val.includes("مركز تكلفة") || val.includes("cost center")) {
+          analyticCol = c;
         } else if (val.includes("التاريخ") || val.includes("date")) {
           dateCol = c;
         } else if (val.includes("رقم") || val.includes("ref") || val.includes("move") || val.includes("قيد")) {
@@ -993,6 +1015,8 @@ export default function DocumentIntelligencePage() {
           creditCol = index;
         } else if (norm.includes("شريك") || norm.includes("partner") || norm.includes("مورد") || norm.includes("عميل")) {
           partnerCol = index;
+        } else if (norm.includes("تحليلي") || norm.includes("analytic") || norm.includes("مركز تكلفة") || norm.includes("cost center")) {
+          analyticCol = index;
         } else if (norm.includes("التاريخ") || norm.includes("date")) {
           dateCol = index;
         } else if (norm.includes("رقم") || norm.includes("ref") || norm.includes("move") || norm.includes("قيد")) {
@@ -1016,6 +1040,7 @@ export default function DocumentIntelligencePage() {
     if (debitCol === -1) debitCol = startC + 2 <= endC ? startC + 2 : startC;
     if (creditCol === -1) creditCol = startC + 3 <= endC ? startC + 3 : startC;
     if (partnerCol === -1) partnerCol = startC + 4 <= endC ? startC + 4 : startC;
+    if (analyticCol === -1 && startC + 5 <= endC) analyticCol = startC + 5;
 
     const lines: typeof previewLines = [];
     let extractedDate = "";
@@ -1031,6 +1056,7 @@ export default function DocumentIntelligencePage() {
       const creditVal = parseFloat((row[creditCol] || "").replace(/,/g, "")) || 0;
       const label = (row[labelCol] || "").trim() || (language === "ar" ? "قيد محاسبي تفاعلي" : "Manual Spreadsheet Entry");
       const partnerName = (row[partnerCol] || "").trim();
+      const analyticName = analyticCol !== -1 ? (row[analyticCol] || "").trim() : "";
 
       if (dateCol !== -1 && row[dateCol] && !extractedDate) {
         extractedDate = row[dateCol].trim();
@@ -1062,6 +1088,18 @@ export default function DocumentIntelligencePage() {
         }
       }
 
+      let resolvedAnalyticId: number | null = null;
+      let resolvedAnalyticName = analyticName;
+      if (analyticName) {
+        const matchedAnalytic = analyticAccounts.find((a) =>
+          a && a.name && typeof a.name === "string" && a.name.toLowerCase().includes(analyticName.toLowerCase())
+        );
+        if (matchedAnalytic) {
+          resolvedAnalyticId = matchedAnalytic.id;
+          resolvedAnalyticName = matchedAnalytic.name;
+        }
+      }
+
       lines.push({
         account_id: matchedAcc ? matchedAcc.id : 0,
         account_name: matchedAcc ? `${matchedAcc.code} ${matchedAcc.name}` : (code ? `${code} (غير معرف)` : "حساب غير محدد"),
@@ -1071,6 +1109,8 @@ export default function DocumentIntelligencePage() {
         name: label,
         partner_name: resolvedPartnerName,
         partner_id: resolvedPartnerId,
+        analytic_account_id: resolvedAnalyticId,
+        analytic_account_name: resolvedAnalyticName,
       });
     }
 
@@ -1122,6 +1162,21 @@ export default function DocumentIntelligencePage() {
     setPartnerDropdownRowIndex(null);
   };
 
+  const handleUpdateLineAnalytic = (rowIndex: number, analytic: OdooAnalyticAccount | null) => {
+    setPreviewLines((prev) =>
+      prev.map((line, idx) =>
+        idx === rowIndex
+          ? {
+              ...line,
+              analytic_account_id: analytic ? analytic.id : null,
+              analytic_account_name: analytic ? analytic.name : "",
+            }
+          : line
+      )
+    );
+    setAnalyticDropdownRowIndex(null);
+  };
+
   const executeOdooRegistration = async () => {
     const totalDebit = previewLines.reduce((acc, curr) => acc + curr.debit, 0);
     const totalCredit = previewLines.reduce((acc, curr) => acc + curr.credit, 0);
@@ -1154,11 +1209,14 @@ export default function DocumentIntelligencePage() {
         raw_text: JSON.stringify(previewLines),
         lines: previewLines.map((l) => ({
           account_id: l.account_id,
+          account_code: l.account_code,
           account_name: l.account_name,
           debit: l.debit,
           credit: l.credit,
           name: l.name,
           partner_id: l.partner_id,
+          analytic_account_id: l.analytic_account_id,
+          analytic_account_name: l.analytic_account_name,
         })),
       };
 
@@ -1707,6 +1765,7 @@ export default function DocumentIntelligencePage() {
                         <th className="px-3 text-left">{language === "ar" ? "مدين" : "Debit"}</th>
                         <th className="px-3 text-left">{language === "ar" ? "دائن" : "Credit"}</th>
                         <th className="px-3">{language === "ar" ? "الشريك" : "Partner"}</th>
+                        <th className="px-3">{language === "ar" ? "الحساب التحليلي" : "Analytic Account"}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1721,6 +1780,8 @@ export default function DocumentIntelligencePage() {
                                   setAccountDropdownRowIndex(null);
                                 } else {
                                   setAccountDropdownRowIndex(rowIndex);
+                                  setPartnerDropdownRowIndex(null);
+                                  setAnalyticDropdownRowIndex(null);
                                   setAccountSearchQuery("");
                                 }
                               }}
@@ -1804,6 +1865,8 @@ export default function DocumentIntelligencePage() {
                                   setPartnerDropdownRowIndex(null);
                                 } else {
                                   setPartnerDropdownRowIndex(rowIndex);
+                                  setAccountDropdownRowIndex(null);
+                                  setAnalyticDropdownRowIndex(null);
                                   setPartnerSearchQuery("");
                                 }
                               }}
@@ -1861,6 +1924,80 @@ export default function DocumentIntelligencePage() {
                                         className="p-2 rounded hover:bg-[#d9a441]/20 cursor-pointer text-xs border-b border-white/5 last:border-b-0 truncate text-white/80"
                                       >
                                         {p.name}
+                                      </div>
+                                    ))}
+                                </div>
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Analytic Account Selector */}
+                          <td className="px-3 relative w-48">
+                            <div
+                              onClick={() => {
+                                if (analyticDropdownRowIndex === rowIndex) {
+                                  setAnalyticDropdownRowIndex(null);
+                                } else {
+                                  setAnalyticDropdownRowIndex(rowIndex);
+                                  setAccountDropdownRowIndex(null);
+                                  setPartnerDropdownRowIndex(null);
+                                  setAnalyticSearchQuery("");
+                                }
+                              }}
+                              className="px-2 py-1 rounded border border-white/10 bg-black/40 text-[10.5px] truncate cursor-pointer text-white/80"
+                            >
+                              {line.analytic_account_name || (language === "ar" ? "بدون حساب تحليلي" : "No Analytic Account")} ⬇️
+                            </div>
+
+                            {analyticDropdownRowIndex === rowIndex && (
+                              <div className="absolute left-3 top-9 z-50 w-72 max-h-72 bg-[#1b0d04] border border-[#d9a441]/40 rounded-lg shadow-2xl p-1 text-right flex flex-col">
+                                <div className="p-1 border-b border-white/10 flex items-center gap-1.5 bg-black/40 rounded-t-md">
+                                  <span className="text-xs text-[#d9a441] pl-1">🔍</span>
+                                  <input
+                                    type="text"
+                                    placeholder={language === "ar" ? "بحث عن حساب تحليلي..." : "Search analytic account..."}
+                                    value={analyticSearchQuery}
+                                    onChange={(e) => setAnalyticSearchQuery(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        const filtered = analyticAccounts.filter((a) => {
+                                          if (!analyticSearchQuery) return true;
+                                          const q = analyticSearchQuery.toLowerCase();
+                                          return a && a.name && typeof a.name === "string" && a.name.toLowerCase().includes(q);
+                                        });
+                                        if (filtered.length > 0) {
+                                          handleUpdateLineAnalytic(rowIndex, filtered[0]);
+                                        }
+                                      } else if (e.key === "Escape") {
+                                        setAnalyticDropdownRowIndex(null);
+                                      }
+                                    }}
+                                    className="w-full bg-transparent border-none text-xs text-white focus:outline-none focus:ring-0 placeholder-white/30 text-right pr-1"
+                                    onClick={(e) => e.stopPropagation()}
+                                    autoFocus
+                                  />
+                                </div>
+                                <div className="overflow-y-auto max-h-56">
+                                  <div
+                                    onClick={() => handleUpdateLineAnalytic(rowIndex, null)}
+                                    className="p-2 rounded hover:bg-[#d9a441]/20 cursor-pointer text-xs border-b border-white/5 text-white/40 font-bold"
+                                  >
+                                    ❌ {language === "ar" ? "بدون حساب تحليلي" : "None"}
+                                  </div>
+                                  {analyticAccounts
+                                    .filter((a) => {
+                                      if (!analyticSearchQuery) return true;
+                                      const q = analyticSearchQuery.toLowerCase();
+                                      return a && a.name && typeof a.name === "string" && a.name.toLowerCase().includes(q);
+                                    })
+                                    .map((a) => (
+                                      <div
+                                        key={a.id}
+                                        onClick={() => handleUpdateLineAnalytic(rowIndex, a)}
+                                        className="p-2 rounded hover:bg-[#d9a441]/20 cursor-pointer text-xs border-b border-white/5 last:border-b-0 truncate text-white/80"
+                                      >
+                                        {a.name}
                                       </div>
                                     ))}
                                 </div>

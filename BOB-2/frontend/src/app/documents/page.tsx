@@ -1877,7 +1877,7 @@ export default function DocumentIntelligencePage() {
       {/* Odoo Journal Entry Proposal Modal */}
       {showOdooModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-6 select-none">
-          <div className="wood-panel rounded-[24px] border border-yellow-500/20 shadow-2xl w-full max-w-2xl max-h-[90%] flex flex-col overflow-hidden">
+          <div className="wood-panel rounded-[24px] border border-yellow-500/20 shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
             {/* Header */}
             <div className="flex justify-between items-center px-6 py-4 border-b border-white/10 bg-black/40">
               <div className="flex flex-col">
@@ -1931,8 +1931,8 @@ export default function DocumentIntelligencePage() {
               <div className="flex flex-col gap-2">
                 <span className="text-[10.5px] text-white/60 font-semibold">{language === "ar" ? "قيود الحسابات المقترحة:" : "Proposed Journal Items:"}</span>
                 
-                <div className="border border-white/10 rounded-xl overflow-hidden bg-black/20 text-[11px]">
-                  <table className="w-full text-right border-collapse">
+                <div className="border border-white/10 rounded-xl overflow-x-auto bg-black/20 text-[11px]">
+                  <table className="w-full min-w-max text-right border-collapse">
                     <thead>
                       <tr className="bg-black/40 border-b border-white/10 text-white/50 text-[10px] h-8">
                         <th className="px-3">{language === "ar" ? "الحساب (أودو)" : "Odoo Account"}</th>

@@ -125,7 +125,7 @@ export default function TeamPage() {
 
   React.useEffect(() => {
     fetchPartners();
-  }, []);
+  }, [selectedCompanyId]);
 
   const _getFileTypeByName = (name: string): string => {
     const ext = name.split(".").pop()?.toLowerCase();

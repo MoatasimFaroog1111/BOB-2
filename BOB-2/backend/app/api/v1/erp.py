@@ -3423,6 +3423,7 @@ def bank_reconciliation(
         odoo_move_lines = erp.fetch_bank_transactions(
             date_from=date_from,
             date_to=date_to,
+            company_id=company_id,
         )
         ledger_txns = transactions_from_odoo_move_lines(odoo_move_lines)
         result = _run_matching(statement_txns, ledger_txns)

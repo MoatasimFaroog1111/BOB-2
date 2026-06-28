@@ -90,33 +90,40 @@ document.querySelectorAll('button').forEach(btn => {
 });
 ```
 
-### Results Modal Structure
+### Results Modal Structure — Unified Table
 - **Summary cards (5 columns):** statement count/total, ledger count/total, matched count, 🤖 AI count, difference (red if non-zero)
-- **Red table:** transactions in statement only (header includes count)
-- **Amber table:** transactions in ledger only
-- **Purple table:** smart matched (AI) transactions — side-by-side bank vs system with confidence badges (green ≥80%, yellow ≥60%, orange <60%) and reason text. Only visible when `smart_matched` array is non-empty.
-- **Green collapsible `<details>`:** matched transactions
+- **Single unified table** with 5 columns: التاريخ | كشف البنك (متطابق) | النظام (متطابق) | كشف البنك فقط | النظام فقط
+- All transaction types merged and sorted by date ascending
+- **Matched rows (green):** both Bank and System columns filled with independent data from `statement_txn` and `ledger_txn`
+- **Smart matched rows (purple tint):** same as matched but with purple amounts and confidence badge (🤖 XX%)
+- **Bank-only rows (red):** only "كشف البنك فقط" column filled, others show "—"
+- **System-only rows (amber):** only "النظام فقط" column filled, others show "—"
 - **Close button:** "إغلاق" at top-left of modal
 
-### Testing Smart Matching UI Without LLM
-When no LLM provider (Ollama/Grok) is available, `smart_matched` will be empty. To test the smart matching UI rendering, intercept the fetch API to return mock data:
+### Testing Reconciliation UI Without LLM
+When no LLM provider (Ollama/Grok) is available, `smart_matched` will be empty. To test the UI rendering, intercept the fetch API to return mock data. **Important:** `matched` uses `MatchedPair` format with `statement_txn` and `ledger_txn` (not flat transactions):
 ```javascript
 const originalFetch = window.fetch;
 window.fetch = function(url, options) {
   if (typeof url === 'string' && url.includes('bank-reconciliation')) {
     const mockData = {
       status: "success",
-      statement_only: [{ date: "2025-01-05", description: "Test", amount: 5000, row_number: 1 }],
-      ledger_only: [{ date: "2025-01-06", description: "Test", amount: 3000, row_number: 2 }],
-      matched: [{ date: "2025-01-01", description: "Rent", amount: 10000, row_number: 3 }],
-      smart_matched: [
+      statement_only: [{ date: "2025-01-25", description: "رسوم بنكية", amount: 150, row_number: 5 }],
+      ledger_only: [{ date: "2025-01-28", description: "Bank Service Charge", amount: 200, row_number: 6 }],
+      matched: [
         {
-          statement_txn: { date: "2025-01-10", description: "Arabic Desc", amount: 7500, row_number: 4 },
-          ledger_txn: { date: "2025-01-11", description: "English Desc", amount: 7500, row_number: 5 },
-          confidence: 0.92, reason: "Match reason"
+          statement_txn: { date: "2025-01-15", description: "تحويل راتب محمد", amount: 15000, row_number: 1 },
+          ledger_txn: { date: "2025-01-14", description: "Salary Transfer - Mohammed", amount: 15000, row_number: 7 }
         }
       ],
-      statement_total: 12500, ledger_total: 10500, difference: 2000,
+      smart_matched: [
+        {
+          statement_txn: { date: "2025-01-22", description: "دفعة مورد أحمد", amount: 7500, row_number: 3 },
+          ledger_txn: { date: "2025-01-23", description: "Vendor Payment - Ahmed", amount: 7500, row_number: 9 },
+          confidence: 0.85, reason: "Similar vendor name"
+        }
+      ],
+      statement_total: 22650, ledger_total: 22700, difference: -50,
       statement_count: 3, ledger_count: 3
     };
     return Promise.resolve(new Response(JSON.stringify(mockData), {
@@ -126,7 +133,7 @@ window.fetch = function(url, options) {
   return originalFetch.apply(this, arguments);
 };
 ```
-This approach lets you test all three confidence badge colors by providing entries with confidence values ≥0.8 (green), ≥0.6 (yellow), and <0.6 (orange).
+Use **different descriptions** for `statement_txn` vs `ledger_txn` in matched pairs to verify both columns display independently. This also lets you test confidence badge colors (≥0.8 green, ≥0.6 yellow, <0.6 orange).
 
 ### Port Conflicts
 Port 3000 might be in use from a previous session. If you get `EADDRINUSE`, use a different port (e.g. `-p 3001`) or kill the process: `fuser -k 3000/tcp`.

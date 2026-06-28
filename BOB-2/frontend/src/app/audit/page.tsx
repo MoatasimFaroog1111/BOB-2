@@ -75,7 +75,7 @@ export default function AuditPage() {
     setMessage(null);
     try {
       const payload = {
-        company_id: 1,
+        company_id: selectedCompanyId ?? 1,
         date_from: dateFrom || null,
         date_to: dateTo || null,
         account_id: selectedAccountId || null,

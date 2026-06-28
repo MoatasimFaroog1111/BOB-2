@@ -39,7 +39,7 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
         const data: Company[] = await res.json();
         setCompanies(data);
         setSelectedCompanyIdState((prev) => {
-          if (prev !== null) return prev;
+          if (prev !== null && data.some((c) => c.id === prev)) return prev;
           const saved = getInitialCompanyId();
           const valid = saved && data.some((c) => c.id === saved);
           return valid ? saved : data.length > 0 ? data[0].id : null;

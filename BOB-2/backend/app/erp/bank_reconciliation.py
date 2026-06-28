@@ -1,8 +1,10 @@
 """
 Bank reconciliation engine.
 
-Parses bank statement and bank ledger files (CSV/XLSX/XLS),
-extracts transactions, and compares them to find discrepancies.
+Parses bank statement and bank ledger files used by accountants, including
+CSV/TSV/TXT, Excel (XLSX/XLS/XLSM), PDF, scanned images, OFX/QIF, and MT940-like
+plain text exports, extracts transactions, and compares them to find
+discrepancies.
 
 Convention used throughout:
   - Deposits / money-in  → positive amount
@@ -20,6 +22,26 @@ from pathlib import Path
 from typing import List, Optional
 
 from pydantic import BaseModel
+
+
+SPREADSHEET_EXTENSIONS = {".xlsx", ".xls", ".xlsm"}
+DELIMITED_TEXT_EXTENSIONS = {".csv", ".tsv", ".txt"}
+BANK_EXPORT_EXTENSIONS = {".ofx", ".qif", ".qfx", ".mt940", ".sta"}
+PDF_EXTENSIONS = {".pdf"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
+
+SUPPORTED_BANK_STATEMENT_EXTENSIONS = (
+    SPREADSHEET_EXTENSIONS
+    | DELIMITED_TEXT_EXTENSIONS
+    | BANK_EXPORT_EXTENSIONS
+    | PDF_EXTENSIONS
+    | IMAGE_EXTENSIONS
+)
+
+
+def get_supported_statement_extensions() -> List[str]:
+    """Return all supported bank statement upload extensions."""
+    return sorted(SUPPORTED_BANK_STATEMENT_EXTENSIONS)
 
 
 class Transaction(BaseModel):
@@ -54,47 +76,75 @@ class ReconciliationResult(BaseModel):
     ledger_count: int
 
 
+def _to_western_digits(value: str) -> str:
+    """Convert Arabic/Persian digits and separators to parser-friendly text."""
+    text = str(value or "")
+    translation = str.maketrans({
+        "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
+        "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
+        "۰": "0", "۱": "1", "۲": "2", "۳": "3", "۴": "4",
+        "۵": "5", "۶": "6", "۷": "7", "۸": "8", "۹": "9",
+        "٬": ",", "،": ",", "٫": ".",
+    })
+    return text.translate(translation)
+
+
 def _parse_number(value: str) -> Optional[float]:
-    """Parse a number from a string, handling Arabic numerals and commas."""
-    if not value or not value.strip():
+    """Parse a number from a string, handling Arabic numerals, commas and brackets."""
+    if value is None or not str(value).strip():
         return None
 
-    text = value.strip()
+    text = _to_western_digits(str(value)).strip()
+    is_parentheses_negative = text.startswith("(") and text.endswith(")")
 
-    # Convert Eastern Arabic numerals
-    arabic_digits = "\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669"
-    western_digits = "0123456789"
-    for a, w in zip(arabic_digits, western_digits):
-        text = text.replace(a, w)
-
-    # Remove currency symbols and whitespace
-    text = re.sub(r"[^\d\.\-,]", "", text)
+    # Remove currency symbols and whitespace, but keep signs, decimals, commas and brackets.
+    text = re.sub(r"[^\d\.\-,\(\)]", "", text)
     text = text.replace(",", "")
+    text = text.replace("(", "").replace(")", "")
 
     if not text or text in ("-", ".", "-."):
         return None
 
     try:
-        return float(text)
+        parsed = float(text)
+        if is_parentheses_negative and parsed > 0:
+            parsed = -parsed
+        return parsed
     except ValueError:
         return None
 
 
 def _normalize_date(date_str: str) -> str:
     """Normalize date string to YYYY-MM-DD format."""
-    if not date_str or not date_str.strip():
+    if not date_str or not str(date_str).strip():
         return ""
 
-    text = date_str.strip()
+    text = _to_western_digits(str(date_str)).strip()
 
-    # Convert Eastern Arabic numerals
-    arabic_digits = "\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669"
-    western_digits = "0123456789"
-    for a, w in zip(arabic_digits, western_digits):
-        text = text.replace(a, w)
+    months_map = {
+        "january": "01", "february": "02", "march": "03", "april": "04", "may": "05", "june": "06",
+        "july": "07", "august": "08", "september": "09", "october": "10", "november": "11", "december": "12",
+        "jan": "01", "feb": "02", "mar": "03", "apr": "04", "jun": "06", "jul": "07", "aug": "08",
+        "sep": "09", "sept": "09", "oct": "10", "nov": "11", "dec": "12",
+        "يناير": "01", "فبراير": "02", "مارس": "03", "أبريل": "04", "ابريل": "04", "مايو": "05",
+        "يونيو": "06", "يونيه": "06", "يوليو": "07", "يوليه": "07", "أغسطس": "08", "اغسطس": "08",
+        "سبتمبر": "09", "أكتوبر": "10", "اكتوبر": "10", "نوفمبر": "11", "ديسمبر": "12",
+    }
+
+    lower = text.lower()
+    for month_name, month_num in months_map.items():
+        if month_name in lower:
+            match_day_year = re.search(r"\b(\d{1,2})\b.*\b(\d{4})\b", text)
+            if match_day_year:
+                day = int(match_day_year.group(1))
+                year = int(match_day_year.group(2))
+                try:
+                    return datetime(year, int(month_num), day).strftime("%Y-%m-%d")
+                except ValueError:
+                    pass
 
     # YYYY-MM-DD or YYYY/MM/DD
-    m = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", text)
+    m = re.search(r"(\d{4})[-/\.](\d{1,2})[-/\.](\d{1,2})", text)
     if m:
         try:
             return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).strftime("%Y-%m-%d")
@@ -102,7 +152,7 @@ def _normalize_date(date_str: str) -> str:
             pass
 
     # DD-MM-YYYY or DD/MM/YYYY
-    m = re.search(r"(\d{1,2})[-/](\d{1,2})[-/](\d{4})", text)
+    m = re.search(r"(\d{1,2})[-/\.](\d{1,2})[-/\.](\d{4})", text)
     if m:
         v1, v2, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
         if v2 > 12:
@@ -114,30 +164,46 @@ def _normalize_date(date_str: str) -> str:
         except ValueError:
             pass
 
+    # Compact OFX date: YYYYMMDD...
+    m = re.search(r"\b(\d{4})(\d{2})(\d{2})\b", text)
+    if m:
+        try:
+            return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+
     return text
 
 
 def _detect_columns(headers: List[str]) -> dict:
-    """Auto-detect which columns contain date, description, and amount.
+    """Auto-detect which columns contain date, description, amount, debit and credit."""
+    date_keywords = [
+        "date", "تاريخ", "التاريخ", "value date", "posting date", "book date",
+        "transaction date", "effective date", "تاريخ العملية", "تاريخ القيد",
+    ]
+    desc_keywords = [
+        "description", "الوصف", "البيان", "memo", "details", "تفاصيل",
+        "narrative", "reference", "المرجع", "particulars", "remarks", "payee",
+        "beneficiary", "اسم المستفيد", "وصف العملية",
+    ]
+    amount_keywords = [
+        "amount", "المبلغ", "مبلغ", "transaction amount", "net amount",
+        "withdrawal", "deposit", "paid out", "paid in",
+    ]
+    debit_keywords = [
+        "debit", "مدين", "withdrawal", "سحب", "خصم", "paid out", "debit amount",
+        "amount debit", "مدين / debit",
+    ]
+    credit_keywords = [
+        "credit", "دائن", "deposit", "إيداع", "ايداع", "paid in", "credit amount",
+        "amount credit", "دائن / credit",
+    ]
+    balance_keywords = ["balance", "الرصيد", "running balance", "available balance"]
 
-    Priority order for amount columns:
-      1. Explicit debit column
-      2. Explicit credit column
-      3. Generic amount/balance column
-    debit/credit keywords are intentionally separated from amount_keywords
-    to avoid double-detection conflicts.
-    """
-    date_keywords = ["date", "\u062a\u0627\u0631\u064a\u062e", "\u0627\u0644\u062a\u0627\u0631\u064a\u062e", "value date", "posting date"]
-    desc_keywords = ["description", "\u0627\u0644\u0648\u0635\u0641", "\u0627\u0644\u0628\u064a\u0627\u0646", "memo", "details", "\u062a\u0641\u0627\u0635\u064a\u0644", "narrative", "reference", "\u0627\u0644\u0645\u0631\u062c\u0639"]
-    # FIX: removed "debit"/"credit" from amount_keywords to avoid conflict with debit/credit columns
-    amount_keywords = ["amount", "\u0627\u0644\u0645\u0628\u0644\u063a", "\u0645\u0628\u0644\u063a", "balance", "\u0627\u0644\u0631\u0635\u064a\u062f", "withdrawal", "deposit"]
-    debit_keywords = ["debit", "\u0645\u062f\u064a\u0646", "withdrawal", "\u0633\u062d\u0628"]
-    credit_keywords = ["credit", "\u062f\u0627\u0626\u0646", "deposit", "\u0625\u064a\u062f\u0627\u0639"]
-
-    result = {"date": -1, "description": -1, "amount": -1, "debit": -1, "credit": -1}
+    result = {"date": -1, "description": -1, "amount": -1, "debit": -1, "credit": -1, "balance": -1}
 
     for i, h in enumerate(headers):
-        h_lower = h.lower().strip()
+        h_lower = str(h or "").lower().strip()
         if result["date"] == -1 and any(k in h_lower for k in date_keywords):
             result["date"] = i
         elif result["description"] == -1 and any(k in h_lower for k in desc_keywords):
@@ -146,6 +212,8 @@ def _detect_columns(headers: List[str]) -> dict:
             result["debit"] = i
         elif result["credit"] == -1 and any(k in h_lower for k in credit_keywords):
             result["credit"] = i
+        elif result["balance"] == -1 and any(k in h_lower for k in balance_keywords):
+            result["balance"] = i
         elif result["amount"] == -1 and any(k in h_lower for k in amount_keywords):
             result["amount"] = i
 
@@ -214,7 +282,7 @@ def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = Tr
     if headers:
         col_map = _detect_columns(headers)
     else:
-        col_map = {"date": 0, "description": 1, "amount": 2, "debit": -1, "credit": -1}
+        col_map = {"date": 0, "description": 1, "amount": 2, "debit": -1, "credit": -1, "balance": -1}
 
     transactions = []
     for row_idx, row in enumerate(data_rows):
@@ -231,8 +299,7 @@ def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = Tr
             credit_str = cells[col_map["credit"]] if col_map["credit"] < len(cells) else ""
             debit = _parse_number(debit_str) or 0.0
             credit = _parse_number(credit_str) or 0.0
-            # FIX: credit - debit → deposit positive, withdrawal negative
-            # This aligns with Odoo convention and standard bank statement sign
+            # credit - debit → deposit positive, withdrawal negative
             amount_val = credit - debit
         elif col_map["debit"] >= 0:
             debit_str = cells[col_map["debit"]] if col_map["debit"] < len(cells) else ""
@@ -249,7 +316,7 @@ def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = Tr
 
         # If no description column found, combine all non-date, non-amount cells
         if not desc_val and col_map["description"] == -1:
-            skip_cols = {col_map["date"], col_map["amount"], col_map["debit"], col_map["credit"]}
+            skip_cols = {col_map["date"], col_map["amount"], col_map["debit"], col_map["credit"], col_map.get("balance", -1)}
             desc_parts = [cells[i] for i in range(len(cells)) if i not in skip_cols and cells[i]]
             desc_val = " ".join(desc_parts)
 
@@ -266,10 +333,25 @@ def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = Tr
     return transactions
 
 
+def _read_text_file(file_path: str) -> str:
+    """Read a text-like file using common encodings used by banks."""
+    encodings = ["utf-8-sig", "utf-8", "cp1256", "cp1252", "iso-8859-1"]
+    last_error: Exception | None = None
+    for encoding in encodings:
+        try:
+            with open(file_path, "r", encoding=encoding) as f:
+                return f.read()
+        except UnicodeDecodeError as exc:
+            last_error = exc
+            continue
+    if last_error:
+        raise last_error
+    return Path(file_path).read_text(encoding="utf-8", errors="ignore")
+
+
 def parse_csv_file(file_path: str) -> List[Transaction]:
-    """Parse transactions from a CSV file."""
-    with open(file_path, "r", encoding="utf-8-sig") as f:
-        content = f.read()
+    """Parse transactions from a CSV/TSV/delimited text file."""
+    content = _read_text_file(file_path)
 
     # Detect delimiter
     sniffer = csv.Sniffer()
@@ -277,16 +359,27 @@ def parse_csv_file(file_path: str) -> List[Transaction]:
         dialect = sniffer.sniff(content[:4096])
         delimiter = dialect.delimiter
     except csv.Error:
-        delimiter = ","
+        ext = Path(file_path).suffix.lower()
+        if ext == ".tsv":
+            delimiter = "\t"
+        elif "|" in content[:4096]:
+            delimiter = "|"
+        elif ";" in content[:4096]:
+            delimiter = ";"
+        else:
+            delimiter = ","
 
     reader = csv.reader(io.StringIO(content), delimiter=delimiter)
     rows = list(reader)
 
-    return _extract_transactions_from_rows(rows, has_header=True)
+    transactions = _extract_transactions_from_rows(rows, has_header=True)
+    if transactions:
+        return transactions
+    return _extract_transactions_from_text(content)
 
 
 def parse_xlsx_file(file_path: str) -> List[Transaction]:
-    """Parse transactions from an XLSX file (Office Open XML)."""
+    """Parse transactions from an XLSX/XLSM file (Office Open XML)."""
     import openpyxl
 
     wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
@@ -331,25 +424,266 @@ def parse_xls_file(file_path: str) -> List[Transaction]:
     return _extract_transactions_from_rows(rows, has_header=True)
 
 
+def _rows_from_text_table(text: str) -> List[List[str]]:
+    """Convert pasted/OCR text tables into rows using common bank separators."""
+    rows: List[List[str]] = []
+    for raw_line in text.splitlines():
+        line = _to_western_digits(raw_line).strip()
+        if not line:
+            continue
+        if "\t" in line:
+            cells = [c.strip() for c in line.split("\t")]
+        elif "|" in line:
+            cells = [c.strip() for c in line.split("|")]
+        elif ";" in line:
+            cells = [c.strip() for c in line.split(";")]
+        elif "," in line and line.count(",") >= 2:
+            cells = [c.strip() for c in next(csv.reader([line]))]
+        else:
+            cells = [c.strip() for c in re.split(r"\s{2,}", line) if c.strip()]
+        if cells:
+            rows.append(cells)
+    return rows
+
+
+_DATE_RE = re.compile(
+    r"(\d{4}[-/\.]\d{1,2}[-/\.]\d{1,2}|\d{1,2}[-/\.]\d{1,2}[-/\.]\d{4}|\d{4}\d{2}\d{2})"
+)
+_AMOUNT_RE = re.compile(
+    r"(?<!\d)([-(]?\d{1,3}(?:[,\s]\d{3})+(?:\.\d{1,2})?\)?|-?\d+(?:\.\d{1,2})?)(?!\d)"
+)
+
+
+def _extract_transactions_from_text(text: str) -> List[Transaction]:
+    """Extract bank transactions from OCR/plain text when no reliable table exists."""
+    rows = _rows_from_text_table(text)
+    transactions = _extract_transactions_from_rows(rows, has_header=True)
+    if transactions:
+        return transactions
+
+    txns: List[Transaction] = []
+    debit_words = ["debit", "withdrawal", "paid out", "سحب", "مدين", "خصم", "صادر", "دفع"]
+    credit_words = ["credit", "deposit", "paid in", "إيداع", "ايداع", "دائن", "وارد", "تحويل وارد"]
+
+    for idx, raw_line in enumerate(text.splitlines(), start=1):
+        line = _to_western_digits(raw_line).strip()
+        if not line:
+            continue
+
+        date_match = _DATE_RE.search(line)
+        if not date_match:
+            continue
+
+        date_text = date_match.group(1)
+        normalized_date = _normalize_date(date_text)
+        remainder = (line[:date_match.start()] + " " + line[date_match.end():]).strip()
+
+        amount_candidates = []
+        for m in _AMOUNT_RE.finditer(remainder):
+            parsed = _parse_number(m.group(1))
+            if parsed is None:
+                continue
+            # Filter obvious non-amount metadata, but keep normal small bank fees.
+            if abs(parsed) == 0:
+                continue
+            if float(parsed).is_integer() and 1900 <= abs(parsed) <= 2100:
+                continue
+            amount_candidates.append((m.group(1), parsed, m.start(), m.end()))
+
+        if not amount_candidates:
+            continue
+
+        # In text/PDF rows with a running balance, the transaction amount normally appears
+        # before the balance. Prefer the first numeric amount after the date.
+        amount_token, amount_val, start, end = amount_candidates[0]
+        lower_line = line.lower()
+        has_debit_signal = any(w in lower_line for w in debit_words)
+        has_credit_signal = any(w in lower_line for w in credit_words)
+
+        if has_debit_signal and not has_credit_signal:
+            amount_val = -abs(amount_val)
+        elif has_credit_signal and not has_debit_signal:
+            amount_val = abs(amount_val)
+
+        desc = (remainder[:start] + " " + remainder[end:]).strip()
+        desc = re.sub(r"\b(SAR|SR|ر\.س|ريال|رس)\b", " ", desc, flags=re.IGNORECASE)
+        desc = re.sub(r"\s+", " ", desc).strip()
+
+        txns.append(Transaction(
+            date=normalized_date,
+            description=desc or line,
+            amount=round(amount_val, 2),
+            row_number=idx,
+        ))
+
+    return txns
+
+
+def parse_text_file(file_path: str) -> List[Transaction]:
+    """Parse transactions from TXT/TSV and MT940-like plain text exports."""
+    return _extract_transactions_from_text(_read_text_file(file_path))
+
+
+def parse_ofx_file(file_path: str) -> List[Transaction]:
+    """Parse transactions from OFX/QFX bank exports."""
+    text = _read_text_file(file_path)
+    blocks = re.findall(r"<STMTTRN>(.*?)(?=<STMTTRN>|</BANKTRANLIST>|$)", text, re.IGNORECASE | re.DOTALL)
+    txns: List[Transaction] = []
+
+    for idx, block in enumerate(blocks, start=1):
+        def tag(name: str) -> str:
+            m = re.search(rf"<{name}>([^\r\n<]+)", block, re.IGNORECASE)
+            return m.group(1).strip() if m else ""
+
+        date_val = _normalize_date(tag("DTPOSTED") or tag("DTUSER"))
+        amount = _parse_number(tag("TRNAMT")) or 0.0
+        description = " ".join(
+            part for part in [tag("NAME"), tag("MEMO"), tag("CHECKNUM"), tag("FITID")]
+            if part
+        ).strip()
+
+        if date_val and amount != 0.0:
+            txns.append(Transaction(
+                date=date_val,
+                description=description or "OFX transaction",
+                amount=round(amount, 2),
+                row_number=idx,
+            ))
+
+    if txns:
+        return txns
+
+    return _extract_transactions_from_text(text)
+
+
+def parse_qif_file(file_path: str) -> List[Transaction]:
+    """Parse transactions from QIF bank exports."""
+    text = _read_text_file(file_path)
+    txns: List[Transaction] = []
+    current: dict[str, str] = {}
+
+    def flush(row_number: int) -> None:
+        if not current:
+            return
+        amount = _parse_number(current.get("T", "")) or 0.0
+        date_val = _normalize_date(current.get("D", ""))
+        desc = " ".join(part for part in [current.get("P", ""), current.get("M", "")] if part).strip()
+        if date_val and amount != 0.0:
+            txns.append(Transaction(
+                date=date_val,
+                description=desc or "QIF transaction",
+                amount=round(amount, 2),
+                row_number=row_number,
+            ))
+
+    row = 0
+    for raw_line in text.splitlines():
+        row += 1
+        line = raw_line.strip()
+        if not line or line.startswith("!"):
+            continue
+        if line == "^":
+            flush(row)
+            current = {}
+            continue
+        key, value = line[:1], line[1:]
+        if key in {"D", "T", "P", "M", "N"}:
+            current[key] = value.strip()
+
+    flush(row + 1)
+    return txns or _extract_transactions_from_text(text)
+
+
+def _ocr_image_to_text(image) -> str:
+    """OCR a PIL image using Arabic + English where available."""
+    import pytesseract
+
+    try:
+        return pytesseract.image_to_string(image, lang="ara+eng")
+    except Exception:
+        return pytesseract.image_to_string(image)
+
+
+def parse_image_file(file_path: str) -> List[Transaction]:
+    """Parse transactions from scanned bank statement images."""
+    from PIL import Image, ImageOps
+
+    with Image.open(file_path) as img:
+        normalized = ImageOps.exif_transpose(img)
+        if normalized.mode not in ("RGB", "L"):
+            normalized = normalized.convert("RGB")
+        text = _ocr_image_to_text(normalized)
+
+    return _extract_transactions_from_text(text)
+
+
+def parse_pdf_file(file_path: str) -> List[Transaction]:
+    """Parse transactions from digital or scanned PDF bank statements."""
+    import fitz
+    from PIL import Image
+
+    doc = fitz.open(file_path)
+    text_parts: list[str] = []
+
+    try:
+        for page in doc:
+            page_text = page.get_text("text") or ""
+            if page_text.strip():
+                text_parts.append(page_text)
+
+        digital_text = "\n".join(text_parts)
+        digital_txns = _extract_transactions_from_text(digital_text)
+        if digital_txns:
+            return digital_txns
+
+        ocr_parts: list[str] = []
+        max_ocr_pages = min(len(doc), 25)
+        for page_index in range(max_ocr_pages):
+            page = doc[page_index]
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            image = Image.open(io.BytesIO(pix.tobytes("png")))
+            ocr_text = _ocr_image_to_text(image)
+            if ocr_text.strip():
+                ocr_parts.append(ocr_text)
+
+        return _extract_transactions_from_text("\n".join(ocr_parts))
+    finally:
+        doc.close()
+
+
 def parse_file(file_path: str) -> List[Transaction]:
     """Parse transactions from a file (auto-detect format)."""
     ext = Path(file_path).suffix.lower()
 
-    if ext == ".xlsx":
-        return parse_xlsx_file(file_path)
+    if ext in {".xlsx", ".xlsm"}:
+        transactions = parse_xlsx_file(file_path)
     elif ext == ".xls":
-        return parse_xls_file(file_path)
+        transactions = parse_xls_file(file_path)
     elif ext == ".csv":
-        return parse_csv_file(file_path)
+        transactions = parse_csv_file(file_path)
+    elif ext in {".tsv", ".txt", ".mt940", ".sta"}:
+        transactions = parse_text_file(file_path)
+    elif ext in {".ofx", ".qfx"}:
+        transactions = parse_ofx_file(file_path)
+    elif ext == ".qif":
+        transactions = parse_qif_file(file_path)
+    elif ext == ".pdf":
+        transactions = parse_pdf_file(file_path)
+    elif ext in IMAGE_EXTENSIONS:
+        transactions = parse_image_file(file_path)
     else:
-        # Try CSV first, then XLSX, then XLS
-        try:
-            return parse_csv_file(file_path)
-        except Exception:
-            try:
-                return parse_xlsx_file(file_path)
-            except Exception:
-                return parse_xls_file(file_path)
+        supported = ", ".join(get_supported_statement_extensions())
+        raise ValueError(f"Unsupported bank statement file format '{ext}'. Supported formats: {supported}")
+
+    if not transactions:
+        supported_hint = ", ".join(get_supported_statement_extensions())
+        raise ValueError(
+            "No bank statement transactions could be extracted. "
+            "Please upload a clearer statement or one of these formats: "
+            f"{supported_hint}. For scanned PDFs/images, make sure Tesseract OCR is installed."
+        )
+
+    return transactions
 
 
 def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
@@ -377,7 +711,7 @@ def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
 
         debit = float(line.get("debit", 0))
         credit = float(line.get("credit", 0))
-        # FIX: debit - credit so that money-in (Odoo debit) = positive,
+        # debit - credit so that money-in (Odoo debit) = positive,
         # money-out (Odoo credit) = negative. Consistent with statement parsing.
         amount = round(debit - credit, 2)
 
@@ -426,7 +760,7 @@ def _smart_match(
         "- Similar dates (within ~7 days)\n"
         "- Amounts that are close but not exact (fees, rounding)\n"
         "Return ONLY a JSON array. Each element: "
-        '{\"s\": <S-index>, \"l\": <L-index>, \"confidence\": <0.0-1.0>, \"reason\": \"<brief explanation>\"}\n'
+        '{"s": <S-index>, "l": <L-index>, "confidence": <0.0-1.0>, "reason": "<brief explanation>"}\n'
         "Only include pairs with confidence >= 0.5. If no matches found, return [].\n"
         "Return raw JSON only, no markdown code blocks."
     )
@@ -540,7 +874,7 @@ def _suggest_accounts(statement_only: List[Transaction]) -> List[Transaction]:
         "- Customer receivables → 1030\n"
         "- Default (unclear) → 6010\n"
         "Return ONLY a JSON array. Each element: "
-        '{\"t\": <T-index>, \"account\": \"<account_code>\"}\n'
+        '{"t": <T-index>, "account": "<account_code>"}\n'
         "Return raw JSON only, no markdown code blocks."
     )
     user_prompt = f"Bank Statement Transactions:\n{txn_lines}"

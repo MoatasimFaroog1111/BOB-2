@@ -10,6 +10,7 @@ interface Transaction {
   description: string;
   amount: number;
   row_number: number;
+  ai_suggested_account?: string;
 }
 
 interface MatchedPair {
@@ -89,14 +90,15 @@ function SectionRow({ label, value, indent = false, bold = false, highlight = fa
 
 // ── Inline Entry Form ──
 function InlineEntryForm({
-  txn, isAr, onSubmit, onCancel
+  txn, isAr, onSubmit, onCancel, suggestedAccount
 }: {
   txn: Transaction;
   isAr: boolean;
   onSubmit: (form: { account: string; ref: string; notes: string }) => void;
   onCancel: () => void;
+  suggestedAccount?: string;
 }) {
-  const [account, setAccount] = useState("1010");
+  const [account, setAccount] = useState(suggestedAccount || "1010");
   const [ref, setRef] = useState("");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
@@ -115,7 +117,14 @@ function InlineEntryForm({
       </p>
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="block text-[10px] text-white/50 mb-0.5">{isAr ? "الحساب المحاسبي" : "Account"}</label>
+          <label className="block text-[10px] text-white/50 mb-0.5 flex items-center gap-1">
+            {isAr ? "الحساب المحاسبي" : "Account"}
+            {suggestedAccount && (
+              <span className="px-1 py-0.5 rounded text-[9px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                🤖 AI
+              </span>
+            )}
+          </label>
           <select
             value={account}
             onChange={e => setAccount(e.target.value)}
@@ -831,6 +840,7 @@ export default function ReconciliationPage() {
                                 isAr={isAr}
                                 onSubmit={() => submitEntry(idx)}
                                 onCancel={() => closeEntry(idx)}
+                                suggestedAccount={txn.ai_suggested_account}
                               />
                             )}
                           </div>

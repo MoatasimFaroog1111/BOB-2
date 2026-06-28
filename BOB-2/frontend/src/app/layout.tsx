@@ -1,6 +1,7 @@
 import "./globals.css";
 import { MainNavigation } from "@/components/layout/MainNavigation";
 import { LanguageProvider } from "@/lib/LanguageContext";
+import { CompanyProvider } from "@/lib/CompanyContext";
 import { Cairo, Outfit } from "next/font/google";
 
 const cairo = Cairo({
@@ -22,16 +23,18 @@ export default function RootLayout({
 }) {
   return (
     <LanguageProvider>
-      <html lang="ar" dir="rtl" className={`${cairo.variable} ${outfit.variable}`}>
-        <body className="h-screen overflow-hidden">
-          <main className="guardian-shell flex h-screen w-screen overflow-hidden text-white">
-            <MainNavigation />
-            <section className="flex-1 h-screen overflow-hidden flex flex-col">
-              {children}
-            </section>
-          </main>
-        </body>
-      </html>
+      <CompanyProvider>
+        <html lang="ar" dir="rtl" className={`${cairo.variable} ${outfit.variable}`}>
+          <body className="h-screen overflow-hidden">
+            <main className="guardian-shell flex h-screen w-screen overflow-hidden text-white">
+              <MainNavigation />
+              <section className="flex-1 h-screen overflow-hidden flex flex-col">
+                {children}
+              </section>
+            </main>
+          </body>
+        </html>
+      </CompanyProvider>
     </LanguageProvider>
   );
 }

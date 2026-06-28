@@ -229,6 +229,50 @@ def get_saved_company_info(db: Session = Depends(get_db)):
         )
 
 
+@router.get("/companies")
+def list_companies(db: Session = Depends(get_db)):
+    """Return the list of companies from the connected Odoo instance."""
+    conn = db.query(ERPConnection).filter(
+        ERPConnection.organization_id == 1,
+        ERPConnection.is_active == True
+    ).first()
+
+    if not conn:
+        return []
+
+    try:
+        secret_data = json.loads(decrypt_value(conn.encrypted_secret_ref))
+        username = secret_data.get("username")
+        password = secret_data.get("password")
+    except Exception:
+        return []
+
+    try:
+        erp = get_erp_provider(
+            provider=conn.provider,
+            url=conn.base_url,
+            db=conn.database_name or "",
+            username=username,
+            password=password,
+        )
+        companies = erp.execute_kw(
+            "res.company",
+            "search_read",
+            [[]],
+            {
+                "fields": ["id", "name", "currency_id"],
+                "order": "id asc",
+                "limit": 50,
+            },
+        )
+        return [
+            {"id": c["id"], "name": c["name"], "currency": c.get("currency_id", [None, ""])[1] if isinstance(c.get("currency_id"), list) else ""}
+            for c in companies
+        ]
+    except Exception:
+        return []
+
+
 @router.post("/discover")
 def trigger_erp_discovery(db: Session = Depends(get_db)):
     conn = db.query(ERPConnection).filter(
@@ -980,7 +1024,7 @@ class RegisterDocumentRequest(BaseModel):
 
 
 @router.get("/partners")
-def get_partners(db_session: Session = Depends(get_db)):
+def get_partners(db_session: Session = Depends(get_db), company_id: Optional[int] = None):
     conn = db_session.query(ERPConnection).filter(
         ERPConnection.organization_id == 1,
         ERPConnection.is_active == True
@@ -1005,10 +1049,14 @@ def get_partners(db_session: Session = Depends(get_db)):
             password=password,
         )
 
+        domain: list = [["active", "=", True]]
+        if company_id:
+            domain.append(["company_id", "=", company_id])
+
         partners = erp.execute_kw(
             "res.partner",
             "search_read",
-            [[["active", "=", True]]],
+            [domain],
             {"fields": ["id", "name"], "limit": 1000}
         )
         partners.sort(key=lambda x: (x.get("name") or "").lower())
@@ -3049,7 +3097,7 @@ def detect_attachments(payload: DetectAttachmentsRequest, db_session: Session = 
 
 
 @router.get("/accounts")
-def get_accounts(db_session: Session = Depends(get_db)):
+def get_accounts(db_session: Session = Depends(get_db), company_id: Optional[int] = None):
     conn = db_session.query(ERPConnection).filter(
         ERPConnection.organization_id == 1,
         ERPConnection.is_active == True
@@ -3074,17 +3122,19 @@ def get_accounts(db_session: Session = Depends(get_db)):
             password=password,
         )
 
-        users = erp.execute_kw(
-            "res.users",
-            "search_read",
-            [[["login", "=", username]]],
-            {"fields": ["company_id"], "limit": 1}
-        )
-        user_company_id = users[0]["company_id"][0] if users and users[0].get("company_id") else False
+        effective_company_id = company_id
+        if not effective_company_id:
+            users = erp.execute_kw(
+                "res.users",
+                "search_read",
+                [[["login", "=", username]]],
+                {"fields": ["company_id"], "limit": 1}
+            )
+            effective_company_id = users[0]["company_id"][0] if users and users[0].get("company_id") else False
 
         domain = []
-        if user_company_id:
-            domain.append(["company_ids", "in", [user_company_id]])
+        if effective_company_id:
+            domain.append(["company_ids", "in", [effective_company_id]])
 
         accounts = erp.execute_kw(
             "account.account",
@@ -3102,7 +3152,7 @@ def get_accounts(db_session: Session = Depends(get_db)):
 
 
 @router.get("/analytic-accounts")
-def get_analytic_accounts(db_session: Session = Depends(get_db)):
+def get_analytic_accounts(db_session: Session = Depends(get_db), company_id: Optional[int] = None):
     conn = db_session.query(ERPConnection).filter(
         ERPConnection.organization_id == 1,
         ERPConnection.is_active == True
@@ -3127,7 +3177,9 @@ def get_analytic_accounts(db_session: Session = Depends(get_db)):
             password=password,
         )
 
-        domain = [["active", "=", True]]
+        domain: list = [["active", "=", True]]
+        if company_id:
+            domain.append(["company_id", "=", company_id])
         analytic_accounts = erp.execute_kw(
             "account.analytic.account",
             "search_read",
@@ -3195,7 +3247,7 @@ def get_attachment(attachment_id: int, db_session: Session = Depends(get_db)):
 
 
 @router.get("/journals")
-def get_journals(db_session: Session = Depends(get_db)):
+def get_journals(db_session: Session = Depends(get_db), company_id: Optional[int] = None):
     conn = db_session.query(ERPConnection).filter(
         ERPConnection.organization_id == 1,
         ERPConnection.is_active == True
@@ -3220,17 +3272,19 @@ def get_journals(db_session: Session = Depends(get_db)):
             password=password,
         )
 
-        users = erp.execute_kw(
-            "res.users",
-            "search_read",
-            [[["login", "=", username]]],
-            {"fields": ["company_id"], "limit": 1}
-        )
-        user_company_id = users[0]["company_id"][0] if users and users[0].get("company_id") else False
+        effective_company_id = company_id
+        if not effective_company_id:
+            users = erp.execute_kw(
+                "res.users",
+                "search_read",
+                [[["login", "=", username]]],
+                {"fields": ["company_id"], "limit": 1}
+            )
+            effective_company_id = users[0]["company_id"][0] if users and users[0].get("company_id") else False
 
         domain = []
-        if user_company_id:
-            domain.append(["company_id", "=", user_company_id])
+        if effective_company_id:
+            domain.append(["company_id", "=", effective_company_id])
 
         journals = erp.execute_kw(
             "account.journal",
@@ -3330,6 +3384,7 @@ def bank_reconciliation(
     db: Session = Depends(get_db),
     date_from: Optional[str] = Form(None),
     date_to: Optional[str] = Form(None),
+    company_id: Optional[int] = Form(None),
 ):
     """Compare bank statement vs Odoo bank account and return discrepancies."""
     import tempfile

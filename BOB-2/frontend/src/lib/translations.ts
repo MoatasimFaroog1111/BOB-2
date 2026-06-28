@@ -9,6 +9,7 @@ export const translations: Record<string, any> = {
       audit: "غرفة التحكم بالتدقيق",
       accountingAI: "مطابقة AI محاسبية",
       erp: "اتصالات أنظمة ERP",
+      company: "الشركة",
     },
     home: {
       subtitle: "GuardianAI للمؤسسات",
@@ -220,6 +221,7 @@ export const translations: Record<string, any> = {
       audit: "Audit Control Room",
       accountingAI: "Accounting AI Matching",
       erp: "ERP Connections",
+      company: "Company",
     },
     home: {
       subtitle: "GuardianAI Enterprise",

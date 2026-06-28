@@ -27,6 +27,7 @@ class Transaction(BaseModel):
     description: str
     amount: float
     row_number: int
+    ai_suggested_account: Optional[str] = None
 
 
 class MatchedPair(BaseModel):
@@ -487,6 +488,98 @@ def _smart_match(
         return []
 
 
+# Chart of accounts used for AI account suggestions (must match ACCOUNTS list in frontend)
+_SUGGEST_ACCOUNTS_LIST = [
+    {"code": "1010", "name": "النقدية والبنوك"},
+    {"code": "1020", "name": "حساب جاري"},
+    {"code": "4010", "name": "إيرادات المبيعات"},
+    {"code": "5010", "name": "تكلفة البضاعة المباعة"},
+    {"code": "6010", "name": "المصاريف العمومية"},
+    {"code": "6020", "name": "رسوم بنكية"},
+    {"code": "6030", "name": "فوائد بنكية"},
+    {"code": "2010", "name": "دائنون تجاريون"},
+    {"code": "1030", "name": "مدينون تجاريون"},
+]
+
+
+def _suggest_accounts(statement_only: List[Transaction]) -> List[Transaction]:
+    """Use LLM to suggest the most appropriate account code for each statement-only transaction.
+
+    Returns a new list of Transaction objects with ``ai_suggested_account`` populated
+    where the LLM returned a valid account code.  Falls back to the original list if
+    the LLM is unavailable or returns unparseable output.
+    """
+    if not statement_only:
+        return statement_only
+
+    max_items = 30
+    subset = statement_only[:max_items]
+
+    accounts_text = "\n".join(
+        f"  {a['code']}: {a['name']}" for a in _SUGGEST_ACCOUNTS_LIST
+    )
+    txn_lines = "\n".join(
+        f"  T{i+1}: date={t.date} amount={t.amount} desc=\"{t.description}\""
+        for i, t in enumerate(subset)
+    )
+    valid_codes = {a["code"] for a in _SUGGEST_ACCOUNTS_LIST}
+
+    system_prompt = (
+        "You are an accounting assistant for a Saudi Arabian company. "
+        "For each bank statement transaction, suggest the most appropriate "
+        "account code from the chart of accounts below.\n"
+        "Available accounts:\n"
+        f"{accounts_text}\n\n"
+        "Rules:\n"
+        "- Bank fees/charges → 6020\n"
+        "- Bank interest → 6030\n"
+        "- Sales income / customer receipts → 4010\n"
+        "- Supplier/vendor payments → 2010\n"
+        "- General expenses → 6010\n"
+        "- Cost of goods → 5010\n"
+        "- Customer receivables → 1030\n"
+        "- Default (unclear) → 6010\n"
+        "Return ONLY a JSON array. Each element: "
+        '{\"t\": <T-index>, \"account\": \"<account_code>\"}\n'
+        "Return raw JSON only, no markdown code blocks."
+    )
+    user_prompt = f"Bank Statement Transactions:\n{txn_lines}"
+
+    try:
+        from app.services.llm_service import chat
+        raw = chat(system_prompt, user_prompt, temperature=0.0, timeout=60)
+        if not raw:
+            return statement_only
+
+        text = raw.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```\w*\n?", "", text)
+            text = re.sub(r"\n?```$", "", text)
+        text = text.strip()
+
+        suggestions = json.loads(text)
+        if not isinstance(suggestions, list):
+            return statement_only
+
+        result = list(statement_only)
+        for item in suggestions:
+            try:
+                t_idx = int(item.get("t", 0)) - 1
+                account = str(item.get("account", "")).strip()
+            except (TypeError, ValueError):
+                continue
+            if t_idx < 0 or t_idx >= len(result):
+                continue
+            if account not in valid_codes:
+                continue
+            result[t_idx] = result[t_idx].model_copy(update={"ai_suggested_account": account})
+
+        # Return originals for items beyond the subset limit unchanged
+        return result + list(statement_only[max_items:])
+    except Exception:
+        return statement_only
+
+
 def _run_matching(
     statement_txns: List[Transaction],
     ledger_txns: List[Transaction],
@@ -545,6 +638,9 @@ def _run_matching(
     smart_ledg_rows = {sm.ledger_txn.row_number for sm in smart_matches}
     statement_only = [t for t in statement_only if t.row_number not in smart_stmt_rows]
     ledger_only = [t for t in ledger_only if t.row_number not in smart_ledg_rows]
+
+    # Pass 4: AI account suggestion for statement-only transactions
+    statement_only = _suggest_accounts(statement_only)
 
     stmt_total = sum(t.amount for t in statement_txns)
     ledg_total = sum(t.amount for t in ledger_txns)

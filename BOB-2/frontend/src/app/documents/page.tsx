@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useLanguage } from "@/lib/LanguageContext";
+import { useCompany } from "@/lib/CompanyContext";
 import { API_BASE_URL } from "@/lib/api";
 
 const DEFAULT_ROWS = 25;
@@ -147,6 +148,7 @@ const partnerSimilarityScore = (queryRaw: string, candidateRaw: string): number 
 
 export default function DocumentIntelligencePage() {
   const { t, language } = useLanguage();
+  const { selectedCompanyId } = useCompany();
   
   // Worksheets State
   const [sheets, setSheets] = useState<Worksheet[]>(() => [
@@ -569,7 +571,7 @@ export default function DocumentIntelligencePage() {
   // Load accounts and partners from Odoo Discovery on mount
   useEffect(() => {
     fetchDiscoveryData();
-  }, []);
+  }, [selectedCompanyId]);
 
   const fetchDiscoveryData = async () => {
     setLoadingKB(true);
@@ -582,12 +584,14 @@ export default function DocumentIntelligencePage() {
           setAccounts(data.accounts);
         }
       }
-      const resPartners = await fetch(`${API_BASE_URL}/api/v1/erp/partners`);
+      const partnerCompanyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
+      const resPartners = await fetch(`${API_BASE_URL}/api/v1/erp/partners${partnerCompanyParam}`);
       if (resPartners.ok) {
         const pData = await resPartners.json();
         setPartners(pData);
       }
-      const resAnalytic = await fetch(`${API_BASE_URL}/api/v1/erp/analytic-accounts`);
+      const analyticCompanyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
+      const resAnalytic = await fetch(`${API_BASE_URL}/api/v1/erp/analytic-accounts${analyticCompanyParam}`);
       if (resAnalytic.ok) {
         const aData = await resAnalytic.json();
         setAnalyticAccounts(aData);
@@ -597,7 +601,8 @@ export default function DocumentIntelligencePage() {
 
       // Fetch Journals
       try {
-        const resJournals = await fetch(`${API_BASE_URL}/api/v1/erp/journals`);
+        const journalCompanyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
+        const resJournals = await fetch(`${API_BASE_URL}/api/v1/erp/journals${journalCompanyParam}`);
         if (resJournals.ok) {
           const jData = await resJournals.json();
           setJournals(jData);

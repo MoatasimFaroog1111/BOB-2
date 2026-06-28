@@ -3,10 +3,12 @@
 import React, { useState, useRef } from "react";
 import Link from "next/link";
 import { useLanguage } from "@/lib/LanguageContext";
+import { useCompany } from "@/lib/CompanyContext";
 import { API_BASE_URL } from "@/lib/api";
 
 export default function TeamPage() {
   const { t } = useLanguage();
+  const { selectedCompanyId } = useCompany();
   const [files, setFiles] = useState<File[]>([]);
   const [isDragActive, setIsDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -110,7 +112,8 @@ export default function TeamPage() {
 
   const fetchPartners = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/erp/partners`);
+      const companyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
+      const response = await fetch(`${API_BASE_URL}/api/v1/erp/partners${companyParam}`);
       if (response.ok) {
         const data = await response.json();
         setPartners(data);
@@ -122,7 +125,7 @@ export default function TeamPage() {
 
   React.useEffect(() => {
     fetchPartners();
-  }, []);
+  }, [selectedCompanyId]);
 
   const _getFileTypeByName = (name: string): string => {
     const ext = name.split(".").pop()?.toLowerCase();
@@ -611,6 +614,7 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
       formData.append("statement", bankStatementFile);
       if (reconDateFrom) formData.append("date_from", reconDateFrom);
       if (reconDateTo) formData.append("date_to", reconDateTo);
+      if (selectedCompanyId) formData.append("company_id", String(selectedCompanyId));
 
       const response = await fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation`, {
         method: "POST",

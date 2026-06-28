@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useLanguage } from "@/lib/LanguageContext";
+import { useCompany } from "@/lib/CompanyContext";
 
 function TeamIcon({ className }: { className?: string }) {
   return (
@@ -62,9 +63,28 @@ function ERPIcon({ className }: { className?: string }) {
   );
 }
 
+function BuildingIcon({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="2" width="16" height="20" rx="2" />
+      <path d="M9 22v-4h6v4" />
+      <path d="M8 6h.01" />
+      <path d="M16 6h.01" />
+      <path d="M12 6h.01" />
+      <path d="M12 10h.01" />
+      <path d="M12 14h.01" />
+      <path d="M16 10h.01" />
+      <path d="M16 14h.01" />
+      <path d="M8 10h.01" />
+      <path d="M8 14h.01" />
+    </svg>
+  );
+}
+
 export function MainNavigation() {
   const { t } = useLanguage();
   const pathname = usePathname();
+  const { companies, selectedCompanyId, setSelectedCompanyId } = useCompany();
 
   const navItems = [
     { href: "/documents", label: t("sidebar.documents"), icon: DocumentIcon },
@@ -85,6 +105,33 @@ export function MainNavigation() {
           {t("sidebar.subtitle")}
         </p>
       </div>
+
+      {companies.length > 0 && (
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-2">
+            <BuildingIcon className="w-4 h-4 text-amber-400/70 flex-shrink-0" />
+            <span className="text-[11px] font-semibold text-amber-400/70 uppercase tracking-wider">
+              {t("sidebar.company")}
+            </span>
+          </div>
+          <select
+            value={selectedCompanyId ?? ""}
+            onChange={(e) => {
+              const val = e.target.value;
+              setSelectedCompanyId(val ? parseInt(val, 10) : null);
+            }}
+            className="w-full bg-black/50 border border-amber-500/25 text-white text-xs rounded-xl px-3 py-2.5 outline-none
+                       focus:border-amber-400/60 focus:shadow-[0_0_8px_rgba(217,164,65,0.2)] transition-all duration-200
+                       appearance-none cursor-pointer"
+          >
+            {companies.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}{c.currency ? ` (${c.currency})` : ""}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       <nav className="space-y-1.5 flex-1">
         {navItems.map((item) => {

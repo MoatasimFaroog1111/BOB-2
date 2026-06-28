@@ -4,9 +4,11 @@ import { useState, useEffect } from "react";
 import Link from "next/link";
 import { API_BASE_URL } from "@/lib/api";
 import { useLanguage } from "@/lib/LanguageContext";
+import { useCompany } from "@/lib/CompanyContext";
 
 export default function ERPConnectionPage() {
   const { t, language } = useLanguage();
+  const { refreshCompanies } = useCompany();
 
   const [url, setUrl] = useState("");
   const [db, setDb] = useState("");
@@ -185,6 +187,7 @@ export default function ERPConnectionPage() {
       setSavedConnection(data);
       setSuccessMsg(t("erp.successSave"));
       fetchCompanyInfo();
+      refreshCompanies();
     } catch (err: any) {
       setErrorMsg(err.message || t("erp.errorSave"));
     } finally {

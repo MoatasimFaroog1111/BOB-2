@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { useLanguage } from "@/lib/LanguageContext";
+import { useCompany } from "@/lib/CompanyContext";
 import { API_BASE_URL } from "@/lib/api";
 
 interface Attachment {
@@ -32,6 +33,7 @@ interface MoveTransaction {
 
 export default function AuditPage() {
   const { t, language } = useLanguage();
+  const { selectedCompanyId } = useCompany();
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
   // Filter States
@@ -53,7 +55,8 @@ export default function AuditPage() {
 
   const fetchAccounts = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/erp/accounts`);
+      const companyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
+      const response = await fetch(`${API_BASE_URL}/api/v1/erp/accounts${companyParam}`);
       if (response.ok) {
         const data = await response.json();
         setAccounts(data);
@@ -63,17 +66,16 @@ export default function AuditPage() {
     }
   };
 
-  // Fetch accounts on mount
   useEffect(() => {
     fetchAccounts();
-  }, []);
+  }, [selectedCompanyId]);
 
   const handleDetectAttachments = async () => {
     setLoading(true);
     setMessage(null);
     try {
       const payload = {
-        company_id: 1,
+        company_id: selectedCompanyId ?? 1,
         date_from: dateFrom || null,
         date_to: dateTo || null,
         account_id: selectedAccountId || null,

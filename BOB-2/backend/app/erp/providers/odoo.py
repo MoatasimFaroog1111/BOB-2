@@ -154,13 +154,17 @@ class OdooProvider:
         self,
         date_from: str | None = None,
         date_to: str | None = None,
+        company_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """Fetch bank account transactions (account.move.line) from bank-type journals."""
         # Find bank journals
+        journal_domain: list = [["type", "=", "bank"]]
+        if company_id:
+            journal_domain.append(["company_id", "=", company_id])
         bank_journals = self.execute_kw(
             "account.journal",
             "search_read",
-            [[["type", "=", "bank"]]],
+            [journal_domain],
             {"fields": ["id", "name", "default_account_id"], "limit": 50},
         )
 

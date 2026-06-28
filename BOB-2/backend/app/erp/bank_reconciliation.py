@@ -97,7 +97,6 @@ def _parse_number(value: str) -> Optional[float]:
     text = _to_western_digits(str(value)).strip()
     is_parentheses_negative = text.startswith("(") and text.endswith(")")
 
-    # Remove currency symbols and whitespace, but keep signs, decimals, commas and brackets.
     text = re.sub(r"[^\d\.\-,\(\)]", "", text)
     text = text.replace(",", "")
     text = text.replace("(", "").replace(")", "")
@@ -143,7 +142,6 @@ def _normalize_date(date_str: str) -> str:
                 except ValueError:
                     pass
 
-    # YYYY-MM-DD or YYYY/MM/DD
     m = re.search(r"(\d{4})[-/\.](\d{1,2})[-/\.](\d{1,2})", text)
     if m:
         try:
@@ -151,7 +149,6 @@ def _normalize_date(date_str: str) -> str:
         except ValueError:
             pass
 
-    # DD-MM-YYYY or DD/MM/YYYY
     m = re.search(r"(\d{1,2})[-/\.](\d{1,2})[-/\.](\d{4})", text)
     if m:
         v1, v2, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -164,7 +161,6 @@ def _normalize_date(date_str: str) -> str:
         except ValueError:
             pass
 
-    # Compact OFX date: YYYYMMDD...
     m = re.search(r"\b(\d{4})(\d{2})(\d{2})\b", text)
     if m:
         try:
@@ -220,7 +216,7 @@ def _detect_columns(headers: List[str]) -> dict:
     return result
 
 
-def _find_header_row_index(rows: List[List[str]], max_scan_rows: int = 20) -> int:
+def _find_header_row_index(rows: List[List[str]], max_scan_rows: int = 25) -> int:
     """Find the most likely header row index in files that contain preamble lines."""
     scan_limit = min(len(rows), max_scan_rows)
     best_idx = 0
@@ -233,13 +229,8 @@ def _find_header_row_index(rows: List[List[str]], max_scan_rows: int = 20) -> in
             continue
 
         col_map = _detect_columns(headers)
-
         has_date = col_map["date"] >= 0
-        has_amount_info = (
-            col_map["amount"] >= 0 or
-            col_map["debit"] >= 0 or
-            col_map["credit"] >= 0
-        )
+        has_amount_info = col_map["amount"] >= 0 or col_map["debit"] >= 0 or col_map["credit"] >= 0
 
         score = 0
         if has_date:
@@ -259,15 +250,12 @@ def _find_header_row_index(rows: List[List[str]], max_scan_rows: int = 20) -> in
     return best_idx
 
 
-def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = True) -> List[Transaction]:
-    """Extract transactions from parsed rows.
+def _row_contains_date(cells: List[str]) -> bool:
+    return any(_DATE_RE.search(_to_western_digits(str(cell or ""))) for cell in cells)
 
-    Amount sign convention (matches Odoo and bank statement):
-      deposit  (credit / money-in)  → positive
-      withdrawal (debit / money-out) → negative
-    When separate debit/credit columns exist: amount = credit - debit
-    When a single signed amount column exists: value is used as-is.
-    """
+
+def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = True) -> List[Transaction]:
+    """Extract transactions from parsed rows."""
     if not rows or len(rows) < 2:
         return []
 
@@ -284,6 +272,12 @@ def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = Tr
     else:
         col_map = {"date": 0, "description": 1, "amount": 2, "debit": -1, "credit": -1, "balance": -1}
 
+    has_reliable_columns = col_map["date"] >= 0 and (
+        col_map["amount"] >= 0 or col_map["debit"] >= 0 or col_map["credit"] >= 0
+    )
+    if not has_reliable_columns:
+        return _extract_transactions_from_unstructured_rows(rows)
+
     transactions = []
     for row_idx, row in enumerate(data_rows):
         cells = [str(c).strip() if c is not None else "" for c in row]
@@ -299,7 +293,6 @@ def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = Tr
             credit_str = cells[col_map["credit"]] if col_map["credit"] < len(cells) else ""
             debit = _parse_number(debit_str) or 0.0
             credit = _parse_number(credit_str) or 0.0
-            # credit - debit → deposit positive, withdrawal negative
             amount_val = credit - debit
         elif col_map["debit"] >= 0:
             debit_str = cells[col_map["debit"]] if col_map["debit"] < len(cells) else ""
@@ -314,7 +307,6 @@ def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = Tr
             if parsed is not None:
                 amount_val = parsed
 
-        # If no description column found, combine all non-date, non-amount cells
         if not desc_val and col_map["description"] == -1:
             skip_cols = {col_map["date"], col_map["amount"], col_map["debit"], col_map["credit"], col_map.get("balance", -1)}
             desc_parts = [cells[i] for i in range(len(cells)) if i not in skip_cols and cells[i]]
@@ -323,11 +315,82 @@ def _extract_transactions_from_rows(rows: List[List[str]], has_header: bool = Tr
         if amount_val == 0.0 and not desc_val:
             continue
 
+        normalized_date = _normalize_date(date_val)
+        if not normalized_date or not _DATE_RE.search(_to_western_digits(normalized_date)):
+            # Avoid turning PDF headers or balance notes into transactions.
+            continue
+
         transactions.append(Transaction(
-            date=_normalize_date(date_val),
+            date=normalized_date,
             description=desc_val,
             amount=round(amount_val, 2),
             row_number=row_idx + (2 if has_header else 1),
+        ))
+
+    return transactions or _extract_transactions_from_unstructured_rows(rows)
+
+
+def _extract_transactions_from_unstructured_rows(rows: List[List[str]]) -> List[Transaction]:
+    """Fallback for PDF/OCR rows where headers or cell boundaries are imperfect."""
+    transactions: List[Transaction] = []
+    debit_words = ["debit", "withdrawal", "paid out", "سحب", "مدين", "خصم", "صادر", "دفع"]
+    credit_words = ["credit", "deposit", "paid in", "إيداع", "ايداع", "دائن", "وارد", "تحويل وارد"]
+
+    for idx, row in enumerate(rows, start=1):
+        cells = [str(c).strip() for c in row if str(c).strip()]
+        if not cells:
+            continue
+
+        date_index = -1
+        date_text = ""
+        for i, cell in enumerate(cells):
+            m = _DATE_RE.search(_to_western_digits(cell))
+            if m:
+                date_index = i
+                date_text = m.group(1)
+                break
+        if date_index < 0:
+            continue
+
+        numeric_cells: list[tuple[int, float]] = []
+        for i, cell in enumerate(cells):
+            if i == date_index:
+                continue
+            parsed = _parse_number(cell)
+            if parsed is None or parsed == 0:
+                continue
+            if float(parsed).is_integer() and 1900 <= abs(parsed) <= 2100:
+                continue
+            numeric_cells.append((i, parsed))
+
+        if not numeric_cells:
+            continue
+
+        # For PDF tables with a running balance, choose the first amount after the date.
+        # The final numeric cell is commonly the balance, not the transaction amount.
+        after_date = [(i, n) for i, n in numeric_cells if i > date_index]
+        amount_index, amount_val = (after_date[0] if after_date else numeric_cells[0])
+
+        row_text = " ".join(cells).lower()
+        if any(w in row_text for w in debit_words) and not any(w in row_text for w in credit_words):
+            amount_val = -abs(amount_val)
+        elif any(w in row_text for w in credit_words) and not any(w in row_text for w in debit_words):
+            amount_val = abs(amount_val)
+
+        desc_parts = []
+        for i, cell in enumerate(cells):
+            if i == date_index or i == amount_index:
+                continue
+            if any(i == n_i for n_i, _ in numeric_cells) and i != amount_index:
+                # Usually balance/running balance.
+                continue
+            desc_parts.append(cell)
+
+        transactions.append(Transaction(
+            date=_normalize_date(date_text),
+            description=" ".join(desc_parts).strip(),
+            amount=round(amount_val, 2),
+            row_number=idx,
         ))
 
     return transactions
@@ -353,7 +416,6 @@ def parse_csv_file(file_path: str) -> List[Transaction]:
     """Parse transactions from a CSV/TSV/delimited text file."""
     content = _read_text_file(file_path)
 
-    # Detect delimiter
     sniffer = csv.Sniffer()
     try:
         dialect = sniffer.sniff(content[:4096])
@@ -483,7 +545,6 @@ def _extract_transactions_from_text(text: str) -> List[Transaction]:
             parsed = _parse_number(m.group(1))
             if parsed is None:
                 continue
-            # Filter obvious non-amount metadata, but keep normal small bank fees.
             if abs(parsed) == 0:
                 continue
             if float(parsed).is_integer() and 1900 <= abs(parsed) <= 2100:
@@ -493,8 +554,6 @@ def _extract_transactions_from_text(text: str) -> List[Transaction]:
         if not amount_candidates:
             continue
 
-        # In text/PDF rows with a running balance, the transaction amount normally appears
-        # before the balance. Prefer the first numeric amount after the date.
         amount_token, amount_val, start, end = amount_candidates[0]
         lower_line = line.lower()
         has_debit_signal = any(w in lower_line for w in debit_words)
@@ -617,8 +676,129 @@ def parse_image_file(file_path: str) -> List[Transaction]:
     return _extract_transactions_from_text(text)
 
 
+def _split_pdf_words_into_cells(row_words: list[dict]) -> List[str]:
+    """Split one visual PDF row into cells using word x-coordinates."""
+    if not row_words:
+        return []
+
+    words = sorted(row_words, key=lambda w: w["x0"])
+    gaps = [words[i]["x0"] - words[i - 1]["x1"] for i in range(1, len(words))]
+    positive_gaps = sorted(g for g in gaps if g > 0)
+    median_gap = positive_gaps[len(positive_gaps) // 2] if positive_gaps else 4.0
+    threshold = max(12.0, min(36.0, median_gap * 3.5))
+
+    cells: list[str] = []
+    current: list[str] = [words[0]["text"]]
+    previous = words[0]
+
+    for word in words[1:]:
+        gap = word["x0"] - previous["x1"]
+        if gap > threshold:
+            cells.append(" ".join(current).strip())
+            current = [word["text"]]
+        else:
+            current.append(word["text"])
+        previous = word
+
+    cells.append(" ".join(current).strip())
+    return [c for c in cells if c]
+
+
+def _pdf_page_words_to_rows(page) -> List[List[str]]:
+    """Read a PDF page as table-like rows by grouping words by vertical position."""
+    raw_words = page.get_text("words", sort=True) or []
+    word_items = []
+    for item in raw_words:
+        if len(item) < 5:
+            continue
+        x0, y0, x1, y1, text = item[:5]
+        text = _to_western_digits(str(text or "")).strip()
+        if not text:
+            continue
+        word_items.append({"x0": float(x0), "y0": float(y0), "x1": float(x1), "y1": float(y1), "text": text})
+
+    word_items.sort(key=lambda w: (round(w["y0"], 1), w["x0"]))
+    grouped_rows: list[list[dict]] = []
+
+    for word in word_items:
+        if not grouped_rows:
+            grouped_rows.append([word])
+            continue
+        last_row = grouped_rows[-1]
+        avg_y = sum(w["y0"] for w in last_row) / len(last_row)
+        row_height = max((w["y1"] - w["y0"] for w in last_row), default=8.0)
+        tolerance = max(3.0, row_height * 0.55)
+        if abs(word["y0"] - avg_y) <= tolerance:
+            last_row.append(word)
+        else:
+            grouped_rows.append([word])
+
+    rows = []
+    for row_words in grouped_rows:
+        cells = _split_pdf_words_into_cells(row_words)
+        if cells:
+            rows.append(cells)
+    return rows
+
+
+def _merge_pdf_continuation_rows(rows: List[List[str]]) -> List[List[str]]:
+    """Merge wrapped PDF description rows into the previous transaction row."""
+    merged: List[List[str]] = []
+    last_transaction_idx: int | None = None
+
+    for row in rows:
+        cells = [str(c).strip() for c in row if str(c).strip()]
+        if not cells:
+            continue
+
+        if _row_contains_date(cells):
+            merged.append(cells)
+            last_transaction_idx = len(merged) - 1
+            continue
+
+        row_text = " ".join(cells).lower()
+        looks_like_header = any(k in row_text for k in ["date", "تاريخ", "description", "بيان", "debit", "credit", "balance", "الرصيد"])
+        if looks_like_header or last_transaction_idx is None:
+            merged.append(cells)
+            continue
+
+        # Continuation lines usually have text but no date/amount columns.
+        numeric_count = sum(1 for c in cells if _parse_number(c) is not None)
+        if numeric_count <= 1:
+            target = merged[last_transaction_idx]
+            if len(target) >= 2:
+                target[1] = (target[1] + " " + " ".join(cells)).strip()
+            else:
+                target.append(" ".join(cells))
+        else:
+            merged.append(cells)
+
+    return merged
+
+
+def _extract_pdf_table_transactions(doc) -> List[Transaction]:
+    """Extract transactions from a digital PDF using coordinates before plain text."""
+    rows: List[List[str]] = []
+    for page in doc:
+        page_rows = _pdf_page_words_to_rows(page)
+        if page_rows:
+            rows.extend(page_rows)
+
+    rows = _merge_pdf_continuation_rows(rows)
+    transactions = _extract_transactions_from_rows(rows, has_header=True)
+    if transactions:
+        return transactions
+    return _extract_transactions_from_unstructured_rows(rows)
+
+
 def parse_pdf_file(file_path: str) -> List[Transaction]:
-    """Parse transactions from digital or scanned PDF bank statements."""
+    """Parse transactions from digital or scanned PDF bank statements.
+
+    Priority:
+    1. Digital PDF table reconstruction using word coordinates.
+    2. Digital PDF plain text fallback.
+    3. OCR fallback for scanned PDFs.
+    """
     import fitz
     from PIL import Image
 
@@ -626,6 +806,10 @@ def parse_pdf_file(file_path: str) -> List[Transaction]:
     text_parts: list[str] = []
 
     try:
+        table_txns = _extract_pdf_table_transactions(doc)
+        if table_txns:
+            return table_txns
+
         for page in doc:
             page_text = page.get_text("text") or ""
             if page_text.strip():
@@ -687,19 +871,7 @@ def parse_file(file_path: str) -> List[Transaction]:
 
 
 def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
-    """Convert Odoo account.move.line records to Transaction objects.
-
-    Odoo accounting convention for a bank account journal:
-      debit  = money INTO the bank  (positive from customer perspective) → deposit
-      credit = money OUT of the bank (negative from customer perspective) → withdrawal
-
-    We convert to the unified sign convention:
-      deposit  (debit in Odoo)  → positive
-      withdrawal (credit in Odoo) → negative
-    So: amount = debit - credit
-    This matches the sign produced by _extract_transactions_from_rows (credit - debit
-    on a bank statement where credit = deposit column, debit = withdrawal column).
-    """
+    """Convert Odoo account.move.line records to Transaction objects."""
     transactions = []
     for idx, line in enumerate(move_lines):
         date_val = str(line.get("date", ""))
@@ -711,8 +883,6 @@ def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
 
         debit = float(line.get("debit", 0))
         credit = float(line.get("credit", 0))
-        # debit - credit so that money-in (Odoo debit) = positive,
-        # money-out (Odoo credit) = negative. Consistent with statement parsing.
         amount = round(debit - credit, 2)
 
         if amount == 0.0:
@@ -736,7 +906,6 @@ def _smart_match(
     if not statement_only or not ledger_only:
         return []
 
-    # Limit to avoid excessively large prompts
     max_items = 30
     stmt_subset = statement_only[:max_items]
     ledg_subset = ledger_only[:max_items]
@@ -775,7 +944,6 @@ def _smart_match(
         if not raw:
             return []
 
-        # Strip markdown code fences if present
         text = raw.strip()
         if text.startswith("```"):
             text = re.sub(r"^```\w*\n?", "", text)
@@ -822,7 +990,6 @@ def _smart_match(
         return []
 
 
-# Chart of accounts used for AI account suggestions (must match ACCOUNTS list in frontend)
 _SUGGEST_ACCOUNTS_LIST = [
     {"code": "1010", "name": "النقدية والبنوك"},
     {"code": "1020", "name": "حساب جاري"},
@@ -837,12 +1004,7 @@ _SUGGEST_ACCOUNTS_LIST = [
 
 
 def _suggest_accounts(statement_only: List[Transaction]) -> List[Transaction]:
-    """Use LLM to suggest the most appropriate account code for each statement-only transaction.
-
-    Returns a new list of Transaction objects with ``ai_suggested_account`` populated
-    where the LLM returned a valid account code.  Falls back to the original list if
-    the LLM is unavailable or returns unparseable output.
-    """
+    """Use LLM to suggest the most appropriate account code for each statement-only transaction."""
     if not statement_only:
         return statement_only
 
@@ -908,7 +1070,6 @@ def _suggest_accounts(statement_only: List[Transaction]) -> List[Transaction]:
                 continue
             result[t_idx] = result[t_idx].model_copy(update={"ai_suggested_account": account})
 
-        # Return originals for items beyond the subset limit unchanged
         return result + list(statement_only[max_items:])
     except Exception:
         return statement_only
@@ -919,13 +1080,10 @@ def _run_matching(
     ledger_txns: List[Transaction],
 ) -> ReconciliationResult:
     """Core matching logic shared by all reconcile entry points."""
-
-    # Track which ledger transactions have been matched
     ledger_matched = [False] * len(ledger_txns)
     statement_matched = [False] * len(statement_txns)
     matched_pairs: List[MatchedPair] = []
 
-    # Pass 1: exact amount + exact date match
     for s_idx, s_txn in enumerate(statement_txns):
         if statement_matched[s_idx]:
             continue
@@ -938,9 +1096,6 @@ def _run_matching(
                 matched_pairs.append(MatchedPair(statement_txn=s_txn, ledger_txn=l_txn))
                 break
 
-    # Pass 2: exact amount + date within 7-day window
-    # FIX: replaced blind "same amount regardless of date" with a date-proximity check
-    # to prevent false matches on recurring identical amounts (e.g. monthly rent).
     for s_idx, s_txn in enumerate(statement_txns):
         if statement_matched[s_idx]:
             continue
@@ -948,7 +1103,6 @@ def _run_matching(
             if ledger_matched[l_idx]:
                 continue
             if abs(s_txn.amount - l_txn.amount) < 0.01:
-                # Only match if both dates are valid and within 7 days of each other
                 try:
                     s_date = datetime.strptime(s_txn.date, "%Y-%m-%d")
                     l_date = datetime.strptime(l_txn.date, "%Y-%m-%d")
@@ -958,22 +1112,18 @@ def _run_matching(
                         matched_pairs.append(MatchedPair(statement_txn=s_txn, ledger_txn=l_txn))
                         break
                 except (ValueError, TypeError):
-                    # If dates can't be parsed, skip to avoid false matches
                     continue
 
     statement_only = [t for i, t in enumerate(statement_txns) if not statement_matched[i]]
     ledger_only = [t for i, t in enumerate(ledger_txns) if not ledger_matched[i]]
 
-    # Pass 3: AI-powered smart matching on remaining unmatched transactions
     smart_matches = _smart_match(statement_only, ledger_only)
 
-    # Remove smart-matched transactions from the "only" lists
     smart_stmt_rows = {sm.statement_txn.row_number for sm in smart_matches}
     smart_ledg_rows = {sm.ledger_txn.row_number for sm in smart_matches}
     statement_only = [t for t in statement_only if t.row_number not in smart_stmt_rows]
     ledger_only = [t for t in ledger_only if t.row_number not in smart_ledg_rows]
 
-    # Pass 4: AI account suggestion for statement-only transactions
     statement_only = _suggest_accounts(statement_only)
 
     stmt_total = sum(t.amount for t in statement_txns)
@@ -1000,12 +1150,9 @@ def reconcile(statement_path: str, ledger_path: str) -> ReconciliationResult:
 
 
 def get_date_range(transactions: List[Transaction], buffer_days: int = 7) -> tuple:
-    """Extract min/max dates from transactions for Odoo query scoping.
-
-    Adds a buffer (default 7 days) on each side to allow Pass 2 matching
-    for transactions posted near period boundaries.
-    """
+    """Extract min/max dates from transactions for Odoo query scoping."""
     from datetime import datetime, timedelta
+
     dates = [t.date for t in transactions if t.date and t.date >= "1900"]
     if not dates:
         return None, None

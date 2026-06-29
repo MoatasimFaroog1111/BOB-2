@@ -1,5 +1,5 @@
-import ReconciliationPageClient from "@/components/ReconciliationPageClient";
+import ReconciliationPageNoGoogle from "@/components/ReconciliationPageNoGoogle";
 
 export default function ReconciliationPage() {
-  return <ReconciliationPageClient />;
+  return <ReconciliationPageNoGoogle />;
 }

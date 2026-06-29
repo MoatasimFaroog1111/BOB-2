@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { API_BASE_URL } from "@/lib/api";
 import { useLanguage } from "@/lib/LanguageContext";
+import { useCompany } from "@/lib/CompanyContext";
 
 interface Transaction {
   date: string;
@@ -248,6 +249,7 @@ function MatchResults({ result, isAr }: { result: ReconciliationResult; isAr: bo
 
 export default function ReconciliationPage() {
   const { language } = useLanguage();
+  const { selectedCompanyId, selectedCompany } = useCompany();
   const isAr = language === "ar";
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -267,8 +269,14 @@ export default function ReconciliationPage() {
   useEffect(() => {
     let mounted = true;
     async function loadBankAccounts() {
+      if (!selectedCompanyId) {
+        setBankAccounts([]);
+        setSelectedBankAccountId("");
+        return;
+      }
       try {
-        const res = await fetch(`${API_BASE_URL}/api/v1/erp/accounts`);
+        const params = new URLSearchParams({ company_id: String(selectedCompanyId) });
+        const res = await fetch(`${API_BASE_URL}/api/v1/erp/accounts?${params.toString()}`);
         if (!res.ok) return;
         const data = await res.json();
         const allAccounts = Array.isArray(data) ? data : [];
@@ -282,14 +290,17 @@ export default function ReconciliationPage() {
         const options = bankLike.length ? bankLike : normalized;
         if (!mounted) return;
         setBankAccounts(options);
-        if (options[0] && !selectedBankAccountId) setSelectedBankAccountId(String(options[0].id));
+        setSelectedBankAccountId(prev => {
+          if (prev && options.some(option => String(option.id) === String(prev))) return prev;
+          return options[0] ? String(options[0].id) : "";
+        });
       } catch (err) {
         console.warn("Failed to load bank accounts", err);
       }
     }
     loadBankAccounts();
     return () => { mounted = false; };
-  }, [selectedBankAccountId]);
+  }, [selectedCompanyId]);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -306,6 +317,7 @@ export default function ReconciliationPage() {
     if (!file) return;
     const formData = new FormData();
     formData.append("statement", file);
+    if (selectedCompanyId) formData.append("company_id", String(selectedCompanyId));
     if (dateFrom) formData.append("date_from", dateFrom);
     if (dateTo) formData.append("date_to", dateTo);
     if (includeBankAccount && selectedBankAccountId) {
@@ -322,6 +334,10 @@ export default function ReconciliationPage() {
   };
 
   const handleReadFile = async () => {
+    if (!selectedCompanyId) {
+      setErrorMsg(isAr ? "اختر الشركة أولاً حتى تتم قراءة البيانات ضمن الشركة الصحيحة." : "Select a company first.");
+      return;
+    }
     setReading(true);
     setErrorMsg("");
     setMatchAttempted(false);
@@ -335,6 +351,10 @@ export default function ReconciliationPage() {
   };
 
   const handleBankMatch = async () => {
+    if (!selectedCompanyId) {
+      setErrorMsg(isAr ? "اختر الشركة أولاً." : "Select a company first.");
+      return;
+    }
     if (!selectedBankAccountId) {
       setErrorMsg(isAr ? "اختر الحساب البنكي أولاً." : "Select a bank account first.");
       return;
@@ -381,6 +401,9 @@ export default function ReconciliationPage() {
           <Link href="/erp" className="gold-text text-[10px] tracking-widest hover:underline uppercase transition-all">← ERP</Link>
           <h1 className="mt-0.5 text-xl font-bold">{isAr ? "تقرير المطابقة البنكية" : "Bank Reconciliation Report"}</h1>
           <p className="text-[11px] text-white/50">{isAr ? "اقرأ كشف البنك أولاً، ثم اختر الحساب البنكي واضغط أيقونة التسوية لمطابقة بيانات Google." : "Read the bank statement, then choose the bank account and run Google matching."}</p>
+          <p className="mt-1 text-[10px] text-amber-300/80">
+            {isAr ? "الشركة الحالية:" : "Current company:"} <span className="font-bold">{selectedCompany?.name || (isAr ? "لم يتم اختيار شركة" : "No company selected")}</span>
+          </p>
         </div>
         {result && (
           <div className="flex gap-2">
@@ -447,7 +470,7 @@ export default function ReconciliationPage() {
 
           {errorMsg && <div className="bg-red-500/10 border border-red-500/30 p-3 rounded-xl text-red-300 text-xs">❌ {errorMsg}</div>}
 
-          <button onClick={handleReadFile} disabled={!file || reading} className="w-full bg-gradient-to-r from-blue-500 to-cyan-500 disabled:opacity-40 text-black font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-2">
+          <button onClick={handleReadFile} disabled={!file || reading || !selectedCompanyId} className="w-full bg-gradient-to-r from-blue-500 to-cyan-500 disabled:opacity-40 text-black font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-2">
             {reading ? <><span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" /> {isAr ? "جاري قراءة الملف..." : "Reading file..."}</> : <>📖 {isAr ? "قراءة كشف الحساب" : "Read bank statement"}</>}
           </button>
         </div>
@@ -464,7 +487,10 @@ export default function ReconciliationPage() {
                   <span className="text-2xl">🏦</span>
                   <div>
                     <p className="text-sm font-bold text-amber-300">{isAr ? "أيقونة التسوية البنكية" : "Bank Reconciliation"}</p>
-                    <p className="text-[10px] text-white/50">{isAr ? "اختر الحساب البنكي ثم اضغط للمطابقة مع بيانات Google الخاصة بهذا الحساب." : "Choose the bank account, then match against Google records for that account."}</p>
+                    <p className="text-[10px] text-white/50">
+                      {isAr ? "الحسابات المعروضة أدناه تابعة للشركة المختارة فقط." : "The accounts below belong only to the selected company."}
+                    </p>
+                    <p className="text-[10px] text-amber-300/80 mt-0.5">{selectedCompany?.name || "—"}</p>
                   </div>
                 </div>
                 <label className="block text-[10px] text-white/60 mb-1">{isAr ? "الحساب البنكي المختار" : "Selected bank account"}</label>
@@ -474,8 +500,13 @@ export default function ReconciliationPage() {
                     <option key={String(account.id)} value={String(account.id)}>{account.label}</option>
                   ))}
                 </select>
+                {bankAccounts.length === 0 && (
+                  <p className="mt-2 text-[10px] text-rose-300">
+                    {isAr ? "لا توجد حسابات ظاهرة لهذه الشركة. تأكد من اختيار الشركة الصحيحة أو صلاحيات Odoo." : "No accounts are visible for this company."}
+                  </p>
+                )}
               </div>
-              <button onClick={handleBankMatch} disabled={!file || !selectedBankAccountId || matching} className="md:w-64 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 disabled:opacity-40 text-black font-extrabold py-3 rounded-xl text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/10">
+              <button onClick={handleBankMatch} disabled={!file || !selectedCompanyId || !selectedBankAccountId || matching} className="md:w-64 bg-gradient-to-r from-amber-500 to-yellow-600 hover:from-amber-600 hover:to-yellow-700 disabled:opacity-40 text-black font-extrabold py-3 rounded-xl text-sm flex items-center justify-center gap-2 shadow-lg shadow-amber-500/10">
                 {matching ? <><span className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" /> {isAr ? "جاري المطابقة..." : "Matching..."}</> : <>🔁 {isAr ? "مطابقة بنكية" : "Run match"}</>}
               </button>
             </div>

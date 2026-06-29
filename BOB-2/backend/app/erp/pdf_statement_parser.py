@@ -29,7 +29,7 @@ _MONEY_RE = re.compile(
     r"(?<![\dA-Za-z])(" 
     r"\(?-?\d{1,3}(?:[,\s]\d{3})+(?:\.\d{1,4})?\)?"
     r"|\(?-?\d+\.\d{1,4}\)?"
-    r"|\(?-?\d{1,9}\)?"
+    r"|\(?-?\d{2,9}\)?"
     r")(?![\dA-Za-z])"
 )
 
@@ -70,14 +70,12 @@ def _date(text: str) -> str:
     text = _digits(text).strip()
     if not text:
         return ""
-
     m = re.search(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", text)
     if m:
         try:
             return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).strftime("%Y-%m-%d")
         except ValueError:
             pass
-
     m = re.search(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})", text)
     if m:
         first, second, year = int(m.group(1)), int(m.group(2)), _expand_year(int(m.group(3)))
@@ -86,14 +84,12 @@ def _date(text: str) -> str:
             return datetime(year, month, day).strftime("%Y-%m-%d")
         except ValueError:
             pass
-
     m = re.search(r"\b(\d{4})(\d{2})(\d{2})\b", text)
     if m:
         try:
             return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3))).strftime("%Y-%m-%d")
         except ValueError:
             pass
-
     m = re.search(rf"(\d{{1,2}})\s+({_MONTH_PATTERN})\s*,?\s*(\d{{2,4}})", text, re.IGNORECASE)
     if m:
         month = _month_number(m.group(2))
@@ -102,7 +98,6 @@ def _date(text: str) -> str:
                 return datetime(_expand_year(int(m.group(3))), month, int(m.group(1))).strftime("%Y-%m-%d")
             except ValueError:
                 pass
-
     m = re.search(rf"({_MONTH_PATTERN})\s+(\d{{1,2}}),?\s+(\d{{2,4}})", text, re.IGNORECASE)
     if m:
         month = _month_number(m.group(1))
@@ -152,8 +147,6 @@ def _amounts(row_text: str) -> list[dict]:
         has_money_shape = any(ch in token for ch in [".", ",", " ", "(", ")", "-"])
         if len(digits_only) >= 7 and not has_money_shape and not context:
             continue
-        if len(digits_only) <= 1 and not has_money_shape and not context:
-            continue
         out.append({"token": token, "amount": value, "start": m.start(1), "end": m.end(1)})
     return out
 
@@ -173,7 +166,6 @@ def _date_token(row_text: str, cells: List[str]) -> tuple[str, str]:
 def _choose_amount(candidates: list[dict], row_text: str) -> Optional[dict]:
     if not candidates:
         return None
-    # Many bank PDFs end with running balance, so use the first movement amount.
     selected = dict(candidates[0])
     low = row_text.lower()
     if any(w in low for w in _DEBIT_WORDS) and not any(w in low for w in _CREDIT_WORDS):
@@ -190,10 +182,11 @@ def _txn_from_row(cells: List[str], row_number: int, make_txn: Callable) -> Opti
     txn_date, d_token = _date_token(row_text, cells)
     if not txn_date:
         return None
-    selected = _choose_amount(_amounts(row_text), row_text)
+    amount_source = _digits(row_text).replace(d_token, " ", 1)
+    selected = _choose_amount(_amounts(amount_source), row_text)
     if not selected:
         return None
-    desc = _digits(row_text).replace(d_token, " ", 1).replace(selected["token"], " ", 1)
+    desc = amount_source.replace(selected["token"], " ", 1)
     desc = re.sub(r"\b(SAR|SR|RIYAL|RIYALS|ر\.س|ريال|رس)\b", " ", desc, flags=re.I)
     desc = re.sub(r"\s+", " ", desc).strip(" -|,؛:.")
     if not desc or _skip(desc):
@@ -287,7 +280,6 @@ def _text_rows(text: str) -> List[List[str]]:
 def parse_pdf_statement(file_path: str, make_txn: Callable, ocr_image_to_text: Callable) -> List[object]:
     import fitz
     from PIL import Image
-
     doc = fitz.open(file_path)
     try:
         for rows in (_fitz_tables(doc), _word_rows(doc)):

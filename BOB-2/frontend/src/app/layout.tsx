@@ -1,5 +1,6 @@
 import "./globals.css";
 import { MainNavigation } from "@/components/layout/MainNavigation";
+import GlobalBackButton from "@/components/layout/GlobalBackButton";
 import { LanguageProvider } from "@/lib/LanguageContext";
 import { CompanyProvider } from "@/lib/CompanyContext";
 import { Cairo, Outfit } from "next/font/google";
@@ -29,6 +30,7 @@ export default function RootLayout({
             <main className="guardian-shell flex h-screen w-screen overflow-hidden text-white">
               <MainNavigation />
               <section className="flex-1 h-screen overflow-hidden flex flex-col">
+                <GlobalBackButton />
                 {children}
               </section>
             </main>
@@ -38,6 +40,3 @@ export default function RootLayout({
     </LanguageProvider>
   );
 }
-
-
-

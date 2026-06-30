@@ -319,17 +319,20 @@ def handle_callback_query(token: str, query: dict):
                 partner_id=pending["partner_id"],
                 ref=f"TG Bot: {pending['filename']}",
                 raw_text=pending["raw_text"],
-                lines=lines_payload
+                lines=lines_payload,
+                file_path=pending.get("local_path"),
             )
             
             # Post to Odoo
             res = register_document(payload=reg_payload, db_session=db)
             
-            # Upload file as attachment to the created journal entry
-            attachment_id = None
+            # Use the attachment_id returned by register_document (file attached at endpoint level).
+            # Fall back to a direct upload if the endpoint did not attach the file
+            # (e.g. the path was unavailable from the API process).
+            attachment_id = res.get("attachment_id")
             move_id = res.get("move_id")
             local_file = pending.get("local_path")
-            if move_id and local_file and Path(local_file).exists():
+            if not attachment_id and move_id and local_file and Path(local_file).exists():
                 try:
                     attachment_id = _upload_attachment_to_odoo(
                         move_id, pending["filename"], local_file, db

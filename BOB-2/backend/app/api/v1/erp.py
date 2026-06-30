@@ -1021,6 +1021,7 @@ class RegisterDocumentRequest(BaseModel):
     ref: str = ""
     raw_text: str = ""
     lines: List[JournalLineRequest] = None
+    file_path: Optional[str] = None
 
 
 @router.get("/partners")
@@ -2420,6 +2421,28 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
         base_url = conn.base_url.rstrip('/')
         odoo_url = f"{base_url}/web#id={move_id}&model=account.move&view_type=form"
 
+        # Attach the uploaded file to the created journal entry if a file path was provided
+        attachment_id = None
+        if payload.file_path and Path(payload.file_path).exists():
+            try:
+                import base64
+                with open(payload.file_path, "rb") as f:
+                    file_data = base64.b64encode(f.read()).decode("utf-8")
+                attachment_id = erp.execute_kw(
+                    "ir.attachment",
+                    "create",
+                    [{
+                        "name": payload.filename,
+                        "type": "binary",
+                        "datas": file_data,
+                        "res_model": "account.move",
+                        "res_id": move_id,
+                    }],
+                )
+                print(f"[register_document] Attachment created: id={attachment_id} for move={move_id}")
+            except Exception as att_err:
+                print(f"[register_document] Attachment upload failed: {att_err}")
+
         return {
             "status": "success",
             "message": "Transaction created successfully in Odoo",
@@ -2428,7 +2451,8 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
             "odoo_url": odoo_url,
             "partner_name": payload.partner_name,
             "journal_name": journal_name,
-            "account_id": expense_account_id
+            "account_id": expense_account_id,
+            "attachment_id": attachment_id,
         }
 
     except Exception as e:

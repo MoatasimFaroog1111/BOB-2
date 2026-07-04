@@ -40,11 +40,12 @@ class AgentFinding:
 
 
 class AccountingMultiAgentOrchestrator:
-    """Lightweight GMAWS-style workflow adapted for BOB accounting flows.
+    """GMAWS-style workflow adapted for BOB accounting flows.
 
-    The uploaded GMAWS project is a general multi-agent framework with robot-design
-    dependencies. This class keeps the useful workflow concept while avoiding heavy
-    robotics packages such as pybullet/trimesh/numpy pins inside the accounting app.
+    The rule-based agents always run first. If an accounting LLM API key is
+    configured, the workflow then calls a real LLM reasoner for deeper accounting,
+    audit, VAT, and ERP review. Without a key, the response explicitly says the
+    LLM layer is disabled; it does not fake LLM output.
     """
 
     def run(
@@ -71,6 +72,25 @@ class AccountingMultiAgentOrchestrator:
         ]
         conflicts = self._detect_conflicts(extracted, findings)
         final_confidence = self._weighted_confidence(findings, conflicts)
+        agent_findings = [finding.to_dict() for finding in findings]
+        final_recommendation = {
+            "confidence_score": final_confidence,
+            "decision": "needs_accountant_review" if conflicts else "ready_for_accountant_approval",
+            "auto_posted_to_erp": False,
+            "approval_required": True,
+            "summary": self._final_summary(extracted, conflicts),
+        }
+
+        from app.services.llm_accounting_reasoner import LLMAccountingReasoner
+
+        llm_reasoning = LLMAccountingReasoner().analyze(
+            text=clean_text,
+            source_type=source_type,
+            extracted_signals=extracted,
+            agent_findings=agent_findings,
+            conflicts=conflicts,
+            final_recommendation=final_recommendation,
+        ).to_dict()
 
         return {
             "status": "success",
@@ -78,15 +98,10 @@ class AccountingMultiAgentOrchestrator:
             "organization_id": organization_id,
             "source_type": source_type,
             "extracted_signals": extracted,
-            "agent_findings": [finding.to_dict() for finding in findings],
+            "agent_findings": agent_findings,
             "conflicts": conflicts,
-            "final_recommendation": {
-                "confidence_score": final_confidence,
-                "decision": "needs_accountant_review" if conflicts else "ready_for_accountant_approval",
-                "auto_posted_to_erp": False,
-                "approval_required": True,
-                "summary": self._final_summary(extracted, conflicts),
-            },
+            "final_recommendation": final_recommendation,
+            "llm_reasoning": llm_reasoning,
         }
 
     def _intake_agent(self, text: str, source_type: str, language: str) -> AgentFinding:

@@ -39,7 +39,6 @@ function AuditIcon({ className }: { className?: string }) {
   );
 }
 
-
 function AccountingAIIcon({ className }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -90,6 +89,7 @@ export function MainNavigation() {
     { href: "/documents", label: t("sidebar.documents"), icon: DocumentIcon },
     { href: "/audit", label: t("sidebar.audit"), icon: AuditIcon },
     { href: "/accounting-ai", label: t("sidebar.accountingAI"), icon: AccountingAIIcon },
+    { href: "/agents", label: "AI Accounting Agents", icon: AccountingAIIcon },
     { href: "/erp", label: t("sidebar.erp"), icon: ERPIcon },
     { href: "/team", label: t("sidebar.home"), icon: TeamIcon },
   ];
@@ -97,22 +97,15 @@ export function MainNavigation() {
   return (
     <aside className="min-h-screen w-72 border-r border-l border-white/10 bg-black/40 p-5 transition-all duration-300 flex flex-col">
       <div className="mb-8">
-        <h1 className="text-xl font-bold text-white">
-          {t("sidebar.title")}
-        </h1>
-
-        <p className="mt-2 text-xs text-gray-400 leading-relaxed">
-          {t("sidebar.subtitle")}
-        </p>
+        <h1 className="text-xl font-bold text-white">{t("sidebar.title")}</h1>
+        <p className="mt-2 text-xs text-gray-400 leading-relaxed">{t("sidebar.subtitle")}</p>
       </div>
 
       {companies.length > 0 && (
         <div className="mb-4">
           <div className="flex items-center gap-2 mb-2">
             <BuildingIcon className="w-4 h-4 text-amber-400/70 flex-shrink-0" />
-            <span className="text-[11px] font-semibold text-amber-400/70 uppercase tracking-wider">
-              {t("sidebar.company")}
-            </span>
+            <span className="text-[11px] font-semibold text-amber-400/70 uppercase tracking-wider">{t("sidebar.company")}</span>
           </div>
           <select
             value={selectedCompanyId ?? ""}
@@ -120,14 +113,10 @@ export function MainNavigation() {
               const val = e.target.value;
               setSelectedCompanyId(val ? parseInt(val, 10) : null);
             }}
-            className="w-full bg-black/50 border border-amber-500/25 text-white text-xs rounded-xl px-3 py-2.5 outline-none
-                       focus:border-amber-400/60 focus:shadow-[0_0_8px_rgba(217,164,65,0.2)] transition-all duration-200
-                       appearance-none cursor-pointer"
+            className="w-full bg-black/50 border border-amber-500/25 text-white text-xs rounded-xl px-3 py-2.5 outline-none focus:border-amber-400/60 focus:shadow-[0_0_8px_rgba(217,164,65,0.2)] transition-all duration-200 appearance-none cursor-pointer"
           >
             {companies.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}{c.currency ? ` (${c.currency})` : ""}
-              </option>
+              <option key={c.id} value={c.id}>{c.name}{c.currency ? ` (${c.currency})` : ""}</option>
             ))}
           </select>
         </div>
@@ -137,17 +126,8 @@ export function MainNavigation() {
         {navItems.map((item) => {
           const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
           const Icon = item.icon;
-
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-all duration-200 ${
-                isActive
-                  ? "bg-gradient-to-r from-amber-500/15 to-yellow-600/10 border border-amber-500/30 text-amber-400 shadow-[0_0_12px_rgba(217,164,65,0.15)]"
-                  : "border border-transparent text-white/70 hover:bg-white/5 hover:text-white hover:border-white/10"
-              }`}
-            >
+            <Link key={item.href} href={item.href} className={`flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-all duration-200 ${isActive ? "bg-gradient-to-r from-amber-500/15 to-yellow-600/10 border border-amber-500/30 text-amber-400 shadow-[0_0_12px_rgba(217,164,65,0.15)]" : "border border-transparent text-white/70 hover:bg-white/5 hover:text-white hover:border-white/10"}`}>
               <Icon className={`w-[18px] h-[18px] flex-shrink-0 ${isActive ? "text-amber-400" : "text-white/40"}`} />
               <span>{item.label}</span>
             </Link>

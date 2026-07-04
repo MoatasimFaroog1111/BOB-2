@@ -9,6 +9,22 @@ from starlette.types import ASGIApp
 from app.core.config import settings
 
 
+def _build_csp() -> str:
+    """Build Content-Security-Policy allowing cross-origin API calls from known frontend origins."""
+    extra_origins = " ".join(o for o in settings.cors_origin_list if o != "'self'")
+    connect_src = f"'self' {extra_origins}".strip() if extra_origins else "'self' *"
+    return (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self'; "
+        f"connect-src {connect_src}; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self';"
+    )
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all HTTP responses."""
 
@@ -30,19 +46,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Referrer policy to limit information leakage
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
-        # Content Security Policy to prevent XSS and data injection
-        csp = (
-            "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-            "style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: blob:; "
-            "font-src 'self'; "
-            "connect-src 'self'; "
-            "frame-ancestors 'none'; "
-            "base-uri 'self'; "
-            "form-action 'self';"
-        )
-        response.headers["Content-Security-Policy"] = csp
+        # Content-Security-Policy — connect-src includes all configured CORS origins
+        # so the frontend can call the backend API even when on a different subdomain.
+        response.headers["Content-Security-Policy"] = _build_csp()
 
         # Permissions Policy to limit browser features
         permissions = (

@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # File upload security
     MAX_UPLOAD_SIZE_MB: int = 10
-    ALLOWED_UPLOAD_EXTENSIONS: str = ".pdf,.png,.jpg,.jpeg,.gif,.webp,.txt,.csv"
+    ALLOWED_UPLOAD_EXTENSIONS: str = ".pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp,.tif,.tiff,.txt,.csv,.tsv,.xlsx,.xls,.xlsm,.ofx,.qfx,.qif,.mt940,.sta"
 
     # Local storage directory (telegram config/uploads, etc). Defaults to <project root>/storage.
     STORAGE_DIR: str = str(PROJECT_ROOT / "storage")

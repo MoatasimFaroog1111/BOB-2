@@ -3551,7 +3551,7 @@ def bank_reconciliation(
 
 
 @router.post("/bank-statement-parse")
-def parse_bank_statement_only(
+async def parse_bank_statement_only(
     statement: UploadFile = File(...),
     date_from: Optional[str] = Form(None),
     date_to: Optional[str] = Form(None),
@@ -3566,8 +3566,15 @@ def parse_bank_statement_only(
         stmt_suffix = Path(statement.filename).suffix.lower() if statement.filename else ".csv"
         logger.info("bank-statement-parse: file extension=%s", stmt_suffix)
 
+        # Read content to check size and reset
+        raw_content = await statement.read()
+        await statement.seek(0)
+        if not raw_content:
+            raise HTTPException(status_code=400, detail="الملف فارغ — يرجى رفع ملف كشف حساب صحيح")
+        logger.info("bank-statement-parse: file_bytes=%d", len(raw_content))
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=stmt_suffix) as f:
-            shutil.copyfileobj(statement.file, f)
+            f.write(raw_content)
             statement_path = f.name
 
         import os as _os
@@ -3608,3 +3615,25 @@ def parse_bank_statement_only(
     finally:
         if statement_path and os.path.exists(statement_path):
             os.remove(statement_path)
+
+@router.get("/debug-parse-status")
+def debug_parse_status():
+    """Debug endpoint — verify bank-statement-parse is reachable and check dependencies."""
+    import sys
+    deps = {}
+    for lib in ["openpyxl", "xlrd", "fitz", "pytesseract", "PIL"]:
+        try:
+            __import__(lib)
+            deps[lib] = "OK"
+        except ImportError as e:
+            deps[lib] = f"MISSING: {e}"
+    return {
+        "status": "reachable",
+        "parse_endpoint": "/api/v1/erp/bank-statement-parse",
+        "allowed_extensions": list(settings.allowed_upload_extensions_list),
+        "max_upload_mb": settings.MAX_UPLOAD_SIZE_MB,
+        "python_version": sys.version,
+        "dependencies": deps,
+        "env": settings.APP_ENV,
+        "cors_origins": settings.cors_origin_list,
+    }

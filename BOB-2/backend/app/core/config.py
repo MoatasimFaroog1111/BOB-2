@@ -53,9 +53,18 @@ class Settings(BaseSettings):
     # Local sentence-transformers compatible embedding model for Accounting AI Matching.
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
 
+    # ChromaDB persistent storage directory for vector similarity matching.
+    CHROMA_PERSIST_DIR: str = ""
+
     @property
     def storage_path(self) -> Path:
         return Path(self.STORAGE_DIR)
+
+    @property
+    def chroma_persist_path(self) -> str:
+        if self.CHROMA_PERSIST_DIR:
+            return self.CHROMA_PERSIST_DIR
+        return str(self.storage_path / "chroma_db")
 
     @property
     def is_production(self) -> bool:

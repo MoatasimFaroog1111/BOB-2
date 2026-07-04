@@ -774,6 +774,44 @@ def match_documents(
                 else:
                     print(f"[DIAGNOSTIC] Skipping Odoo search because amount is missing: amount={doc_amount}")
 
+                # --- Vector DB: index document and compute vector similarity ---
+                vector_scores: dict[int, float] = {}
+                try:
+                    from app.services.vector_db import index_document, search_similar_documents
+                    doc_meta = {
+                        "filename": file.filename or "",
+                        "document_class": doc_class,
+                        "amount": str(doc_amount or ""),
+                        "date": str(doc_date or ""),
+                    }
+                    index_document(doc_desc[:4000], file.filename or "unknown", doc_meta)
+
+                    for move in moves:
+                        move_text = " ".join(filter(None, [
+                            str(move.get("name") or ""),
+                            str(move.get("ref") or ""),
+                            str(move.get("payment_reference") or ""),
+                        ]))
+                        if move_text.strip():
+                            index_document(
+                                move_text,
+                                f"odoo_move_{move.get('id', 0)}",
+                                {"move_id": str(move.get("id", "")), "source": "odoo_move"},
+                            )
+
+                    if doc_desc.strip():
+                        hits = search_similar_documents(doc_desc[:4000], n_results=50)
+                        for hit in hits:
+                            meta = hit.get("metadata", {})
+                            move_id_str = meta.get("move_id", "")
+                            if move_id_str and meta.get("source") == "odoo_move":
+                                try:
+                                    vector_scores[int(move_id_str)] = hit.get("score", 0.0)
+                                except (ValueError, TypeError):
+                                    pass
+                except Exception as vec_err:
+                    print(f"[DIAGNOSTIC] Vector DB scoring skipped: {vec_err}")
+
                 print(f"[DIAGNOSTIC] Comparing with {len(moves)} Odoo moves...")
 
                 for move in moves:
@@ -783,23 +821,25 @@ def match_documents(
                     ref_s = _reference_score(doc_desc, move)
                     desc_s = _description_score(doc_desc, move)
                     partner_s = _partner_score(fields, doc_desc, move)
+                    vec_s = vector_scores.get(move.get("id", 0), 0.0)
 
                     # Print compare info if amount is close (score > 0) or date matches (score > 0)
                     if amount_s > 0 or date_s > 0:
-                        print(f"  -> {move.get('name')}: AmountScore={amount_s:.2f} (Odoo={move.get('amount_total')}, Doc={doc_amount}), DateScore={date_s:.2f} (Odoo={move.get('date')}, Doc={doc_date})")
+                        print(f"  -> {move.get('name')}: AmountScore={amount_s:.2f} (Odoo={move.get('amount_total')}, Doc={doc_amount}), DateScore={date_s:.2f} (Odoo={move.get('date')}, Doc={doc_date}), VectorScore={vec_s:.2f}")
 
                     if amount_s <= 0:
                         continue
 
-                    if date_s <= 0 and ref_s < 0.80 and desc_s < 0.55:
+                    if date_s <= 0 and ref_s < 0.80 and desc_s < 0.55 and vec_s < 0.70:
                         continue
 
                     final_score = (
-                        amount_s * 45
-                        + date_s * 25
-                        + ref_s * 15
-                        + partner_s * 10
+                        amount_s * 35
+                        + date_s * 20
+                        + ref_s * 12
+                        + partner_s * 8
                         + desc_s * 5
+                        + vec_s * 20
                     )
 
                     if final_score < 45:
@@ -887,6 +927,7 @@ def match_documents(
                             "reference_score": round(ref_s * 100, 1),
                             "partner_score": round(partner_s * 100, 1),
                             "description_score": round(desc_s * 100, 1),
+                            "vector_similarity_score": round(vec_s * 100, 1),
                         }
                     })
 
@@ -1227,6 +1268,35 @@ def _suggest_lines_from_similar_move(
     signal_text = _normalize_text(f"{filename} {raw_text}")
     signal_partner = _normalize_text(partner_name)
 
+    # Vector DB: pre-compute semantic similarity scores for all candidate moves
+    vector_move_scores: dict[int, float] = {}
+    try:
+        from app.services.vector_db import index_document, search_similar_documents
+        doc_query = f"{filename} {raw_text} {partner_name}"
+        for move in moves:
+            move_text = " ".join(filter(None, [
+                str(move.get("name") or ""),
+                str(move.get("ref") or ""),
+            ]))
+            if move_text.strip():
+                index_document(
+                    move_text,
+                    f"odoo_move_{move.get('id', 0)}",
+                    {"move_id": str(move.get("id", "")), "source": "odoo_move"},
+                )
+        if doc_query.strip():
+            hits = search_similar_documents(doc_query[:4000], n_results=50)
+            for hit in hits:
+                meta = hit.get("metadata", {})
+                move_id_str = meta.get("move_id", "")
+                if move_id_str and meta.get("source") == "odoo_move":
+                    try:
+                        vector_move_scores[int(move_id_str)] = hit.get("score", 0.0)
+                    except (ValueError, TypeError):
+                        pass
+    except Exception:
+        pass
+
     best_move = None
     best_score = 0.0
     for move in moves:
@@ -1237,13 +1307,14 @@ def _suggest_lines_from_similar_move(
         partner_field = move.get("partner_id")
         candidate_partner_name = partner_field[1] if isinstance(partner_field, list) and len(partner_field) > 1 else ""
         partner_score = _safe_ratio(signal_partner, _normalize_text(candidate_partner_name))
+        vec_score = vector_move_scores.get(move.get("id", 0), 0.0)
 
-        score = (amount_score * 0.45) + (text_score * 0.35) + (partner_score * 0.20)
+        score = (amount_score * 0.35) + (text_score * 0.25) + (partner_score * 0.15) + (vec_score * 0.25)
         if score > best_score:
             best_score = score
             best_move = move
 
-    if not best_move or best_score < 0.55:
+    if not best_move or best_score < 0.50:
         return None
 
     move_line_ids = [lid for lid in (best_move.get("line_ids") or []) if isinstance(lid, int)]

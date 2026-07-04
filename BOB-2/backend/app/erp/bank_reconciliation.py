@@ -322,6 +322,7 @@ def parse_pdf_file(file_path: str) -> List[Transaction]:
 
 def parse_file(file_path: str) -> List[Transaction]:
     ext = Path(file_path).suffix.lower()
+    logger.info("parse_file: starting ext=%s path=%s", ext, file_path)
     if ext in {".xlsx", ".xlsm"}:
         transactions = parse_xlsx_file(file_path)
     elif ext == ".xls":
@@ -341,6 +342,7 @@ def parse_file(file_path: str) -> List[Transaction]:
     else:
         supported = ", ".join(get_supported_statement_extensions())
         raise ValueError(f"Unsupported bank statement file format '{ext}'. Supported formats: {supported}")
+    logger.info("parse_file: completed, extracted %d transactions", len(transactions))
     if not transactions:
         supported = ", ".join(get_supported_statement_extensions())
         raise ValueError(f"No real bank transactions were extracted from the uploaded document. Supported formats: {supported}.")

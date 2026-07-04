@@ -3559,16 +3559,26 @@ def parse_bank_statement_only(
 ):
     """Parse bank statement file only — no Odoo connection required."""
     import tempfile
+    import time
     statement_path = ""
+    logger.info("bank-statement-parse: received file=%s size=%s", statement.filename, getattr(statement, 'size', 'unknown'))
     try:
-        stmt_suffix = Path(statement.filename).suffix if statement.filename else ".csv"
+        stmt_suffix = Path(statement.filename).suffix.lower() if statement.filename else ".csv"
+        logger.info("bank-statement-parse: file extension=%s", stmt_suffix)
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=stmt_suffix) as f:
             shutil.copyfileobj(statement.file, f)
             statement_path = f.name
 
-        statement_txns = parse_statement_file(statement_path)
+        import os as _os
+        file_size = _os.path.getsize(statement_path)
+        logger.info("bank-statement-parse: saved to temp=%s size_bytes=%d", statement_path, file_size)
 
-        # Build a reconciliation result with only statement data, no ledger
+        t0 = time.time()
+        statement_txns = parse_statement_file(statement_path)
+        elapsed = time.time() - t0
+        logger.info("bank-statement-parse: parsed %d transactions in %.2fs", len(statement_txns), elapsed)
+
         return {
             "status": "success",
             "statement_only": [t.model_dump() for t in statement_txns],
@@ -3583,7 +3593,14 @@ def parse_bank_statement_only(
             "odoo_raw_count": 0,
             "date_range_used": {"from": date_from, "to": date_to},
         }
+    except ValueError as e:
+        logger.warning("bank-statement-parse: ValueError: %s", str(e))
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e)
+        )
     except Exception as e:
+        logger.exception("bank-statement-parse: unexpected error: %s", str(e))
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Bank statement parsing failed: {str(e)}"

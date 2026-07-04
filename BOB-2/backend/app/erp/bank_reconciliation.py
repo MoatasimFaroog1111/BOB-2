@@ -2,12 +2,15 @@
 import csv
 import io
 import json
+import logging
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 SPREADSHEET_EXTENSIONS = {".xlsx", ".xls", ".xlsm"}
 DELIMITED_TEXT_EXTENSIONS = {".csv", ".tsv", ".txt"}
@@ -362,7 +365,85 @@ def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
     return transactions
 
 
-def _smart_match(statement_only: List[Transaction], ledger_only: List[Transaction], confidence_threshold: float = 0.6) -> List[SmartMatch]:
+def _vector_smart_match(
+    statement_only: List[Transaction],
+    ledger_only: List[Transaction],
+    confidence_threshold: float = 0.6,
+) -> List[SmartMatch]:
+    """Use Vector DB (ChromaDB) to find semantically similar transaction pairs."""
+    try:
+        from app.services.vector_db import (
+            index_bank_transactions,
+            search_similar_transactions,
+        )
+    except Exception:
+        logger.debug("Vector DB unavailable; skipping vector smart match.")
+        return []
+
+    ledger_dicts = [
+        {"date": t.date, "description": t.description, "amount": t.amount, "row_number": t.row_number}
+        for t in ledger_only
+    ]
+    index_bank_transactions(ledger_dicts, source="ledger")
+
+    results: List[SmartMatch] = []
+    used_ledger_rows: set[int] = set()
+
+    for s_txn in statement_only:
+        query = f"{s_txn.date} {s_txn.description} {s_txn.amount}"
+        hits = search_similar_transactions(
+            query_text=query,
+            source_filter="ledger",
+            n_results=5,
+            amount=s_txn.amount,
+        )
+        for hit in hits:
+            meta = hit.get("metadata", {})
+            ledger_row = int(meta.get("row_number", 0))
+            if ledger_row in used_ledger_rows:
+                continue
+
+            vector_score = hit.get("score", 0.0)
+            amount_match = abs(s_txn.amount - float(meta.get("amount", 0))) < 0.01
+            amount_close = abs(s_txn.amount - float(meta.get("amount", 0))) / max(abs(s_txn.amount), 1.0) < 0.05
+
+            combined = vector_score
+            if amount_match:
+                combined = min(0.99, vector_score * 0.5 + 0.5)
+            elif amount_close:
+                combined = min(0.95, vector_score * 0.6 + 0.35)
+
+            if combined < confidence_threshold:
+                continue
+
+            matched_ledger = next(
+                (t for t in ledger_only if t.row_number == ledger_row),
+                None,
+            )
+            if matched_ledger is None:
+                continue
+
+            used_ledger_rows.add(ledger_row)
+            reason = f"Vector DB similarity={vector_score:.2f}"
+            if amount_match:
+                reason += " (exact amount)"
+            results.append(SmartMatch(
+                statement_txn=s_txn,
+                ledger_txn=matched_ledger,
+                confidence=round(combined, 2),
+                reason=reason,
+            ))
+            break
+
+    return results
+
+
+def _llm_smart_match(
+    statement_only: List[Transaction],
+    ledger_only: List[Transaction],
+    confidence_threshold: float = 0.6,
+) -> List[SmartMatch]:
+    """Original LLM-based smart matching as fallback."""
     if not statement_only or not ledger_only:
         return []
     stmt_subset = statement_only[:30]
@@ -402,6 +483,27 @@ def _smart_match(statement_only: List[Transaction], ledger_only: List[Transactio
         return results
     except Exception:
         return []
+
+
+def _smart_match(
+    statement_only: List[Transaction],
+    ledger_only: List[Transaction],
+    confidence_threshold: float = 0.6,
+) -> List[SmartMatch]:
+    """Hybrid smart matching: Vector DB first, then LLM fallback for unmatched."""
+    if not statement_only or not ledger_only:
+        return []
+
+    vector_matches = _vector_smart_match(statement_only, ledger_only, confidence_threshold)
+
+    matched_stmt_rows = {m.statement_txn.row_number for m in vector_matches}
+    matched_ledg_rows = {m.ledger_txn.row_number for m in vector_matches}
+    remaining_stmt = [t for t in statement_only if t.row_number not in matched_stmt_rows]
+    remaining_ledg = [t for t in ledger_only if t.row_number not in matched_ledg_rows]
+
+    llm_matches = _llm_smart_match(remaining_stmt, remaining_ledg, confidence_threshold)
+
+    return vector_matches + llm_matches
 
 
 def _suggest_accounts(statement_only: List[Transaction]) -> List[Transaction]:

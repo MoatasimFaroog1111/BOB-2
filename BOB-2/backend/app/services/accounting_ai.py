@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import re
 from dataclasses import dataclass
@@ -10,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.ai_accounting import AIAccountingSuggestion, AIDecisionAuditLog, AIDocumentEmbedding, AIDocumentMatch
+
+logger = logging.getLogger(__name__)
 
 DOC_LABELS = {"invoice": ["invoice", "tax invoice", "فاتورة", "ضريبية"], "receipt": ["receipt", "ايصال", "إيصال", "سند قبض"], "payment_voucher": ["payment voucher", "سند صرف", "voucher"], "purchase_order": ["purchase order", "po", "أمر شراء"], "bank_statement": ["bank statement", "كشف حساب", "حساب بنكي", "iban"], "journal_entry": ["journal entry", "قيد يومية", "debit", "credit", "مدين", "دائن"], "trial_balance": ["trial balance", "ميزان مراجعة"], "vendor_bill": ["vendor bill", "supplier bill", "فاتورة مورد"]}
 CATEGORIES = {"payment": ["paid", "payment", "سداد", "دفع", "تحويل"], "accrual": ["accrual", "accrued", "مستحق"], "expense": ["expense", "fee", "rent", "مصروف", "رسوم", "ايجار", "إيجار"], "asset": ["asset", "fixed asset", "أصل", "اصول"], "liability": ["liability", "payable", "التزام", "دائنون"], "revenue": ["revenue", "sales", "income", "مبيعات", "ايراد", "إيراد"], "bank_transaction": ["bank", "iban", "transfer", "بنك", "تحويل"], "payroll": ["salary", "payroll", "wage", "راتب", "رواتب"], "petty_cash": ["petty cash", "cash", "عهدة", "نقد"]}
@@ -79,6 +82,24 @@ class AccountingAIMatchingService:
         embedding = AIDocumentEmbedding(organization_id=organization_id, document_id=document_id, source_type=source_type, source_reference=source_reference, text_hash=hashlib.sha256(clean_text.encode("utf-8")).hexdigest(), text_preview=clean_text[:2000], embedding_model=model_name, embedding_dimension=len(vector), embedding_vector=vector, classification=classification, confidence_score=classification["confidence_score"])
         self.db.add(embedding)
         self.db.flush()
+
+        # Index in ChromaDB for fast vector search
+        try:
+            from app.services.vector_db import index_accounting_embedding
+            index_accounting_embedding(
+                text=clean_text,
+                embedding_id=embedding.id,
+                metadata={
+                    "source_type": source_type,
+                    "document_type": classification.get("document_type", ""),
+                    "confidence": str(classification["confidence_score"]),
+                },
+                org_id=organization_id,
+                vector=vector,
+            )
+        except Exception as exc:
+            logger.debug("ChromaDB indexing skipped: %s", exc)
+
         matches = self._create_matches(embedding, vector, classification)
         suggestion = self._create_journal_suggestion(embedding, classification)
         self._audit(embedding.organization_id, "document_analysis", "ai_document_embeddings", str(embedding.id), embedding.confidence_score, "Classified and embedded accounting document text.", {"classification": classification})
@@ -99,7 +120,40 @@ class AccountingAIMatchingService:
         return {"document_type": document_type, "detected_party": party_match.group(1).strip()[:160] if party_match else None, "vat_relevant": vat_relevant, "financial_categories": categories, "confidence_score": round(confidence, 4), "signals": {"document_type_scores": doc_scores, "category_scores": category_scores}}
 
     def _create_matches(self, embedding: AIDocumentEmbedding, vector: list[float], classification: dict[str, Any]) -> list[AIDocumentMatch]:
-        candidates = self.db.query(AIDocumentEmbedding).filter(AIDocumentEmbedding.organization_id == embedding.organization_id, AIDocumentEmbedding.id != embedding.id).order_by(AIDocumentEmbedding.created_at.desc()).limit(100).all()
+        # Try ChromaDB for fast ANN search first, then fall back to SQL scan
+        chroma_candidate_ids: set[int] = set()
+        try:
+            from app.services.vector_db import search_accounting_embeddings
+            hits = search_accounting_embeddings(
+                vector=vector,
+                org_id=embedding.organization_id,
+                n_results=50,
+                exclude_id=embedding.id,
+            )
+            for hit in hits:
+                doc_id_str = hit.get("id", "")
+                if doc_id_str.startswith("ai_emb_"):
+                    parts = doc_id_str.split("_")
+                    if len(parts) >= 4:
+                        try:
+                            chroma_candidate_ids.add(int(parts[-1]))
+                        except (ValueError, TypeError):
+                            pass
+        except Exception as exc:
+            logger.debug("ChromaDB search skipped, falling back to SQL: %s", exc)
+
+        if chroma_candidate_ids:
+            candidates = self.db.query(AIDocumentEmbedding).filter(
+                AIDocumentEmbedding.organization_id == embedding.organization_id,
+                AIDocumentEmbedding.id != embedding.id,
+                AIDocumentEmbedding.id.in_(chroma_candidate_ids),
+            ).all()
+        else:
+            candidates = self.db.query(AIDocumentEmbedding).filter(
+                AIDocumentEmbedding.organization_id == embedding.organization_id,
+                AIDocumentEmbedding.id != embedding.id,
+            ).order_by(AIDocumentEmbedding.created_at.desc()).limit(100).all()
+
         matches: list[AIDocumentMatch] = []
         for candidate in candidates:
             similarity = cosine(vector, candidate.embedding_vector)
@@ -107,7 +161,7 @@ class AccountingAIMatchingService:
                 continue
             match_type = self._match_type(classification["document_type"], candidate.classification.get("document_type"))
             explanation = f"Semantic similarity {similarity:.2f} between {classification['document_type']} and {candidate.classification.get('document_type')} with comparable accounting wording/party context."
-            match = AIDocumentMatch(organization_id=embedding.organization_id, source_embedding_id=embedding.id, target_embedding_id=candidate.id, match_type=match_type, confidence_score=round(min(0.99, similarity), 4), similarity_score=round(similarity, 4), explanation=explanation, status="pending", match_metadata={"source_type": embedding.source_type, "target_source_type": candidate.source_type})
+            match = AIDocumentMatch(organization_id=embedding.organization_id, source_embedding_id=embedding.id, target_embedding_id=candidate.id, match_type=match_type, confidence_score=round(min(0.99, similarity), 4), similarity_score=round(similarity, 4), explanation=explanation, status="pending", match_metadata={"source_type": embedding.source_type, "target_source_type": candidate.source_type, "vector_db_accelerated": bool(chroma_candidate_ids)})
             self.db.add(match)
             matches.append(match)
             self._audit(embedding.organization_id, "match_suggested", "ai_document_matches", None, match.confidence_score, explanation, {"target_embedding_id": candidate.id})

@@ -252,12 +252,23 @@ export default function ReconciliationPageClient() {
     if (selectedCompanyId) formData.append("company_id", String(selectedCompanyId));
     if (dateFrom) formData.append("date_from", dateFrom);
     if (dateTo) formData.append("date_to", dateTo);
+
+    // If includeBankAccount=false, use the parse-only endpoint (no Odoo connection needed)
+    if (!includeBankAccount) {
+      const res = await fetch(`${API_BASE_URL}/api/v1/erp/bank-statement-parse`, { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || (isAr ? "فشل قراءة الملف" : "Failed to parse file"));
+      setResult(data);
+      return;
+    }
+
+    // If includeBankAccount=true, use the full endpoint with Odoo matching
     if (selectedPartnerId) {
       formData.append("partner_id", selectedPartnerId);
       formData.append("selected_partner_id", selectedPartnerId);
       formData.append("odoo_partner_id", selectedPartnerId);
     }
-    if (includeBankAccount && selectedBankAccountId) {
+    if (selectedBankAccountId) {
       formData.append("account_id", selectedBankAccountId);
       formData.append("bank_account_id", selectedBankAccountId);
       formData.append("google_account_id", selectedBankAccountId);

@@ -3548,3 +3548,46 @@ def bank_reconciliation(
     finally:
         if statement_path and os.path.exists(statement_path):
             os.remove(statement_path)
+
+
+@router.post("/bank-statement-parse")
+def parse_bank_statement_only(
+    statement: UploadFile = File(...),
+    date_from: Optional[str] = Form(None),
+    date_to: Optional[str] = Form(None),
+    company_id: Optional[int] = Form(None),
+):
+    """Parse bank statement file only — no Odoo connection required."""
+    import tempfile
+    statement_path = ""
+    try:
+        stmt_suffix = Path(statement.filename).suffix if statement.filename else ".csv"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=stmt_suffix) as f:
+            shutil.copyfileobj(statement.file, f)
+            statement_path = f.name
+
+        statement_txns = parse_statement_file(statement_path)
+
+        # Build a reconciliation result with only statement data, no ledger
+        return {
+            "status": "success",
+            "statement_only": [t.model_dump() for t in statement_txns],
+            "ledger_only": [],
+            "matched": [],
+            "smart_matched": [],
+            "statement_total": round(sum(t.amount for t in statement_txns), 2),
+            "ledger_total": 0.0,
+            "difference": round(sum(t.amount for t in statement_txns), 2),
+            "statement_count": len(statement_txns),
+            "ledger_count": 0,
+            "odoo_raw_count": 0,
+            "date_range_used": {"from": date_from, "to": date_to},
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Bank statement parsing failed: {str(e)}"
+        )
+    finally:
+        if statement_path and os.path.exists(statement_path):
+            os.remove(statement_path)

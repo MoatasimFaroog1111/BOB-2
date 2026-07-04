@@ -50,6 +50,14 @@ class Settings(BaseSettings):
     # LLM provider (DeepSeek) API key. Must be provided via environment / .env.
     DEEPSEEK_API_KEY: str = ""
 
+    # Optional real LLM layer for accounting agents. It is disabled automatically
+    # when no API key is configured, so local/test runs never fake LLM output.
+    ACCOUNTING_LLM_PROVIDER: str = "deepseek"
+    ACCOUNTING_LLM_MODEL: str = "deepseek-chat"
+    ACCOUNTING_LLM_API_URL: str = "https://api.deepseek.com/chat/completions"
+    ACCOUNTING_LLM_API_KEY: str = ""
+    ACCOUNTING_LLM_TIMEOUT_SECONDS: int = 45
+
     # Local sentence-transformers compatible embedding model for Accounting AI Matching.
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
 

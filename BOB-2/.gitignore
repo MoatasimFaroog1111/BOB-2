@@ -8,3 +8,7 @@ dist/
 build/
 storage/*
 !storage/.gitkeep
+
+# Local databases
+*.db
+*.sqlite3

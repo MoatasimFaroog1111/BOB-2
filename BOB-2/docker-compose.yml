@@ -37,7 +37,7 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-}
       TRUSTED_HOSTS: ${TRUSTED_HOSTS:-}
       REQUIRE_HTTPS: ${REQUIRE_HTTPS:-false}
-      GROK_API_KEY: ${GROK_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       GUARDIAN_SEED_PASSWORD: ${GUARDIAN_SEED_PASSWORD:-}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
@@ -49,12 +49,13 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # NEXT_PUBLIC_* vars are baked in at build time, so they must be passed
+        # as build args. Must be the externally-accessible backend URL.
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
     restart: unless-stopped
     depends_on:
       - backend
-    environment:
-      # Must be the externally-accessible backend URL (browser-side requests).
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "${FRONTEND_PORT:-3000}:3000"
 

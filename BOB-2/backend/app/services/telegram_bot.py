@@ -1,4 +1,5 @@
 import os
+import logging
 import json
 import time
 import threading
@@ -13,6 +14,8 @@ from app.models.core import ERPConnection
 from app.security.encryption import encrypt_value, decrypt_value
 from app.api.v1.erp import propose_transaction, ProposeTransactionRequest, register_document, RegisterDocumentRequest, JournalLineRequest
 from app.erp.document_ai import GuardianDocumentAI
+
+logger = logging.getLogger(__name__)
 
 CONFIG_PATH = settings.storage_path / "telegram_config.json"
 UPLOAD_DIR = settings.storage_path / "telegram_uploads"
@@ -51,7 +54,7 @@ def get_telegram_token() -> Optional[str]:
                     return decrypted
         except Exception as e:
             # Don't log the actual error to avoid leaking sensitive info
-            print(f"[Telegram Bot] Error reading config: Configuration access failed")
+            logger.info(f"[Telegram Bot] Error reading config: Configuration access failed")
     return None
 
 
@@ -68,7 +71,7 @@ def save_telegram_config(token: str, is_active: bool = True) -> bool:
         CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
         return True
     except Exception as e:
-        print(f"[Telegram Bot] Failed to save config: {e}")
+        logger.info(f"[Telegram Bot] Failed to save config: {e}")
         return False
 
 
@@ -79,7 +82,7 @@ def clear_telegram_config() -> bool:
             CONFIG_PATH.unlink()
         return True
     except Exception as e:
-        print(f"[Telegram Bot] Failed to clear config: {e}")
+        logger.info(f"[Telegram Bot] Failed to clear config: {e}")
         return False
 
 def send_telegram_request(token: str, method: str, payload: dict) -> Optional[dict]:
@@ -95,7 +98,7 @@ def send_telegram_request(token: str, method: str, payload: dict) -> Optional[di
         with urllib.request.urlopen(req, timeout=15) as res:
             return json.loads(res.read().decode("utf-8"))
     except Exception as e:
-        print(f"[Telegram Bot] API call {method} failed: {e}")
+        logger.info(f"[Telegram Bot] API call {method} failed: {e}")
         return None
 
 def download_file(token: str, file_path: str, dest_path: Path):
@@ -104,7 +107,7 @@ def download_file(token: str, file_path: str, dest_path: Path):
     try:
         urllib.request.urlretrieve(url, str(dest_path))
     except Exception as e:
-        print(f"[Telegram Bot] Failed to download file: {e}")
+        logger.info(f"[Telegram Bot] Failed to download file: {e}")
 
 def process_document(token: str, chat_id: int, file_id: str, filename: str):
     # 1. Get file path from Telegram
@@ -215,7 +218,7 @@ def process_document(token: str, chat_id: int, file_id: str, filename: str):
         })
         
     except Exception as e:
-        print(f"[Telegram Bot] Error processing document: {e}")
+        logger.info(f"[Telegram Bot] Error processing document: {e}")
         send_telegram_request(token, "sendMessage", {
             "chat_id": chat_id,
             "text": f"❌ حدث خطأ أثناء معالجة المستند: {str(e)}"
@@ -256,7 +259,7 @@ def _upload_attachment_to_odoo(move_id: int, filename: str, file_path: str, db_s
             "res_id": move_id,
         }],
     )
-    print(f"[Telegram Bot] Attachment uploaded: id={attachment_id} for move={move_id}")
+    logger.info(f"[Telegram Bot] Attachment uploaded: id={attachment_id} for move={move_id}")
     return attachment_id
 
 
@@ -338,7 +341,7 @@ def handle_callback_query(token: str, query: dict):
                         move_id, pending["filename"], local_file, db
                     )
                 except Exception as att_err:
-                    print(f"[Telegram Bot] Attachment upload failed: {att_err}")
+                    logger.info(f"[Telegram Bot] Attachment upload failed: {att_err}")
             
             del PENDING_ENTRIES[chat_id]
             
@@ -360,7 +363,7 @@ def handle_callback_query(token: str, query: dict):
             })
             
         except Exception as e:
-            print(f"[Telegram Bot] Registration failed: {e}")
+            logger.info(f"[Telegram Bot] Registration failed: {e}")
             send_telegram_request(token, "sendMessage", {
                 "chat_id": chat_id,
                 "text": f"❌ فشل ترحيل القيد إلى Odoo: {str(e)}"
@@ -369,7 +372,7 @@ def handle_callback_query(token: str, query: dict):
             db.close()
 
 def bot_polling_loop(token: str):
-    print(f"[Telegram Bot] Polling loop started for bot token: {token[:10]}...")
+    logger.info(f"[Telegram Bot] Polling loop started for bot token: {token[:10]}...")
     last_update_id = 0
     
     while not stop_event.is_set():
@@ -455,13 +458,13 @@ def start_telegram_bot():
     global bot_thread, stop_event
     token = get_telegram_token()
     if not token:
-        print("[Telegram Bot] No active bot token configured. Bot is disabled.")
+        logger.info("[Telegram Bot] No active bot token configured. Bot is disabled.")
         return
         
     stop_event.clear()
     bot_thread = threading.Thread(target=bot_polling_loop, args=(token,), daemon=True)
     bot_thread.start()
-    print("[Telegram Bot] Service successfully started in background thread.")
+    logger.info("[Telegram Bot] Service successfully started in background thread.")
 
 def stop_telegram_bot():
     global bot_thread, stop_event
@@ -469,4 +472,4 @@ def stop_telegram_bot():
     if bot_thread:
         bot_thread.join(timeout=3)
         bot_thread = None
-        print("[Telegram Bot] Service successfully stopped.")
+        logger.info("[Telegram Bot] Service successfully stopped.")

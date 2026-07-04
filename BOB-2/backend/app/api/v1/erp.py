@@ -1,4 +1,5 @@
 import copy
+import logging
 import json
 import math
 import os
@@ -18,6 +19,8 @@ from app.db.database import get_db
 from app.models.core import ERPConnection
 from app.security.file_validation import validate_upload_files, sanitize_filename, FileValidationError
 from app.erp.factory import get_erp_provider
+
+logger = logging.getLogger(__name__)
 from app.security.encryption import encrypt_value, decrypt_value
 from app.erp.discovery import run_discovery_orchestrator, load_financial_kb
 from app.erp.document_ai import GuardianDocumentAI
@@ -657,7 +660,7 @@ def match_documents(
     ai = GuardianDocumentAI()
     results = []
 
-    print(f"=== START MATCHING DIAGNOSTIC FOR {len(files)} FILES ===")
+    logger.info(f"=== START MATCHING DIAGNOSTIC FOR {len(files)} FILES ===")
     for file in files:
         try:
             suffix = Path(file.filename).suffix if file.filename else ""
@@ -689,30 +692,30 @@ def match_documents(
                 doc_class = analysis.get("document_class") or fields.get("document_class") or "unknown"
                 doc_desc = analysis.get("raw_text_preview") or analysis.get("raw_text") or ""
 
-                print(f"[DIAGNOSTIC] File: {file.filename}")
-                print(f"[DIAGNOSTIC] Extracted Class: {doc_class}")
-                print(f"[DIAGNOSTIC] Extracted Amount: {doc_amount} (Type: {type(doc_amount)})")
-                print(f"[DIAGNOSTIC] Initial Extracted Date: {doc_date}")
+                logger.info(f"[DIAGNOSTIC] File: {file.filename}")
+                logger.info(f"[DIAGNOSTIC] Extracted Class: {doc_class}")
+                logger.info(f"[DIAGNOSTIC] Extracted Amount: {doc_amount} (Type: {type(doc_amount)})")
+                logger.info(f"[DIAGNOSTIC] Initial Extracted Date: {doc_date}")
 
                 if not doc_date:
                     text_month_pat = r'\b(\d{1,2})\s+(يناير|فبراير|مارس|أبريل|ابريل|مايو|يونيو|يونيه|يوليو|يوليه|أغسطس|اغسطس|سبتمبر|أكتوبر|اكتوبر|نوفمبر|ديسمبر|Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{4})\b'
                     match = re.search(text_month_pat, doc_desc, re.IGNORECASE)
                     if match:
                         doc_date = match.group(0)
-                        print(f"[DIAGNOSTIC] Fallback Date Match (text month): {doc_date}")
+                        logger.info(f"[DIAGNOSTIC] Fallback Date Match (text month): {doc_date}")
                     else:
                         match = re.search(r"\b(\d{1,2})[-/](\d{1,2})[-/](\d{4})\b", doc_desc)
                         if match:
                             doc_date = match.group(0)
-                            print(f"[DIAGNOSTIC] Fallback Date Match (DD-MM-YYYY): {doc_date}")
+                            logger.info(f"[DIAGNOSTIC] Fallback Date Match (DD-MM-YYYY): {doc_date}")
                         else:
                             match = re.search(r"\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b", doc_desc)
                             if match:
                                 doc_date = match.group(0)
-                                print(f"[DIAGNOSTIC] Fallback Date Match (YYYY-MM-DD): {doc_date}")
+                                logger.info(f"[DIAGNOSTIC] Fallback Date Match (YYYY-MM-DD): {doc_date}")
 
                 norm_doc_date = _normalize_date(doc_date)
-                print(f"[DIAGNOSTIC] Normalized Doc Date: '{norm_doc_date}'")
+                logger.info(f"[DIAGNOSTIC] Normalized Doc Date: '{norm_doc_date}'")
 
                 matched_moves = []
                 moves = []
@@ -745,7 +748,7 @@ def match_documents(
                             "&", ("invoice_date", ">=", min_date), ("invoice_date", "<=", max_date)
                         ])
                         
-                    print(f"[DIAGNOSTIC] Fetching moves directly from Odoo matching: date={norm_doc_date}, amount_range=[{min_val:.2f}, {max_val:.2f}]")
+                    logger.info(f"[DIAGNOSTIC] Fetching moves directly from Odoo matching: date={norm_doc_date}, amount_range=[{min_val:.2f}, {max_val:.2f}]")
                     try:
                         moves = erp.execute_kw(
                             "account.move",
@@ -768,11 +771,11 @@ def match_documents(
                                 "limit": 50
                             }
                         )
-                        print(f"[DIAGNOSTIC] Odoo database search returned {len(moves)} moves.")
+                        logger.info(f"[DIAGNOSTIC] Odoo database search returned {len(moves)} moves.")
                     except Exception as e:
-                        print(f"[DIAGNOSTIC] Odoo search failed: {e}")
+                        logger.info(f"[DIAGNOSTIC] Odoo search failed: {e}")
                 else:
-                    print(f"[DIAGNOSTIC] Skipping Odoo search because amount is missing: amount={doc_amount}")
+                    logger.info(f"[DIAGNOSTIC] Skipping Odoo search because amount is missing: amount={doc_amount}")
 
                 # --- Vector DB: index document and compute vector similarity ---
                 vector_scores: dict[int, float] = {}
@@ -810,9 +813,9 @@ def match_documents(
                                 except (ValueError, TypeError):
                                     pass
                 except Exception as vec_err:
-                    print(f"[DIAGNOSTIC] Vector DB scoring skipped: {vec_err}")
+                    logger.info(f"[DIAGNOSTIC] Vector DB scoring skipped: {vec_err}")
 
-                print(f"[DIAGNOSTIC] Comparing with {len(moves)} Odoo moves...")
+                logger.info(f"[DIAGNOSTIC] Comparing with {len(moves)} Odoo moves...")
 
                 for move in moves:
                     amount_s = _amount_score(doc_amount, move.get("amount_total"))
@@ -825,7 +828,7 @@ def match_documents(
 
                     # Print compare info if amount is close (score > 0) or date matches (score > 0)
                     if amount_s > 0 or date_s > 0:
-                        print(f"  -> {move.get('name')}: AmountScore={amount_s:.2f} (Odoo={move.get('amount_total')}, Doc={doc_amount}), DateScore={date_s:.2f} (Odoo={move.get('date')}, Doc={doc_date}), VectorScore={vec_s:.2f}")
+                        logger.info(f"  -> {move.get('name')}: AmountScore={amount_s:.2f} (Odoo={move.get('amount_total')}, Doc={doc_amount}), DateScore={date_s:.2f} (Odoo={move.get('date')}, Doc={doc_date}), VectorScore={vec_s:.2f}")
 
                     if amount_s <= 0:
                         continue
@@ -843,7 +846,7 @@ def match_documents(
                     )
 
                     if final_score < 45:
-                        print(f"    * Move {move.get('name')} skipped: final score {final_score:.1f} < 45")
+                        logger.info(f"    * Move {move.get('name')} skipped: final score {final_score:.1f} < 45")
                         continue
 
                     journal = move.get("journal_id")
@@ -871,7 +874,7 @@ def match_documents(
                                     "url": f"{base_url}/web/content/{att.get('id')}?download=true"
                                 })
                         except Exception as e:
-                            print(f"[DIAGNOSTIC] Failed to fetch Odoo attachments: {e}")
+                            logger.info(f"[DIAGNOSTIC] Failed to fetch Odoo attachments: {e}")
 
                     base_url = conn.base_url.rstrip('/')
                     odoo_url = f"{base_url}/web#id={move.get('id')}&model=account.move&view_type=form"
@@ -905,7 +908,7 @@ def match_documents(
                                     "product_name": product_name
                                 })
                         except Exception as e:
-                            print(f"[DIAGNOSTIC] Failed to fetch Odoo move lines: {e}")
+                            logger.info(f"[DIAGNOSTIC] Failed to fetch Odoo move lines: {e}")
 
                     matched_moves.append({
                         "id": move.get("id"),
@@ -1456,16 +1459,16 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
                 partners_list, payload.partner_name or ""
             )
             if suggested_partner_id:
-                print(f"[DIAGNOSTIC] Closest partner by uploaded name: {suggested_partner_name} ({partner_match_score:.2f})")
+                logger.info(f"[DIAGNOSTIC] Closest partner by uploaded name: {suggested_partner_name} ({partner_match_score:.2f})")
 
             if not suggested_partner_id:
                 suggested_partner_id, suggested_partner_name, partner_match_score = _closest_partner_by_name(
                     partners_list, f"{payload.filename} {payload.raw_text}"
                 )
                 if suggested_partner_id:
-                    print(f"[DIAGNOSTIC] Closest partner by document text: {suggested_partner_name} ({partner_match_score:.2f})")
+                    logger.info(f"[DIAGNOSTIC] Closest partner by document text: {suggested_partner_name} ({partner_match_score:.2f})")
         except Exception as pe:
-            print(f"[DIAGNOSTIC] Partner matching failed: {pe}")
+            logger.info(f"[DIAGNOSTIC] Partner matching failed: {pe}")
 
         if not suggested_partner_id and payload.partner_name:
             try:
@@ -1479,7 +1482,7 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
                     suggested_partner_id = partners[0]["id"]
                     suggested_partner_name = partners[0]["name"]
             except Exception as pe2:
-                print(f"[DIAGNOSTIC] Partner search by name failed: {pe2}")
+                logger.info(f"[DIAGNOSTIC] Partner search by name failed: {pe2}")
 
         # 3. Fetch default accounts (cached, sequential — xmlrpc is not thread-safe)
         cache_db = conn.database_name or ""
@@ -1571,7 +1574,7 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
                             if pattern.search(doc_blob):
                                 matched = True
                         except Exception as re_err:
-                            print(f"[DIAGNOSTIC] Regex compile error for rule {model.get('name')}: {re_err}")
+                            logger.info(f"[DIAGNOSTIC] Regex compile error for rule {model.get('name')}: {re_err}")
                             
                     if matched:
                         line_ids = model.get("line_ids")
@@ -1589,7 +1592,7 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
                                 rule_line_label = lines_detail[0].get("label") or f"Reconciliation: {model.get('name')}"
                                 break
             except Exception as model_err:
-                print(f"[DIAGNOSTIC] Failed to evaluate reconcile models: {model_err}")
+                logger.info(f"[DIAGNOSTIC] Failed to evaluate reconcile models: {model_err}")
 
         # Override petty cash debit account to 102014 if matched rule uses Ibrahim Petty Cash or name has petty cash
         if rule_account_id:
@@ -1624,9 +1627,9 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
                     if accs:
                         rule_account_id = accs[0]["id"]
                         rule_account_name = f"{accs[0]['code']} {accs[0]['name']}"
-                        print(f"[DIAGNOSTIC] Overrode petty cash debit account to 102014: {rule_account_name} (ID: {rule_account_id})")
+                        logger.info(f"[DIAGNOSTIC] Overrode petty cash debit account to 102014: {rule_account_name} (ID: {rule_account_id})")
                 except Exception as override_err:
-                    print(f"[DIAGNOSTIC] Failed to override petty cash account: {override_err}")
+                    logger.info(f"[DIAGNOSTIC] Failed to override petty cash account: {override_err}")
 
         # 5. Similar historical operation analysis from Odoo (amount + description + details)
         similar_operation = None
@@ -1640,7 +1643,7 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
                 partner_name=payload.partner_name or "",
             )
         except Exception as sm_err:
-            print(f"[DIAGNOSTIC] Similar move analysis failed: {sm_err}")
+            logger.info(f"[DIAGNOSTIC] Similar move analysis failed: {sm_err}")
 
         if similar_operation and similar_operation.get("lines"):
             historical_lines = similar_operation["lines"]
@@ -1942,7 +1945,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
             {"fields": ["company_id"], "limit": 1}
         )
         user_company_id = users[0]["company_id"][0] if users and users[0].get("company_id") else False
-        print(f"[DIAGNOSTIC] Register Document User Company ID: {user_company_id}")
+        logger.info(f"[DIAGNOSTIC] Register Document User Company ID: {user_company_id}")
 
         # Classification Logic
         doc_class = (payload.document_class or "").lower()
@@ -2027,7 +2030,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
                             [{"name": payload.partner_name}]
                         )
             except Exception as pe:
-                print(f"[DIAGNOSTIC] Partner resolution failed: {pe}")
+                logger.info(f"[DIAGNOSTIC] Partner resolution failed: {pe}")
 
         # Fetch Default Accounts with Company filter
         expense_account_id = False
@@ -2044,7 +2047,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
             if accs:
                 expense_account_id = accs[0]["id"]
         except Exception as e:
-            print(f"[DIAGNOSTIC] Expense account search 1 failed: {e}")
+            logger.info(f"[DIAGNOSTIC] Expense account search 1 failed: {e}")
             try:
                 domain = [("user_type_id.type", "=", "expense")]
                 if user_company_id:
@@ -2058,7 +2061,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
                 if accs:
                     expense_account_id = accs[0]["id"]
             except Exception as e2:
-                print(f"[DIAGNOSTIC] Expense account search 2 failed: {e2}")
+                logger.info(f"[DIAGNOSTIC] Expense account search 2 failed: {e2}")
 
         if not expense_account_id:
             try:
@@ -2074,7 +2077,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
                 if accs:
                     expense_account_id = accs[0]["id"]
             except Exception as e3:
-                print(f"[DIAGNOSTIC] Expense account fallback failed: {e3}")
+                logger.info(f"[DIAGNOSTIC] Expense account fallback failed: {e3}")
 
         payable_account_id = False
         try:
@@ -2090,7 +2093,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
             if accs:
                 payable_account_id = accs[0]["id"]
         except Exception as e:
-            print(f"[DIAGNOSTIC] Payable account search 1 failed: {e}")
+            logger.info(f"[DIAGNOSTIC] Payable account search 1 failed: {e}")
             try:
                 domain = [("user_type_id.type", "=", "payable")]
                 if user_company_id:
@@ -2104,7 +2107,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
                 if accs:
                     payable_account_id = accs[0]["id"]
             except Exception as e2:
-                print(f"[DIAGNOSTIC] Payable account search 2 failed: {e2}")
+                logger.info(f"[DIAGNOSTIC] Payable account search 2 failed: {e2}")
         
         if not payable_account_id:
             payable_account_id = expense_account_id
@@ -2135,7 +2138,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
                 if accs:
                     suspense_account_id = accs[0]["id"]
         except Exception as e:
-            print(f"[DIAGNOSTIC] Suspense account search failed: {e}")
+            logger.info(f"[DIAGNOSTIC] Suspense account search failed: {e}")
 
         if not suspense_account_id:
             suspense_account_id = expense_account_id
@@ -2340,7 +2343,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
                     if accs:
                         salary_expense_id = accs[0]["id"]
                 except Exception as e:
-                    print(f"[DIAGNOSTIC] Salary expense search failed: {e}")
+                    logger.info(f"[DIAGNOSTIC] Salary expense search failed: {e}")
 
                 try:
                     domain = [("name", "ilike", "payable"), ("name", "ilike", "salary")]
@@ -2355,7 +2358,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
                     if accs:
                         salary_payable_id = accs[0]["id"]
                 except Exception as e:
-                    print(f"[DIAGNOSTIC] Salary payable search failed: {e}")
+                    logger.info(f"[DIAGNOSTIC] Salary payable search failed: {e}")
 
                 if not salary_expense_id:
                     salary_expense_id = expense_account_id
@@ -2487,7 +2490,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
             if created_moves and created_moves[0].get("name"):
                 move_name = created_moves[0].get("name")
         except Exception as ne:
-            print(f"[DIAGNOSTIC] Failed to read created move name: {ne}")
+            logger.info(f"[DIAGNOSTIC] Failed to read created move name: {ne}")
 
         base_url = conn.base_url.rstrip('/')
         odoo_url = f"{base_url}/web#id={move_id}&model=account.move&view_type=form"
@@ -2510,9 +2513,9 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
                         "res_id": move_id,
                     }],
                 )
-                print(f"[register_document] Attachment created: id={attachment_id} for move={move_id}")
+                logger.info(f"[register_document] Attachment created: id={attachment_id} for move={move_id}")
             except Exception as att_err:
-                print(f"[register_document] Attachment upload failed: {att_err}")
+                logger.info(f"[register_document] Attachment upload failed: {att_err}")
 
         return {
             "status": "success",
@@ -2668,12 +2671,12 @@ def chat_spreadsheet(payload: ChatSpreadsheetRequest, db_session: Session = Depe
                                 "line_label": line_label
                             })
                 except Exception as rule_err:
-                    print(f"[Spreadsheet Agent] Failed to load reconcile models: {rule_err}")
+                    logger.info(f"[Spreadsheet Agent] Failed to load reconcile models: {rule_err}")
 
             odoo_connected = True
-            print(f"[Spreadsheet Agent] Successfully loaded {len(odoo_partners)} partners, {len(odoo_accounts)} accounts, and {len(odoo_bank_rules)} bank rules from Odoo.")
+            logger.info(f"[Spreadsheet Agent] Successfully loaded {len(odoo_partners)} partners, {len(odoo_accounts)} accounts, and {len(odoo_bank_rules)} bank rules from Odoo.")
     except Exception as e:
-        print(f"[Spreadsheet Agent] Failed to fetch Odoo context: {e}")
+        logger.info(f"[Spreadsheet Agent] Failed to fetch Odoo context: {e}")
 
     # Format Odoo context for LLM
     partners_text = ""
@@ -2783,7 +2786,7 @@ def chat_spreadsheet(payload: ChatSpreadsheetRequest, db_session: Session = Depe
         response_obj = json.loads(content)
         return response_obj
     except Exception as e:
-        print(f"[Spreadsheet Agent Error] JSON parse failed: {e}")
+        logger.info(f"[Spreadsheet Agent Error] JSON parse failed: {e}")
         return {
             "message": f"عذراً، حدث خطأ أثناء الاتصال بمساعد التنسيق: {str(e)}",
             "grid_data": None
@@ -2837,9 +2840,9 @@ def parse_manual_text(payload: ParseManualTextRequest, db_session: Session = Dep
                 {"fields": ["id", "code", "name", "account_type"], "limit": 2000}
             )
             odoo_connected = True
-            print(f"[Parse Manual Text] Loaded {len(odoo_partners)} partners and {len(odoo_accounts)} accounts from Odoo.")
+            logger.info(f"[Parse Manual Text] Loaded {len(odoo_partners)} partners and {len(odoo_accounts)} accounts from Odoo.")
     except Exception as e:
-        print(f"[Parse Manual Text] Failed to fetch Odoo context: {e}")
+        logger.info(f"[Parse Manual Text] Failed to fetch Odoo context: {e}")
 
     # Format Odoo context for LLM
     partners_text = ""
@@ -2968,7 +2971,7 @@ def parse_manual_text(payload: ParseManualTextRequest, db_session: Session = Dep
             "lines": resolved_lines
         }
     except Exception as e:
-        print(f"[Parse Manual Text Error] JSON parse failed: {e}")
+        logger.info(f"[Parse Manual Text Error] JSON parse failed: {e}")
         return {
             "status": "error",
             "message": f"عذراً، حدث خطأ أثناء تحليل النص المدخل: {str(e)}",
@@ -3102,7 +3105,7 @@ def detect_attachments(payload: DetectAttachmentsRequest, db_session: Session = 
                     {"fields": ["id", "move_id", "account_id", "name", "debit", "credit"]}
                 )
             except Exception as le:
-                print(f"[Detect Attachments] Failed to fetch move lines: {le}")
+                logger.info(f"[Detect Attachments] Failed to fetch move lines: {le}")
 
         # Group lines by move_id
         lines_by_move = {}
@@ -3431,7 +3434,7 @@ def get_telegram_config():
                     "first_name": res_data["result"].get("first_name"),
                 }
     except Exception as e:
-        print(f"[Telegram Config] Failed to fetch getMe: {e}")
+        logger.info(f"[Telegram Config] Failed to fetch getMe: {e}")
 
     # Mask the token for the frontend (only show first 10 chars)
     masked_token = token[:10] + "..." if len(token) > 10 else token

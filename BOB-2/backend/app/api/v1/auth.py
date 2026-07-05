@@ -1,11 +1,11 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.models.core import User
 from app.security.auth import create_access_token, create_refresh_token, verify_password, validate_password_strength
-from app.security.dependencies import require_permission
+from app.security.dependencies import require_permission, get_current_token_payload
 from app.security.roles import UserRole, role_has_permission
 from app.security.rate_limiter import login_rate_limiter, get_client_identifier
 
@@ -164,7 +164,7 @@ def check_permission(
 
 
 @router.post("/logout")
-def logout(current_user: dict = Depends(require_permission("manage_users"))):
+def logout(current_user: dict = Depends(get_current_token_payload)):
     """
     Logout endpoint - in a stateless JWT system, this is mainly for client-side cleanup.
     In a full implementation, you might want to maintain a token blacklist.

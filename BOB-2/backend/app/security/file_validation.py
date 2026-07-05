@@ -206,15 +206,15 @@ async def validate_upload_files(files: List[UploadFile]) -> List[Tuple[UploadFil
 def validate_file_path(path: str, base_dir: str) -> bool:
     """
     Validate that a file path is within the allowed base directory.
-    Prevents path traversal attacks.
+    Prevents path traversal attacks using modern path resolution.
     """
     try:
-        # Normalize paths
-        real_path = os.path.realpath(path)
-        real_base = os.path.realpath(base_dir)
+        # Resolve to absolute, real paths
+        target_path = Path(path).resolve()
+        allowed_base = Path(base_dir).resolve()
 
-        # Check if path is under base directory
-        if not real_path.startswith(real_base):
+        # Check if the target path is relative to the allowed base directory
+        if not target_path.is_relative_to(allowed_base):
             raise FileValidationError("Path traversal detected - file outside allowed directory")
 
         return True

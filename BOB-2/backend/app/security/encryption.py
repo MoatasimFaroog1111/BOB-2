@@ -55,11 +55,15 @@ def rotate_encryption_key(old_secret_key: str, new_secret_key: str, encrypted_da
     Re-encrypt data with a new key (key rotation).
     This allows changing SECRET_KEY without losing encrypted data.
     """
+    # Derive the correct salts for both old and new keys
+    old_salt = hashlib.sha256(b"guardianai_salt_" + old_secret_key.encode()).digest()[:16]
+    new_salt = hashlib.sha256(b"guardianai_salt_" + new_secret_key.encode()).digest()[:16]
+
     # Temporarily use old key to decrypt
     old_kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=SALT_HASH,
+        salt=old_salt,
         iterations=100000,
     )
     old_key = base64.urlsafe_b64encode(old_kdf.derive(old_secret_key.encode()))
@@ -67,7 +71,7 @@ def rotate_encryption_key(old_secret_key: str, new_secret_key: str, encrypted_da
     new_kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
-        salt=SALT_HASH,
+        salt=new_salt,
         iterations=100000,
     )
     new_key = base64.urlsafe_b64encode(new_kdf.derive(new_secret_key.encode()))

@@ -372,15 +372,7 @@ export default function ERPConnectionPage() {
                   >
                     {t("erp.goDiscovery")}
                   </Link>
-                  
-                  {/* Bank Reconciliation Button */}
-                  <Link
-                    href="/erp/reconciliation"
-                    className="w-full text-center block bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700 text-white font-bold py-1.5 px-3 rounded-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2"
-                  >
-                    <span>🏦</span>
-                    <span>{language === "ar" ? "تسوية بنكية" : "Bank Reconciliation"}</span>
-                  </Link>
+
                 </div>
               </div>
             ) : (

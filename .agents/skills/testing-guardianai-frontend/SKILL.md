@@ -26,11 +26,14 @@ The frontend runs on `localhost:3000` and connects to the production backend for
 
 | Route | Page | Key Features |
 |-------|------|-------------|
-| `/team` | Team Management | User list, roles, bank reconciliation |
-| `/documents` | Documents / Spreadsheet | Toolbar, grid, AI assistant |
+| `/bank-reconciliation` | Bank Reconciliation AI | Upload, 10 dashboard cards, 4 tabbed tables, Excel/PDF export |
+| `/documents` | Document Intelligence | Toolbar, grid, AI assistant, OCR |
 | `/audit` | Audit Control Room | Account fetching, attachments |
+| `/accounting-ai` | Accounting AI Matching | Semantic matching |
+| `/agents` | AI Accounting Agents | Agent management |
 | `/erp` | ERP Connections | Odoo setup, Telegram bot config |
-| `/erp/discovery` | ERP Discovery | Company info from Odoo |
+| `/team` | Team Management | User list, roles |
+| `/settings` | Settings | Language toggle (AR/EN), system info |
 
 ## Testing Tips
 
@@ -50,7 +53,7 @@ The frontend runs on `localhost:3000` and connects to the production backend for
 
 ## Bank Reconciliation Testing
 
-The `/team` page has a bank reconciliation section. To test it end-to-end, you need both frontend AND backend running locally:
+The dedicated `/bank-reconciliation` page is the primary reconciliation UI. To test it end-to-end, you need both frontend AND backend running locally:
 
 ```bash
 # Terminal 1: Start backend
@@ -64,18 +67,23 @@ cd BOB-2/frontend
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 npx next dev -p 3000
 ```
 
-### Key UI Elements (RTL layout — pills flow right-to-left)
-- **First pill (rightmost):** "ارفق كشف البنك" (bank statement upload, accepts .csv/.xlsx/.xls)
-- **Second pill:** "نطاق التاريخ" (date range selector)
-- **Third pill:** "إجراء المطابقة البنكية" (reconcile button, disabled until file uploaded)
-- **Title:** "محاسب البنك" (cyan/blue gradient, left of pills)
+### Key UI Elements — /bank-reconciliation page
+- **Drop zone:** Drag-drop area with text "اسحب كشف البنك هنا أو اضغط للرفع" (AR) / "Drop bank statement here or click to upload" (EN)
+- **Supported formats:** CSV, XLSX, XLS, PDF, Images, OFX, MT940
+- **File info:** After upload, shows filename, size, extension, and green "صالح" (Valid) / red "غير مدعوم" (Unsupported) badge
+- **Date range:** Optional From/To date inputs
+- **Reconcile button:** "بدء التسوية" (AR) / "Start Reconciliation" (EN), disabled until valid file selected
+- **10 Dashboard cards:** Statement Total, Ledger Total, Difference (color-coded: green < 0.01, yellow < 100, red >= 100), Statement Count, Ledger Count, Matched Count, AI Suggested Count, Bank Only Count, Odoo Only Count, Date Range Used
+- **4 Tabbed tables:** Matched (مطابقة مؤكدة), AI Suggested (اقتراحات AI), Bank Only (كشف البنك فقط), Odoo Only (النظام فقط)
+- **Export buttons:** "تصدير Excel" and "تصدير PDF" appear after results load
+- **AI disclaimer:** Yellow banner "اقتراحات AI للمراجعة فقط — لا يتم اعتمادها تلقائياً" on AI tab
 
 ### File Upload via JavaScript
-The upload pills trigger hidden `<input type="file">` elements. The bank statement input is at index [1]:
+The page has a single hidden `<input type="file">` — use `querySelector` (not `querySelectorAll` with index):
 ```javascript
 const content = `Date,Description,Amount\n2025-01-05,Salary,15000`;
 const file = new File([content], 'test.csv', { type: 'text/csv' });
-const input = document.querySelectorAll('input[type="file"]')[1]; // index 1 = bank statement
+const input = document.querySelector('input[type="file"]');
 const dt = new DataTransfer();
 dt.items.add(file);
 input.files = dt.files;
@@ -84,55 +92,47 @@ input.dispatchEvent(new Event('change', { bubbles: true }));
 
 **Note:** Only one file (bank statement) is required to enable the reconcile button. The ledger data comes from Odoo.
 
-### Clearing Files
-The x buttons on pills are very small. Use JavaScript to click them reliably:
-```javascript
-document.querySelectorAll('button').forEach(btn => {
-  if (btn.textContent === '×') btn.click();
-});
-```
-
-### Results Modal Structure — Unified Table
-- **Summary cards (5 columns):** statement count/total, ledger count/total, matched count, 🤖 AI count, difference (red if non-zero)
-- **Single unified table** with 5 columns: التاريخ | كشف البنك (متطابق) | النظام (متطابق) | كشف البنك فقط | النظام فقط
-- All transaction types merged and sorted by date ascending
-- **Matched rows (green):** both Bank and System columns filled with independent data from `statement_txn` and `ledger_txn`
-- **Smart matched rows (purple tint):** same as matched but with purple amounts and confidence badge (🤖 XX%)
-- **Bank-only rows (red):** only "كشف البنك فقط" column filled, others show "—"
-- **System-only rows (amber):** only "النظام فقط" column filled, others show "—"
-- **Close button:** "إغلاق" at top-left of modal
+### Results Structure — Tabbed Dashboard
+- **10 summary cards** in 2 rows of 5, with accounting formatting (2 decimals) and color-coded values
+- **4 separate tabs** each with count badge: مطابقة مؤكدة (1), اقتراحات AI (1), كشف البنك فقط (1), النظام فقط (1)
+- **Matched tab:** 7-column table (Bank Date/Desc/Amount, Odoo Date/Desc/Amount, Match Type badge)
+- **AI Suggested tab:** 8-column table (same as matched + Confidence %, Reason) with confidence badges
+- **Bank Only / Odoo Only tabs:** 5-column tables (Date, Description, Amount, Row Number, Action badge)
 
 ### Testing Reconciliation UI Without LLM/Odoo
-When no LLM provider or Odoo connection is available, use fetch intercept with mock data. **Critical:** The response MUST include ALL of these fields (frontend calls `.toFixed(2)` on numeric fields and will crash with `TypeError: Cannot read properties of undefined` if missing):
+When no LLM provider or Odoo connection is available, use fetch intercept with mock data. **Critical:** The response MUST include ALL of these fields — the `/bank-reconciliation` page reads them for dashboard cards and will show incorrect data if any are missing:
 ```javascript
 const nativeFetch = window.fetch;
 window.fetch = function(url, options) {
   if (typeof url === 'string' && url.includes('bank-reconciliation')) {
     const mockData = {
-      status: "success",                    // REQUIRED: triggers setReconResults
-      statement_count: 5,                   // REQUIRED: displayed in summary card
-      statement_total: 24000.00,            // REQUIRED: .toFixed(2) called on this
-      ledger_count: 5,                      // REQUIRED: displayed in summary card
-      ledger_total: 24050.00,               // REQUIRED: .toFixed(2) called on this
-      difference: 50.00,                    // REQUIRED: .toFixed(2) called on this
+      status: "success",
+      statement_count: 5,
+      statement_total: 25000.00,
+      ledger_count: 4,
+      ledger_total: 24500.00,
+      difference: 500.00,
+      odoo_raw_count: 4,
+      date_range_used: { from: "2026-01-01", to: "2026-01-31" },
       matched: [
         {
-          statement_txn: { date: "2025-01-15", description: "تحويل راتب محمد", amount: 15000, row_number: 1 },
-          ledger_txn: { date: "2025-01-14", description: "Salary Transfer Mohammed", amount: 15000, row_number: 7 },
-          reason: "تطابق المبلغ والتاريخ"
+          statement_txn: { date: "2026-01-05", description: "Salary Transfer", amount: 15000, row_number: 1 },
+          ledger_txn: { date: "2026-01-05", description: "تحويل راتب", amount: 15000, row_number: 1 }
         }
       ],
       smart_matched: [
         {
-          statement_txn: { date: "2025-01-25", description: "رسوم بنكية شهرية", amount: 150, row_number: 5 },
-          ledger_txn: { date: "2025-01-28", description: "Bank Service Charges", amount: 200, row_number: 5 },
-          confidence: 0.77, reason: "Vector DB similarity=0.77"
+          statement_txn: { date: "2026-01-10", description: "رسوم بنكية", amount: 150, row_number: 2 },
+          ledger_txn: { date: "2026-01-12", description: "Bank Fees", amount: 200, row_number: 2 },
+          confidence: 0.77, reason: "Vector DB similarity"
         }
       ],
       statement_only: [
-        { date: "2025-01-22", description: "شراء أدوات مكتبية", amount: 350, row_number: 4 }
+        { date: "2026-01-15", description: "ATM Withdrawal", amount: -500, row_number: 3 }
       ],
-      ledger_only: []
+      ledger_only: [
+        { date: "2026-01-20", description: "قيد يدوي", amount: 350, row_number: 4 }
+      ]
     };
     return Promise.resolve(new Response(JSON.stringify(mockData), {
       status: 200, headers: { 'Content-Type': 'application/json' }
@@ -143,9 +143,9 @@ window.fetch = function(url, options) {
 ```
 
 ### Confidence Badge Colors
-- confidence >= 0.8: green (`bg-green-500/20 text-green-400`)
-- confidence >= 0.6: yellow (`bg-yellow-500/20 text-yellow-400`)
-- confidence < 0.6: orange (`bg-orange-500/20 text-orange-400`)
+- confidence >= 0.8: green (`bg-emerald-500/20 text-emerald-400 border-emerald-500/30`)
+- confidence >= 0.6: yellow (`bg-yellow-500/20 text-yellow-400 border-yellow-500/30`)
+- confidence < 0.6: red (`bg-red-500/20 text-red-400 border-red-500/30`)
 
 ### Testing Vector DB Matching (Backend Only, No UI)
 For testing the Vector DB semantic matching logic without needing an Odoo connection or frontend:

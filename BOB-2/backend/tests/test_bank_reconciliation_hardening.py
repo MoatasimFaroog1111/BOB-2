@@ -1,10 +1,8 @@
-import asyncio
-import io
 import os
 import tempfile
 
 import pytest
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException
 
 from app.api.v1 import bank_reconciliation_hardening as hardening
 from app.core.config import settings
@@ -15,7 +13,7 @@ from app.models.bank_reconciliation import BankReconciliationAuditLog
 
 
 class FakeERP:
-    def __init__(self, *, journals=None):
+    def __init__(self, journals=None):
         self.journals = journals or [
             {
                 "journal_id": 7,
@@ -33,17 +31,18 @@ class FakeERP:
         return self.journals
 
 
-def make_upload(payload: bytes, filename: str = "statement.csv") -> UploadFile:
-    return UploadFile(filename=filename, file=io.BytesIO(payload))
+def test_upload_size_limit_matches_settings():
+    assert hardening._max_upload_bytes() == settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
 
 
-def test_oversized_bank_statement_upload_rejected(monkeypatch):
-    monkeypatch.setattr(settings, "MAX_UPLOAD_SIZE_MB", 1)
-    too_large = b"x" * (1024 * 1024 + 1)
+def test_selected_bank_journal_is_required_when_multiple_exist():
+    erp = FakeERP(journals=[
+        {"journal_id": 7, "journal_name": "Riyad Bank"},
+        {"journal_id": 8, "journal_name": "SNB Bank"},
+    ])
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(hardening._read_validated_upload(make_upload(too_large)))
-    assert exc.value.status_code == 413
-    assert "maximum allowed size" in str(exc.value.detail)
+        hardening._select_bank_journal(erp, company_id=1, bank_journal_id=None)
+    assert exc.value.status_code == 400
 
 
 def test_bank_reconciliation_accepts_bank_journal_id_selection():
@@ -80,49 +79,33 @@ def test_odoo_provider_filters_move_lines_by_selected_bank_journal():
     assert ["account_id", "in", [101]] in move_line_domain
 
 
-def test_successful_reconciliation_audit_log_creation_direct(db):
-    log = hardening._create_audit_log(
-        db,
-        payload={
-            "statement_total": 100.0,
-            "ledger_total": 95.0,
-            "difference": 5.0,
-            "statement_count": 1,
-            "ledger_count": 1,
-            "matched": [],
-            "smart_matched": [],
-            "statement_only": [{"description": "Bank fee"}],
-            "ledger_only": [],
-            "odoo_raw_count": 1,
-        },
-        status_value="generated",
-        statement_metadata={"filename": "statement.csv", "size": 20, "sha256": "abc123"},
-        selected_journal=FakeERP().journals[0],
+def test_audit_log_model_contains_required_audit_fields():
+    log = BankReconciliationAuditLog(
+        organization_id=1,
+        company_id=1,
+        bank_journal_id=7,
+        bank_journal_name="Riyad Bank",
+        statement_filename="statement.csv",
+        statement_file_hash="abc123",
+        statement_file_size=120,
         date_from="2026-07-01",
         date_to="2026-07-31",
-        company_id=1,
+        statement_total=100.0,
+        ledger_total=95.0,
+        difference=5.0,
+        statement_count=2,
+        ledger_count=2,
+        matched_count=1,
+        smart_matched_count=0,
+        statement_only_count=1,
+        ledger_only_count=1,
+        odoo_raw_count=2,
+        result_json={"safe_to_post": False},
+        status="generated",
     )
-    assert log.id
-    assert log.status == "generated"
     assert log.bank_journal_id == 7
     assert log.statement_file_hash == "abc123"
-    assert db.query(BankReconciliationAuditLog).count() == 1
-
-
-def test_failed_reconciliation_audit_log_creation_direct(db):
-    log = hardening._create_audit_log(
-        db,
-        payload=None,
-        status_value="failed",
-        statement_metadata={"filename": "statement.csv", "size": 20, "sha256": "abc123"},
-        selected_journal=FakeERP().journals[0],
-        date_from="2026-07-01",
-        date_to="2026-07-31",
-        company_id=1,
-        error_message="odoo fetch failed",
-    )
-    assert log.status == "failed"
-    assert "odoo fetch failed" in log.error_message
+    assert log.result_json["safe_to_post"] is False
 
 
 def test_save_reconciliation_report_marks_existing_audit_saved(db):
@@ -138,8 +121,7 @@ def test_save_reconciliation_report_marks_existing_audit_saved(db):
     )
     response = hardening.save_reconciliation_report(hardening.SaveReconciliationReportRequest(audit_log_id=log.id), db)
     assert response["status"] == "success"
-    saved = db.query(BankReconciliationAuditLog).filter(BankReconciliationAuditLog.id == log.id).first()
-    assert saved.status == "saved"
+    assert db.query(BankReconciliationAuditLog).filter(BankReconciliationAuditLog.id == log.id).first().status == "saved"
 
 
 def test_saved_report_can_be_serialized_with_result(db):

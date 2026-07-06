@@ -4,6 +4,7 @@ import io
 import json
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
@@ -367,12 +368,20 @@ def transactions_from_odoo_move_lines(move_lines: list) -> List[Transaction]:
     return transactions
 
 
+# Maximum time (seconds) allowed for vector DB operations before falling back.
+_VECTOR_DB_TIMEOUT_SECONDS = 30
+
+
 def _vector_smart_match(
     statement_only: List[Transaction],
     ledger_only: List[Transaction],
     confidence_threshold: float = 0.6,
 ) -> List[SmartMatch]:
-    """Use Vector DB (ChromaDB) to find semantically similar transaction pairs."""
+    """Use Vector DB (ChromaDB) to find semantically similar transaction pairs.
+
+    Runs with a timeout to prevent hanging if embedding model download or
+    ChromaDB initialization is slow (e.g. first run in production).
+    """
     try:
         from app.services.vector_db import (
             index_bank_transactions,
@@ -382,62 +391,74 @@ def _vector_smart_match(
         logger.debug("Vector DB unavailable; skipping vector smart match.")
         return []
 
-    ledger_dicts = [
-        {"date": t.date, "description": t.description, "amount": t.amount, "row_number": t.row_number}
-        for t in ledger_only
-    ]
-    index_bank_transactions(ledger_dicts, source="ledger")
+    def _run_vector_match() -> List[SmartMatch]:
+        ledger_dicts = [
+            {"date": t.date, "description": t.description, "amount": t.amount, "row_number": t.row_number}
+            for t in ledger_only
+        ]
+        index_bank_transactions(ledger_dicts, source="ledger")
 
-    results: List[SmartMatch] = []
-    used_ledger_rows: set[int] = set()
+        results: List[SmartMatch] = []
+        used_ledger_rows: set[int] = set()
 
-    for s_txn in statement_only:
-        query = f"{s_txn.date} {s_txn.description} {s_txn.amount}"
-        hits = search_similar_transactions(
-            query_text=query,
-            source_filter="ledger",
-            n_results=5,
-            amount=s_txn.amount,
-        )
-        for hit in hits:
-            meta = hit.get("metadata", {})
-            ledger_row = int(meta.get("row_number", 0))
-            if ledger_row in used_ledger_rows:
-                continue
-
-            vector_score = hit.get("score", 0.0)
-            amount_match = abs(s_txn.amount - float(meta.get("amount", 0))) < 0.01
-            amount_close = abs(s_txn.amount - float(meta.get("amount", 0))) / max(abs(s_txn.amount), 1.0) < 0.05
-
-            combined = vector_score
-            if amount_match:
-                combined = min(0.99, vector_score * 0.5 + 0.5)
-            elif amount_close:
-                combined = min(0.95, vector_score * 0.6 + 0.35)
-
-            if combined < confidence_threshold:
-                continue
-
-            matched_ledger = next(
-                (t for t in ledger_only if t.row_number == ledger_row),
-                None,
+        for s_txn in statement_only:
+            query = f"{s_txn.date} {s_txn.description} {s_txn.amount}"
+            hits = search_similar_transactions(
+                query_text=query,
+                source_filter="ledger",
+                n_results=5,
+                amount=s_txn.amount,
             )
-            if matched_ledger is None:
-                continue
+            for hit in hits:
+                meta = hit.get("metadata", {})
+                ledger_row = int(meta.get("row_number", 0))
+                if ledger_row in used_ledger_rows:
+                    continue
 
-            used_ledger_rows.add(ledger_row)
-            reason = f"Vector DB similarity={vector_score:.2f}"
-            if amount_match:
-                reason += " (exact amount)"
-            results.append(SmartMatch(
-                statement_txn=s_txn,
-                ledger_txn=matched_ledger,
-                confidence=round(combined, 2),
-                reason=reason,
-            ))
-            break
+                vector_score = hit.get("score", 0.0)
+                amount_match = abs(s_txn.amount - float(meta.get("amount", 0))) < 0.01
+                amount_close = abs(s_txn.amount - float(meta.get("amount", 0))) / max(abs(s_txn.amount), 1.0) < 0.05
 
-    return results
+                combined = vector_score
+                if amount_match:
+                    combined = min(0.99, vector_score * 0.5 + 0.5)
+                elif amount_close:
+                    combined = min(0.95, vector_score * 0.6 + 0.35)
+
+                if combined < confidence_threshold:
+                    continue
+
+                matched_ledger = next(
+                    (t for t in ledger_only if t.row_number == ledger_row),
+                    None,
+                )
+                if matched_ledger is None:
+                    continue
+
+                used_ledger_rows.add(ledger_row)
+                reason = f"Vector DB similarity={vector_score:.2f}"
+                if amount_match:
+                    reason += " (exact amount)"
+                results.append(SmartMatch(
+                    statement_txn=s_txn,
+                    ledger_txn=matched_ledger,
+                    confidence=round(combined, 2),
+                    reason=reason,
+                ))
+                break
+
+        return results
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_run_vector_match)
+            return future.result(timeout=_VECTOR_DB_TIMEOUT_SECONDS)
+    except FuturesTimeoutError:
+        logger.warning("Vector DB smart match timed out after %ds; skipping.", _VECTOR_DB_TIMEOUT_SECONDS)
+        return []
+    except Exception as exc:
+        logger.warning("Vector DB smart match failed: %s; skipping.", exc)
+        return []
 
 
 def _llm_smart_match(

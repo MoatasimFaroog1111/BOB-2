@@ -9,6 +9,7 @@ Provides persistent vector storage and similarity search for:
 import hashlib
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from typing import Optional
 
 from app.core.config import settings
@@ -16,10 +17,12 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Embedding helper
+# Embedding helper (with circuit-breaker for production safety)
 # ---------------------------------------------------------------------------
 
 _embedding_provider = None
+_embedding_unavailable = False  # Circuit-breaker: skip if init failed/timed out
+_EMBED_INIT_TIMEOUT_SECONDS = 15
 
 
 def _get_embedding_provider():
@@ -31,11 +34,42 @@ def _get_embedding_provider():
     return _embedding_provider
 
 
-def embed_text(text: str) -> list[float]:
-    """Return a normalised embedding vector for *text*."""
+def _embed_text_sync(text: str) -> list[float]:
+    """Blocking embed call — used inside timeout wrapper."""
     provider = _get_embedding_provider()
     vector, _ = provider.embed(text)
     return vector
+
+
+def embed_text(text: str) -> list[float]:
+    """Return a normalised embedding vector for *text*.
+
+    Uses a timeout on first call to prevent hanging if the embedding model
+    needs to be downloaded (e.g. BAAI/bge-m3 is ~2.3GB). If embedding
+    initialization fails or times out, the circuit-breaker trips and all
+    subsequent calls raise immediately.
+    """
+    global _embedding_unavailable
+    if _embedding_unavailable:
+        raise RuntimeError("Embedding provider unavailable (circuit-breaker open)")
+
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_embed_text_sync, text)
+            return future.result(timeout=_EMBED_INIT_TIMEOUT_SECONDS)
+    except FuturesTimeoutError:
+        _embedding_unavailable = True
+        logger.warning(
+            "Embedding initialization timed out after %ds; disabling vector DB for this process.",
+            _EMBED_INIT_TIMEOUT_SECONDS,
+        )
+        raise RuntimeError("Embedding initialization timed out")
+    except Exception as exc:
+        # If it's the first call and it fails, trip the circuit-breaker
+        if _embedding_provider is None or getattr(_embedding_provider, '_model', None) is None:
+            _embedding_unavailable = True
+            logger.warning("Embedding initialization failed: %s; disabling vector DB.", exc)
+        raise
 
 
 # ---------------------------------------------------------------------------

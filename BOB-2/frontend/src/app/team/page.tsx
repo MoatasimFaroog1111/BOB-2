@@ -370,7 +370,7 @@ ${rawText || "(لم يتم استخراج أي نصوص)"}`;
           } else {
             results.push({
               name: file.name,
-              content: `خطأ: خادم التحليل المحاسبي غير متصل بالخلفية. لا يمكن قراءة الملفات الثنائية (PDF/صور) بدون تشغيل الخادم.`,
+              content: t("bankRecon.noOcrFallback"),
               type: "error",
               fileObject: file,
               matchedMoves: null,

@@ -132,34 +132,77 @@ class GuardianDocumentAI:
         text_l = text.lower()
         name_l = Path(file_path).name.lower()
 
+        # SADAD / Government receipts
+        sadad_markers = [
+            "سداد", "sadad", "biller id", "payment confirmation",
+            "تأكيد الدفع", "إيصال دفع",
+        ]
+        if any(m in text_l for m in sadad_markers) or "سداد" in name_l:
+            return "sadad_receipt"
+
+        # Bank receipts
         receipt_markers = [
             "account transaction details receipt",
-            "riyad bank",
-            "riyadh bank",
-            "processing date",
-            "transaction details",
-            "utility bill payment",
-            "residents",
-            "biller id",
-            "mol,sub",
-            "خدمات المقيمين",
-            "وزارة العمل",
-            "سداد",
+            "riyad bank", "riyadh bank", "rajhi bank", "الراجحي",
+            "processing date", "transaction details",
+            "utility bill payment", "residents", "mol,sub",
+            "خدمات المقيمين", "وزارة العمل",
+            "إيصال", "receipt",
         ]
-
-        if any(marker in text_l for marker in receipt_markers) or "سداد" in name_l:
+        if any(m in text_l for m in receipt_markers):
             return "receipt"
 
-        invoice_markers = [
-            "invoice",
-            "tax invoice",
-            "فاتورة",
-            "vat",
-            "total amount",
-            "invoice number",
+        # Payment vouchers
+        voucher_markers = [
+            "payment voucher", "سند صرف", "سند قبض",
+            "payment order", "أمر صرف",
         ]
+        if any(m in text_l for m in voucher_markers):
+            return "payment_voucher"
 
-        if any(marker in text_l for marker in invoice_markers):
+        # Purchase orders
+        po_markers = [
+            "purchase order", "أمر شراء", "طلب شراء",
+            "p.o. number", "po number", "order confirmation",
+        ]
+        if any(m in text_l for m in po_markers):
+            return "purchase_order"
+
+        # Bank statements
+        statement_markers = [
+            "bank statement", "كشف حساب", "كشف بنك",
+            "account statement", "statement of account",
+            "opening balance", "closing balance",
+            "الرصيد الافتتاحي", "الرصيد الختامي",
+        ]
+        if any(m in text_l for m in statement_markers):
+            return "bank_statement"
+
+        # ZATCA tax invoices (check before generic invoice)
+        zatca_markers = [
+            "zatca", "هيئة الزكاة", "الزكاة والضريبة",
+            "tax invoice", "فاتورة ضريبية",
+            "الرقم الضريبي", "tax identification",
+            "qr code", "رمز الاستجابة",
+        ]
+        if any(m in text_l for m in zatca_markers):
+            return "zatca_invoice"
+
+        # Vendor bills
+        vendor_markers = [
+            "vendor bill", "فاتورة مورد", "فاتورة مشتريات",
+            "supplier invoice", "bill to",
+        ]
+        if any(m in text_l for m in vendor_markers):
+            return "vendor_bill"
+
+        # Generic invoices
+        invoice_markers = [
+            "invoice", "فاتورة", "vat",
+            "total amount", "invoice number",
+            "رقم الفاتورة", "المبلغ الإجمالي",
+        ]
+        if any(m in text_l for m in invoice_markers):
             return "invoice"
 
         return "unknown"
@@ -286,35 +329,95 @@ class GuardianDocumentAI:
         narration = re.sub(r"\s+", " ", narration).strip()
         return narration[:500]
 
+    _AMT_SUFFIX = r"(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س|ريال))?"
+    _AMT_NUM = r"([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)" + _AMT_SUFFIX
+
+    def _extract_common_fields(self, text: str) -> Dict[str, Any]:
+        """Extract fields common across all document types."""
+        clean = self._clean_text(text)
+
+        vat_number = self._first_regex(clean, [
+            r"(?:VAT|Tax|الرقم الضريبي|TIN|Tax ID)\s*(?:Number|No|#|:)?\s*([0-9]{15})",
+            r"\b(3[0-9]{14})\b",
+        ])
+
+        iban = self._first_regex(clean, [r"\b(SA[0-9]{22})\b"])
+        account_number = self._first_regex(clean, [
+            r"Account\s*(?:Number|No|#)\s*:?\s*([0-9]{10,})",
+            r"رقم الحساب\s*:?\s*([0-9]{10,})",
+        ])
+
+        currency = "SAR"
+        if re.search(r"\b(?:USD|\$|دولار)\b", clean, re.IGNORECASE):
+            currency = "USD"
+        elif re.search(r"\b(?:EUR|€|يورو)\b", clean, re.IGNORECASE):
+            currency = "EUR"
+        elif re.search(r"\b(?:AED|درهم)\b", clean, re.IGNORECASE):
+            currency = "AED"
+
+        customer_name = self._first_regex(clean, [
+            r"(?:Customer|العميل|Bill To|Ship To)\s*:?\s*(.+?)(?:\n|$)",
+        ])
+
+        transaction_ref = self._first_regex(clean, [
+            r"(?:Reference|Ref|المرجع|رقم المرجع)\s*(?:No|#|:)?\s*([A-Z0-9\-\/]{4,})",
+        ])
+
+        payment_date = self._first_regex(clean, [
+            r"(?:Payment Date|تاريخ الدفع|تاريخ السداد)\s*:?\s*([0-9]{2}[/\-][0-9]{2}[/\-][0-9]{4})",
+        ])
+
+        po_number = self._first_regex(clean, [
+            r"(?:P\.?O\.?|Purchase Order|أمر شراء)\s*(?:Number|No|#|:)?\s*([A-Z0-9\-\/]{3,})",
+        ])
+
+        due_date = self._first_regex(clean, [
+            r"(?:Due Date|تاريخ الاستحقاق|Maturity)\s*:?\s*([0-9]{2}[/\-][0-9]{2}[/\-][0-9]{4})",
+        ])
+
+        return {
+            "vat_number": vat_number,
+            "iban": iban,
+            "account_number": account_number,
+            "currency": currency,
+            "customer_name": customer_name,
+            "transaction_reference": transaction_ref,
+            "payment_date": payment_date,
+            "po_number": po_number,
+            "due_date": due_date,
+        }
+
     def extract_invoice_fields(self, text: str) -> Dict[str, Any]:
         clean = self._clean_text(text)
+        common = self._extract_common_fields(text)
 
         invoice_number = self._first_regex(
             clean,
             [
-                r"Invoice Number\s*[^\w]*([A-Z0-9\-\/]+)",
+                r"Invoice\s*(?:Number|No|#)\s*[^\w]*([A-Z0-9\-\/]+)",
+                r"رقم الفاتورة\s*:?\s*([A-Z0-9\-\/]+)",
                 r"الفاتورة رقم\s*([A-Z0-9\-\/]+)",
-                r"\b(SA[0-9]{4,})\b",
             ],
         )
 
         invoice_date = self._first_regex(
             clean,
             [
-                r"Invoice Issue Date\s*[^\d]*([0-9]{2}/[0-9]{2}/[0-9]{4})",
-                r"Invoice Date\s*[^\d]*([0-9]{2}/[0-9]{2}/[0-9]{4})",
+                r"Invoice\s*(?:Issue)?\s*Date\s*[^\d]*([0-9]{2}[/\-][0-9]{2}[/\-][0-9]{4})",
+                r"تاريخ الفاتورة\s*:?\s*([0-9]{2}[/\-][0-9]{2}[/\-][0-9]{4})",
                 r"\b([0-9]{2}/[0-9]{2}/[0-9]{4})\b",
+                r"\b([0-9]{4}-[0-9]{2}-[0-9]{2})\b",
             ],
         )
 
         taxable_amount_text = self._first_regex(
             clean,
             [
-                r"Untaxed\s+Amount\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"Taxable\s+Amount\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"Subtotal\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"المجموع الفرعي\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"المبلغ الخاضع للضريبة\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
+                r"Untaxed\s+Amount\s+" + self._AMT_NUM,
+                r"Taxable\s+Amount\s+" + self._AMT_NUM,
+                r"Subtotal\s+" + self._AMT_NUM,
+                r"المجموع الفرعي\s+" + self._AMT_NUM,
+                r"المبلغ الخاضع للضريبة\s+" + self._AMT_NUM,
             ],
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -322,32 +425,27 @@ class GuardianDocumentAI:
         vat_amount_text = self._first_regex(
             clean,
             [
-                r"VAT\s+Taxes\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"VAT\s+Tax\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"The Tax.*?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"VAT\s*\n.*?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"الضريبة\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"ضريبة القيمة المضافة\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
+                r"VAT\s+(?:Tax(?:es)?)?\s*" + self._AMT_NUM,
+                r"The Tax.*?" + self._AMT_NUM,
+                r"الضريبة\s+" + self._AMT_NUM,
+                r"ضريبة القيمة المضافة\s+" + self._AMT_NUM,
             ],
             flags=re.IGNORECASE | re.DOTALL,
         )
 
         nontaxable_amount_text = self._first_regex(
             clean,
-            [
-                r"Nontaxable Amount.*?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-            ],
+            [r"Nontaxable Amount.*?" + self._AMT_NUM],
             flags=re.IGNORECASE | re.DOTALL,
         )
 
         total_amount_text = self._first_regex(
             clean,
             [
-                r"Total Amount.*?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"Total\s*:\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"Total\s+([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"الإجمالي.*?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
-                r"الاجمالي.*?([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})?)(?:\s*(?:SAR|SR|sR|S\.R\.|R\.S\.|ر\.س))?",
+                r"Total\s*(?:Amount)?\s*:?\s*" + self._AMT_NUM,
+                r"الإجمالي.*?" + self._AMT_NUM,
+                r"الاجمالي.*?" + self._AMT_NUM,
+                r"المبلغ الإجمالي.*?" + self._AMT_NUM,
             ],
             flags=re.IGNORECASE | re.DOTALL,
         )
@@ -362,46 +460,120 @@ class GuardianDocumentAI:
         return {
             "document_class": "invoice",
             "supplier_name": supplier_name,
+            "customer_name": common.get("customer_name"),
             "invoice_number": invoice_number,
             "invoice_date": invoice_date,
+            "due_date": common.get("due_date"),
             "taxable_amount": taxable_amount,
             "vat_amount": vat_amount,
             "nontaxable_amount": nontaxable_amount,
             "total_amount": total_amount,
-            "currency_guess": "SAR",
+            "currency": common.get("currency", "SAR"),
+            "vat_number": common.get("vat_number"),
+            "iban": common.get("iban"),
+            "account_number": common.get("account_number"),
+            "transaction_reference": common.get("transaction_reference"),
+            "payment_date": common.get("payment_date"),
+            "po_number": common.get("po_number"),
+            # Legacy key kept for backward-compat
+            "currency_guess": common.get("currency", "SAR"),
+        }
+
+    def extract_payment_voucher_fields(self, text: str) -> Dict[str, Any]:
+        clean = self._clean_text(text)
+        common = self._extract_common_fields(text)
+        amount_text = self._first_regex(
+            clean,
+            [r"(?:Amount|المبلغ)\s*:?\s*" + self._AMT_NUM],
+            flags=re.IGNORECASE,
+        )
+        return {
+            "document_class": "payment_voucher",
+            "supplier_name": self.detect_supplier_name(clean),
+            "total_amount": self._parse_amount(amount_text) if amount_text else None,
+            **common,
+        }
+
+    def extract_purchase_order_fields(self, text: str) -> Dict[str, Any]:
+        clean = self._clean_text(text)
+        common = self._extract_common_fields(text)
+        total_text = self._first_regex(
+            clean,
+            [r"(?:Total|الإجمالي|Grand Total)\s*:?\s*" + self._AMT_NUM],
+            flags=re.IGNORECASE,
+        )
+        return {
+            "document_class": "purchase_order",
+            "supplier_name": self.detect_supplier_name(clean),
+            "total_amount": self._parse_amount(total_text) if total_text else None,
+            **common,
+        }
+
+    def extract_bank_statement_fields(self, text: str) -> Dict[str, Any]:
+        clean = self._clean_text(text)
+        common = self._extract_common_fields(text)
+        return {
+            "document_class": "bank_statement",
+            "supplier_name": self.detect_supplier_name(clean),
+            "total_amount": None,
+            **common,
         }
 
     def detect_supplier_name(self, text: str) -> Optional[str]:
         text_l = text.lower()
 
-        if "yesatlas" in text_l or "modarby" in text_l or "findcourse" in text_l:
-            return "Atlas / Modarby"
+        known = [
+            (["yesatlas", "modarby", "findcourse"], "Atlas / Modarby"),
+            (["riyad bank", "riyadh bank"], "Riyad Bank"),
+            (["rajhi", "الراجحي"], "Al Rajhi Bank"),
+            (["الأهلي", "ahli", "snb"], "Saudi National Bank"),
+            (["stc", "اس تي سي", "الاتصالات السعودية"], "STC"),
+            (["aramco", "أرامكو"], "Saudi Aramco"),
+            (["sabic", "سابك"], "SABIC"),
+        ]
+        for markers, name in known:
+            if any(m in text_l for m in markers):
+                return name
 
-        if "riyad bank" in text_l or "riyadh bank" in text_l:
-            return "Riyad Bank"
-
-        return None
+        supplier_regex = self._first_regex(text, [
+            r"(?:Supplier|Vendor|المورد|اسم المورد)\s*:?\s*(.+?)(?:\n|$)",
+        ])
+        return supplier_regex
 
     def analyze_document(self, file_path: str) -> Dict[str, Any]:
         raw_text = self.extract_text(file_path)
         document_class = self.detect_document_class(raw_text, file_path=file_path)
 
-        if document_class == "receipt":
-            fields = self.extract_receipt_fields(raw_text)
-        elif document_class == "invoice":
-            fields = self.extract_invoice_fields(raw_text)
+        _extractors = {
+            "receipt": self.extract_receipt_fields,
+            "sadad_receipt": self.extract_receipt_fields,
+            "invoice": self.extract_invoice_fields,
+            "zatca_invoice": self.extract_invoice_fields,
+            "vendor_bill": self.extract_invoice_fields,
+            "payment_voucher": self.extract_payment_voucher_fields,
+            "purchase_order": self.extract_purchase_order_fields,
+            "bank_statement": self.extract_bank_statement_fields,
+        }
+
+        extractor = _extractors.get(document_class)
+        if extractor:
+            fields = extractor(raw_text)
+            fields["document_class"] = document_class
         else:
+            common = self._extract_common_fields(raw_text)
             fields = {
                 "document_class": "unknown",
-                "supplier_name": None,
+                "supplier_name": self.detect_supplier_name(self._clean_text(raw_text)),
                 "invoice_number": None,
                 "invoice_date": None,
                 "vat_amount": None,
                 "total_amount": None,
-                "currency_guess": "SAR",
+                "currency": common.get("currency", "SAR"),
+                "currency_guess": common.get("currency", "SAR"),
+                **common,
             }
 
-        warnings = []
+        warnings: list[str] = []
 
         if raw_text.startswith("OCR_ERROR:"):
             warnings.append("ocr_engine_missing_or_failed")
@@ -412,14 +584,20 @@ class GuardianDocumentAI:
         if fields.get("total_amount") is None:
             warnings.append("total_amount_not_detected")
 
-        if fields.get("vat_amount") is None and fields.get("document_class") == "invoice":
+        if fields.get("vat_amount") is None and document_class in ("invoice", "zatca_invoice", "vendor_bill"):
             warnings.append("vat_amount_not_detected")
+
+        if not fields.get("vat_number") and document_class in ("zatca_invoice",):
+            warnings.append("vat_number_not_detected")
+
+        if not fields.get("invoice_number") and document_class in ("invoice", "zatca_invoice", "vendor_bill"):
+            warnings.append("invoice_number_not_detected")
 
         return {
             "status": "analyzed",
             "source_file": str(file_path),
             "document_type": self.detect_document_type(file_path),
-            "document_class": fields.get("document_class", document_class),
+            "document_class": document_class,
             "fields": fields,
             "warnings": warnings,
             "safe_to_post": False,

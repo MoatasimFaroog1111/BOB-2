@@ -449,16 +449,18 @@ def _vector_smart_match(
 
         return results
 
+    executor = ThreadPoolExecutor(max_workers=1)
     try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_run_vector_match)
-            return future.result(timeout=_VECTOR_DB_TIMEOUT_SECONDS)
+        future = executor.submit(_run_vector_match)
+        return future.result(timeout=_VECTOR_DB_TIMEOUT_SECONDS)
     except FuturesTimeoutError:
         logger.warning("Vector DB smart match timed out after %ds; skipping.", _VECTOR_DB_TIMEOUT_SECONDS)
         return []
     except Exception as exc:
         logger.warning("Vector DB smart match failed: %s; skipping.", exc)
         return []
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 def _llm_smart_match(

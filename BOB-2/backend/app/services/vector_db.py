@@ -53,10 +53,10 @@ def embed_text(text: str) -> list[float]:
     if _embedding_unavailable:
         raise RuntimeError("Embedding provider unavailable (circuit-breaker open)")
 
+    executor = ThreadPoolExecutor(max_workers=1)
     try:
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(_embed_text_sync, text)
-            return future.result(timeout=_EMBED_INIT_TIMEOUT_SECONDS)
+        future = executor.submit(_embed_text_sync, text)
+        return future.result(timeout=_EMBED_INIT_TIMEOUT_SECONDS)
     except FuturesTimeoutError:
         _embedding_unavailable = True
         logger.warning(
@@ -70,6 +70,8 @@ def embed_text(text: str) -> list[float]:
             _embedding_unavailable = True
             logger.warning("Embedding initialization failed: %s; disabling vector DB.", exc)
         raise
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
 
 
 # ---------------------------------------------------------------------------

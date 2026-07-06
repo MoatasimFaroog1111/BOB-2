@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
+import JournalEntrySuggestionsEditor from "@/components/JournalEntrySuggestionsEditor";
 import { API_BASE_URL } from "@/lib/api";
 import { useCompany } from "@/lib/CompanyContext";
 import { useLanguage } from "@/lib/LanguageContext";
@@ -197,6 +198,7 @@ export default function BankReconciliationPage() {
   const [saveMessage, setSaveMessage] = useState("");
   const [result, setResult] = useState<ReconciliationResult | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("matched");
+  const [showProposedEntries, setShowProposedEntries] = useState(false);
 
   const msg = useCallback((ar: string, en: string) => (language === "ar" ? ar : en), [language]);
 
@@ -250,6 +252,7 @@ export default function BankReconciliationPage() {
     setError("");
     setSaveMessage("");
     setResult(null);
+    setShowProposedEntries(false);
   }, [validateFile]);
 
   const handleReconcile = async () => {
@@ -257,6 +260,7 @@ export default function BankReconciliationPage() {
     setLoading(true);
     setError("");
     setSaveMessage("");
+    setShowProposedEntries(false);
     try {
       const form = new FormData();
       form.append("statement", file);
@@ -298,7 +302,7 @@ export default function BankReconciliationPage() {
         [t("bankRecon.aiSuggestedCount"), result.smart_matched.length],
         [t("bankRecon.bankOnlyCount"), result.statement_only.length],
         [t("bankRecon.odooOnlyCount"), result.ledger_only.length],
-        ["Footer", "AI suggestions are for review only. No ERP posting was performed."],
+        ["Footer", "Reconciliation report generated before any manual posting action."],
       ]), "Summary");
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(result.statement_only), "Bank Only");
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(result.ledger_only), "Odoo Only");
@@ -338,7 +342,7 @@ export default function BankReconciliationPage() {
     lines.push("Odoo-only table");
     result.ledger_only.slice(0, 120).forEach((row, idx) => lines.push(`${idx + 1}. ${row.date} | ${formatAmount(row.amount)} | row ${row.row_number} | ${row.suggested_action || "needs_review"} | confidence ${((row.confidence || 0) * 100).toFixed(0)}% | ${truncate(row.description)}`));
     lines.push("");
-    lines.push("AI suggestions are for review only. No ERP posting was performed.");
+    lines.push("Manual proposed journal entries can be previewed separately before posting.");
     downloadBlob(buildPdf(lines), "bank-reconciliation-report.pdf");
   };
 
@@ -380,6 +384,8 @@ export default function BankReconciliationPage() {
   ];
 
   const canReconcile = Boolean(file && fileValid && selectedJournalId && !loading);
+  const journalForPosting = result?.selected_bank_journal || selectedJournal;
+  const bankAccountLabel = journalForPosting ? `${journalForPosting.account_code || ""} ${journalForPosting.account_name || journalForPosting.journal_name || ""}`.trim() : "";
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -477,7 +483,11 @@ export default function BankReconciliationPage() {
             <button onClick={exportExcel} className="px-4 py-2 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 text-sm font-medium hover:bg-emerald-600/30 transition-colors">{t("bankRecon.exportExcel")}</button>
             <button onClick={exportPdf} className="px-4 py-2 rounded-lg bg-sky-600/20 border border-sky-500/30 text-sky-400 text-sm font-medium hover:bg-sky-600/30 transition-colors">{t("bankRecon.exportPdf")}</button>
             <button disabled={saving || result.report_status === "saved"} onClick={saveReport} className="px-4 py-2 rounded-lg bg-amber-600/20 border border-amber-500/30 text-amber-300 text-sm font-medium hover:bg-amber-600/30 disabled:opacity-40 transition-colors">{saving ? msg("جاري الحفظ...", "Saving...") : msg("حفظ تقرير التسوية", "Save Reconciliation Report")}</button>
+            <button disabled={!result.statement_only.length} onClick={() => { setActiveTab("bank_only"); setShowProposedEntries(true); }} className="px-4 py-2 rounded-lg bg-cyan-600/20 border border-cyan-500/30 text-cyan-300 text-sm font-bold hover:bg-cyan-600/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+              🧾 {msg("القيود المقترحة", "Proposed Journal Entries")} ({result.statement_only.length})
+            </button>
           </div>
+          <p className="text-[11px] text-cyan-200/70">{msg("زر القيود المقترحة يفتح شاشة واسعة لمعاينة قيود العمليات الموجودة في كشف البنك فقط قبل ترحيلها إلى أودو، مع إمكانية ترحيل قيد واحد أو كل القيود.", "Proposed Journal Entries opens a wide preview for bank-statement-only rows before sending them to Odoo, with one-by-one or bulk posting actions.")}</p>
           {saveMessage && <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{saveMessage}</div>}
 
           <div className="flex gap-1 border-b border-white/10 pb-0 overflow-x-auto">
@@ -494,6 +504,17 @@ export default function BankReconciliationPage() {
             {activeTab === "bank_only" && <ExceptionTable rows={result.statement_only} t={t} empty={t("bankRecon.noDiscrepancies")} />}
             {activeTab === "odoo_only" && <ExceptionTable rows={result.ledger_only} t={t} empty={t("bankRecon.noDiscrepancies")} />}
           </div>
+        </>
+      )}
+
+      {showProposedEntries && result && (
+        <>
+          <div className="fixed top-5 left-5 z-[10000]">
+            <button onClick={() => setShowProposedEntries(false)} className="rounded-xl border border-rose-500/50 bg-rose-500/20 px-4 py-2 text-xs font-bold text-rose-200 shadow-2xl hover:bg-rose-500/30">
+              ✕ {msg("إغلاق القيود المقترحة", "Close proposed entries")}
+            </button>
+          </div>
+          <JournalEntrySuggestionsEditor rows={result.statement_only} isAr={language === "ar"} bankAccountLabel={bankAccountLabel} />
         </>
       )}
     </div>

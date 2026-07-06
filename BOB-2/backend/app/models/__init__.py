@@ -4,6 +4,7 @@ from app.models.ai_accounting import (
     AIDocumentEmbedding,
     AIDocumentMatch,
 )
+from app.models.bank_reconciliation import BankReconciliationAuditLog
 from app.models.core import (
     ApprovalRequest,
     AuditLog,
@@ -19,6 +20,7 @@ __all__ = [
     "AIDecisionAuditLog",
     "AIDocumentEmbedding",
     "AIDocumentMatch",
+    "BankReconciliationAuditLog",
     "ApprovalRequest",
     "AuditLog",
     "Document",

@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Optional
@@ -36,12 +35,6 @@ class SaveReconciliationReportRequest(BaseModel):
     statement_metadata: dict[str, Any] = Field(default_factory=dict)
     date_range_used: dict[str, Any] = Field(default_factory=dict)
     reconciliation_result: dict[str, Any] = Field(default_factory=dict)
-
-
-class MarkSavedResponse(BaseModel):
-    status: str
-    report_id: int
-    message: str
 
 
 def _max_upload_bytes() -> int:
@@ -210,8 +203,8 @@ def _build_result_payload(
 ) -> dict[str, Any]:
     statement_only_plain = [t.model_dump() for t in result.statement_only]
     ledger_only_plain = [t.model_dump() for t in result.ledger_only]
-    statement_only = [transaction_with_suggestion(t, side="bank_only", peers=statement_only_plain) for t in result.statement_only]
-    ledger_only = [transaction_with_suggestion(t, side="ledger_only", peers=ledger_only_plain) for t in result.ledger_only]
+    statement_only = [transaction_with_suggestion(row, side="bank_only", peers=statement_only_plain) for row in statement_only_plain]
+    ledger_only = [transaction_with_suggestion(row, side="ledger_only", peers=ledger_only_plain) for row in ledger_only_plain]
 
     return {
         "status": "success",
@@ -344,9 +337,10 @@ async def parse_bank_statement_only(
         statement_path = _write_temp_file(payload, filename)
         statement_txns = parse_statement_file(statement_path)
         total = round(sum(t.amount for t in statement_txns), 2)
+        statement_rows = [t.model_dump() for t in statement_txns]
         return {
             "status": "success",
-            "statement_only": [transaction_with_suggestion(t, side="bank_only") for t in statement_txns],
+            "statement_only": [transaction_with_suggestion(row, side="bank_only", peers=statement_rows) for row in statement_rows],
             "ledger_only": [],
             "matched": [],
             "smart_matched": [],

@@ -25,6 +25,10 @@ from app.models.bank_reconciliation import BankReconciliationAuditLog
 from app.models.core import ERPConnection
 from app.security.encryption import decrypt_value
 from app.security.file_validation import FileValidationError, sanitize_filename, validate_file_extension
+from app.api.v1.bank_reconciliation_entry_suggestions import (
+    HistoricalEntrySuggestionRequest,
+    suggest_bank_reconciliation_entries,
+)
 
 router = APIRouter()
 
@@ -227,6 +231,78 @@ def _build_result_payload(
     }
 
 
+def _row_key(row: dict[str, Any]) -> str:
+    return f"{row.get('row_number') or ''}|{row.get('date') or ''}|{float(row.get('amount') or 0.0):.2f}"
+
+
+def _apply_historical_entry_suggestions(
+    response_payload: dict[str, Any],
+    db: Session,
+    *,
+    company_id: int | None,
+    selected_journal: dict[str, Any],
+) -> None:
+    rows = response_payload.get("statement_only") or []
+    if not rows:
+        response_payload["historical_suggestion_summary"] = {
+            "method": "odoo_historical_nlp_similarity",
+            "history_count": 0,
+            "confident_count": 0,
+        }
+        return
+
+    try:
+        suggestions_payload = HistoricalEntrySuggestionRequest(
+            transactions=rows,
+            company_id=company_id or selected_journal.get("company_id"),
+            bank_journal_id=selected_journal.get("journal_id"),
+            bank_account_id=selected_journal.get("account_id"),
+            history_limit=600,
+        )
+        suggestions_response = suggest_bank_reconciliation_entries(suggestions_payload, db)
+        suggestion_map = {_row_key(item): item for item in suggestions_response.get("items", [])}
+        enriched_rows: list[dict[str, Any]] = []
+        for row in rows:
+            item = suggestion_map.get(_row_key(row))
+            if item and item.get("suggested_account_label"):
+                historical_parts = [
+                    item.get("suggested_account_label"),
+                    item.get("suggested_partner_label"),
+                    item.get("suggested_analytic_account_label"),
+                ]
+                historical_text = " | ".join(str(part) for part in historical_parts if part)
+                confidence = float(item.get("confidence") or 0.0)
+                row = {
+                    **row,
+                    "ai_suggested_account": historical_text,
+                    "historical_suggestion": item,
+                    "confidence": max(float(row.get("confidence") or 0.0), confidence),
+                    "suggested_action_label": (
+                        row.get("suggested_action_label")
+                        if item.get("needs_review")
+                        else f"Historical Odoo suggestion {round(confidence * 100)}%"
+                    ),
+                    "explanation": " | ".join(filter(None, [row.get("explanation"), item.get("reason")])),
+                }
+            enriched_rows.append(row)
+        response_payload["statement_only"] = enriched_rows
+        response_payload["historical_suggestion_summary"] = {
+            "method": suggestions_response.get("method"),
+            "history_count": suggestions_response.get("history_count"),
+            "confident_count": suggestions_response.get("confident_count"),
+            "safe_to_post": False,
+            "note": suggestions_response.get("note"),
+        }
+    except Exception as exc:
+        response_payload["historical_suggestion_summary"] = {
+            "method": "odoo_historical_nlp_similarity",
+            "history_count": 0,
+            "confident_count": 0,
+            "safe_to_post": False,
+            "warning": f"Historical Odoo suggestions were skipped: {exc}",
+        }
+
+
 @router.get("/bank-journals")
 def list_bank_journals(db: Session = Depends(get_db), company_id: Optional[int] = None):
     erp = _get_active_erp_provider(db)
@@ -287,6 +363,12 @@ async def bank_reconciliation(
             selected_journal=selected_journal,
             statement_metadata=statement_metadata,
             warning=warning,
+        )
+        _apply_historical_entry_suggestions(
+            response_payload,
+            db,
+            company_id=company_id,
+            selected_journal=selected_journal,
         )
         audit_log = _create_audit_log(
             db,

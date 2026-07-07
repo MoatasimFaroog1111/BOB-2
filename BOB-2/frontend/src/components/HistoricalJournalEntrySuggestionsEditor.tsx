@@ -227,7 +227,7 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, ba
 
         const historySuggestions = new Map<string, HistoricalSuggestion>();
         (Array.isArray(historyData?.items) ? historyData.items : []).forEach((item: HistoricalSuggestion) => {
-          historySuggestions.set(keyFor({ row_number: Number(item.row_number || 0), date: item.date || "", amount: Number(item.amount || 0) }), item);
+          historySuggestions.set(keyFor({ row_number: Number(item.row_number || "", amount: Number(item.amount || 0) }), item);
         });
 
         const nextRows = rows.map((row) => {

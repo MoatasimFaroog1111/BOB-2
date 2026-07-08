@@ -10,7 +10,6 @@ export function MainNavigation() {
 
   const items = [
     ["/bank-reconciliation", t("bankRecon.pageTitle")],
-    ["/accounting-ai", t("sidebar.accountingAI")],
     ["/documents", t("sidebar.documents")],
     ["/audit", t("sidebar.audit")],
     ["/erp", t("sidebar.erp")],

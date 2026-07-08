@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import re
 from collections import defaultdict
 from difflib import SequenceMatcher
@@ -66,6 +65,38 @@ def _m2o(value: Any) -> tuple[Optional[int], str]:
     if isinstance(value, int):
         return value, ""
     return None, ""
+
+
+def _analytic_from_line(line: dict[str, Any]) -> tuple[Optional[int], str]:
+    """Return an analytic account safely across Odoo versions.
+
+    Odoo 19 no longer exposes analytic_account_id on account.move.line in many
+    databases. Newer versions commonly use analytic_distribution instead. This
+    helper reads either shape without requiring an invalid field in search_read.
+    """
+    analytic_id, analytic_label = _m2o(line.get("analytic_account_id"))
+    if analytic_id:
+        return analytic_id, analytic_label
+
+    distribution = line.get("analytic_distribution")
+    if isinstance(distribution, dict) and distribution:
+        first_key = next(iter(distribution.keys()), None)
+        if first_key:
+            try:
+                return int(str(first_key).split(",")[0]), ""
+            except Exception:
+                return None, ""
+    return None, ""
+
+
+def _available_fields(erp: Any, model: str, desired: list[str]) -> set[str]:
+    try:
+        data = erp.execute_kw(model, "fields_get", [desired], {"attributes": ["type", "string"]})
+        if isinstance(data, dict):
+            return set(data.keys())
+    except Exception:
+        return set()
+    return set()
 
 
 def _norm(text: Any) -> str:
@@ -162,6 +193,9 @@ def _fetch_historical_bank_entries(erp: Any, payload: HistoricalEntrySuggestionR
         domain.append(["account_id", "=", int(payload.bank_account_id)])
 
     fields = ["id", "date", "name", "ref", "move_id", "account_id", "partner_id", "debit", "credit", "balance", "journal_id"]
+    analytic_fields = sorted(_available_fields(erp, "account.move.line", ["analytic_account_id", "analytic_distribution"]))
+    all_line_fields = fields + [field for field in analytic_fields if field not in fields]
+
     bank_lines = erp.execute_kw(
         "account.move.line",
         "search_read",
@@ -183,12 +217,24 @@ def _fetch_historical_bank_entries(erp: Any, payload: HistoricalEntrySuggestionR
     if not move_ids:
         return []
 
-    all_lines = erp.execute_kw(
-        "account.move.line",
-        "search_read",
-        [[["move_id", "in", move_ids], ["parent_state", "=", "posted"]]],
-        {"fields": fields + ["analytic_account_id"], "order": "date desc, id asc", "limit": min(len(move_ids) * 8, 4000)},
-    )
+    try:
+        all_lines = erp.execute_kw(
+            "account.move.line",
+            "search_read",
+            [[["move_id", "in", move_ids], ["parent_state", "=", "posted"]]],
+            {"fields": all_line_fields, "order": "date desc, id asc", "limit": min(len(move_ids) * 8, 4000)},
+        )
+    except Exception as exc:
+        # Odoo customizations can hide or rename analytic fields. If any optional
+        # analytic field still fails, retry with the safe base fields only.
+        if "analytic" not in str(exc).lower():
+            raise
+        all_lines = erp.execute_kw(
+            "account.move.line",
+            "search_read",
+            [[["move_id", "in", move_ids], ["parent_state", "=", "posted"]]],
+            {"fields": fields, "order": "date desc, id asc", "limit": min(len(move_ids) * 8, 4000)},
+        )
 
     by_move: dict[int, list[dict[str, Any]]] = defaultdict(list)
     for line in all_lines:
@@ -244,8 +290,6 @@ def _suggest_for_txn(txn: BankTxnForSuggestion, historical: list[dict[str, Any]]
             account_id, account_label = _m2o(counter.get("account_id"))
             if not account_id:
                 continue
-            partner_id, partner_label = _m2o(counter.get("partner_id"))
-            analytic_id, analytic_label = _m2o(counter.get("analytic_account_id"))
             counter_text_score = _text_similarity(txn_text, _line_text(counter))
             text_score = max(bank_text_score, counter_text_score)
             score = min(text_score * 0.82 + amount_score * 0.12 + cat_score * 0.06, 1.0)
@@ -267,7 +311,7 @@ def _suggest_for_txn(txn: BankTxnForSuggestion, historical: list[dict[str, Any]]
     score, entry, counter = best
     account_id, account_label = _m2o(counter.get("account_id"))
     partner_id, partner_label = _m2o(counter.get("partner_id"))
-    analytic_id, analytic_label = _m2o(counter.get("analytic_account_id"))
+    analytic_id, analytic_label = _analytic_from_line(counter)
     reason = (
         f"Matched against historical posted Odoo move {entry.get('move_name') or entry.get('move_id')} "
         f"using description/statement similarity as the main factor and amount as a light supporting factor. Date was not used for scoring."

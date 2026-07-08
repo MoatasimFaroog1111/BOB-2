@@ -78,6 +78,22 @@ function pct(value?: number) {
   return `${Math.round(Number(value || 0) * 100)}%`;
 }
 
+function clean(value: any) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه")
+    .replace(/[\u064B-\u065F\u0670]/g, "")
+    .replace(/[^\w\u0600-\u06FF]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function rowText(row: Transaction) {
+  return [row.main_description, row.description, ...(row.details || []), row.detected_category, row.suggested_action, row.suggested_action_label].filter(Boolean).join(" ");
+}
+
 function asOptions(data: any): LookupOption[] {
   const arr = Array.isArray(data) ? data : data?.accounts || data?.partners || data?.analytic_accounts || data?.analyticAccounts || data?.items || [];
   return arr
@@ -90,21 +106,122 @@ function asOptions(data: any): LookupOption[] {
     .filter((item: LookupOption) => item.label);
 }
 
-function applySuggestion(row: Transaction, suggestion?: OdooSuggestion | null): SuggestedRow {
+function hasAny(text: string, patterns: string[]) {
+  return patterns.some(pattern => text.includes(clean(pattern)) || new RegExp(pattern, "i").test(text));
+}
+
+function optionScore(option: LookupOption, terms: string[]) {
+  const label = clean(`${option.code || ""} ${option.name || ""} ${option.label || ""}`);
+  let score = 0;
+  terms.forEach(term => {
+    const t = clean(term);
+    if (!t) return;
+    if (label.includes(t)) score += 10;
+    t.split(" ").filter(part => part.length > 2).forEach(part => {
+      if (label.includes(part)) score += 2;
+    });
+  });
+  return score;
+}
+
+function bestOption(options: LookupOption[], terms: string[], minimumScore = 8) {
+  let best: LookupOption | undefined;
+  let bestScore = 0;
+  options.forEach(option => {
+    const score = optionScore(option, terms);
+    if (score > bestScore) {
+      best = option;
+      bestScore = score;
+    }
+  });
+  return bestScore >= minimumScore ? best : undefined;
+}
+
+function termsForAccount(row: Transaction) {
+  const text = clean(rowText(row));
+  if (hasAny(text, ["عمولة", "رسوم", "fee", "charge", "commission"])) return ["مصروفات بنكية", "رسوم بنكية", "bank fees", "bank charges", "عمولات بنكية", "finance charges"];
+  if (hasAny(text, ["vat", "ضريبة", "الضريبة المضافة"])) return ["ضريبة القيمة المضافة", "vat", "input vat", "value added tax"];
+  if (hasAny(text, ["payroll", "salary", "wps", "رواتب", "راتب", "ملف"])) return ["رواتب", "اجور", "wages", "salaries", "payroll"];
+  if (hasAny(text, ["stc", "اتصالات", "communication", "telecom"])) return ["اتصالات", "هاتف", "internet", "communication", "telephone", "telecom"];
+  if (hasAny(text, ["residents", "مقيم", "خدمات المقيمين", "biller id", "sadad", "سداد"])) return ["رسوم حكومية", "government", "sadad", "مقيم", "اقامات", "iqama", "residents"];
+  if (hasAny(text, ["rent", "lease", "ايجار"])) return ["ايجار", "rent", "lease"];
+  if (hasAny(text, ["fuel", "aldrees", "وقود", "محروقات"])) return ["وقود", "fuel", "gasoline", "محروقات"];
+  if (Number(row.amount || 0) > 0) return ["ايرادات", "revenue", "receivable", "customer", "income", "other income", "clearing"];
+  return ["موردون", "payable", "expenses", "purchase", "مصروف", "تسوية", "suspense", "clearing"];
+}
+
+function fallbackAccount(accounts: LookupOption[], row: Transaction) {
+  const categoryMatch = bestOption(accounts, termsForAccount(row));
+  if (categoryMatch) return categoryMatch.label;
+  const suspense = bestOption(accounts, ["تسوية", "suspense", "clearing", "وسيط", "temporary"], 6);
+  return suspense?.label || accounts[0]?.label || "";
+}
+
+function fallbackPartner(partners: LookupOption[], row: Transaction) {
+  const text = clean(rowText(row));
+  let best: LookupOption | undefined;
+  let bestScore = 0;
+  partners.forEach(partner => {
+    const partnerName = clean(partner.name || partner.label);
+    if (!partnerName || partnerName.length < 3) return;
+    let score = 0;
+    if (text.includes(partnerName)) score += 40;
+    partnerName.split(" ").filter(token => token.length > 2).forEach(token => {
+      if (text.includes(token)) score += 4;
+    });
+    if (score > bestScore) {
+      best = partner;
+      bestScore = score;
+    }
+  });
+  return bestScore >= 8 ? best?.label || "" : "";
+}
+
+function fallbackAnalytic(analytics: LookupOption[], row: Transaction) {
+  const text = clean(rowText(row));
+  let best: LookupOption | undefined;
+  let bestScore = 0;
+  analytics.forEach(analytic => {
+    const label = clean(analytic.label || analytic.name);
+    let score = 0;
+    label.split(" ").filter(token => token.length > 2).forEach(token => {
+      if (text.includes(token)) score += 3;
+    });
+    if (score > bestScore) {
+      best = analytic;
+      bestScore = score;
+    }
+  });
+  return bestScore >= 6 ? best?.label || "" : "";
+}
+
+function applySuggestion(row: Transaction, suggestion: OdooSuggestion | null, accounts: LookupOption[], partners: LookupOption[], analytics: LookupOption[]): SuggestedRow {
+  const account = suggestion?.suggested_account_label || row.ai_suggested_account || fallbackAccount(accounts, row);
+  const partner = suggestion?.suggested_partner_label || fallbackPartner(partners, row);
+  const analytic = suggestion?.suggested_analytic_account_label || fallbackAnalytic(analytics, row);
+  const usedFallback = !suggestion?.suggested_account_label && Boolean(account);
   return {
     ...row,
-    suggested_account_label: suggestion?.suggested_account_label || row.ai_suggested_account || "",
-    suggested_partner_label: suggestion?.suggested_partner_label || "",
-    suggested_analytic_account_label: suggestion?.suggested_analytic_account_label || "",
-    suggestion_confidence: Number(suggestion?.confidence || row.confidence || 0),
-    suggestion_reason: suggestion?.reason || row.explanation || "",
-    suggestion_source: suggestion?.source || "odoo_historical_or_ai_review",
+    suggested_account_label: account,
+    suggested_partner_label: partner,
+    suggested_analytic_account_label: analytic,
+    suggestion_confidence: Number(suggestion?.confidence || row.confidence || (usedFallback ? 0.58 : 0)),
+    suggestion_reason: suggestion?.reason || row.explanation || (usedFallback ? "Local fallback from loaded Odoo accounts and transaction keywords after historical lookup was unavailable." : ""),
+    suggestion_source: suggestion?.source || (usedFallback ? "local_odoo_lookup_fallback" : "odoo_historical_or_ai_review"),
     suggestion_needs_review: suggestion?.needs_review ?? true,
   };
 }
 
+async function jsonOrNull(response: Response) {
+  return response.json().catch(() => null);
+}
+
+async function delay(ms: number) {
+  await new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, companyId, bankJournalId, bankAccountId }: Props) {
-  const [suggestedRows, setSuggestedRows] = useState<SuggestedRow[]>(rows.map(row => applySuggestion(row)));
+  const [suggestedRows, setSuggestedRows] = useState<SuggestedRow[]>(rows.map(row => applySuggestion(row, null, [], [], [])));
   const [accounts, setAccounts] = useState<LookupOption[]>([]);
   const [partners, setPartners] = useState<LookupOption[]>([]);
   const [analytics, setAnalytics] = useState<LookupOption[]>([]);
@@ -137,43 +254,66 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
 
       try {
         const qs = effectiveCompanyId ? `?company_id=${effectiveCompanyId}` : "";
-        const [accountsResponse, partnersResponse, analyticsResponse, historyResponse] = await Promise.all([
-          fetch(`${API_BASE_URL}/api/v1/erp/accounts${qs}`),
-          fetch(`${API_BASE_URL}/api/v1/erp/partners${qs}`),
-          fetch(`${API_BASE_URL}/api/v1/erp/analytic-accounts${qs}`),
-          fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation/entry-suggestions`, {
+
+        const accountsResponse = await fetch(`${API_BASE_URL}/api/v1/erp/accounts${qs}`);
+        const accountsData = await jsonOrNull(accountsResponse);
+        const accountOptions = accountsResponse.ok ? asOptions(accountsData) : [];
+        if (alive) setAccounts(accountOptions);
+        await delay(250);
+
+        const partnersResponse = await fetch(`${API_BASE_URL}/api/v1/erp/partners${qs}`);
+        const partnersData = await jsonOrNull(partnersResponse);
+        const partnerOptions = partnersResponse.ok ? asOptions(partnersData) : [];
+        if (alive) setPartners(partnerOptions);
+        await delay(250);
+
+        const analyticsResponse = await fetch(`${API_BASE_URL}/api/v1/erp/analytic-accounts${qs}`);
+        const analyticsData = await jsonOrNull(analyticsResponse);
+        const analyticOptions = analyticsResponse.ok ? asOptions(analyticsData) : [];
+        if (alive) setAnalytics(analyticOptions);
+        await delay(300);
+
+        let historyWarning = "";
+        let historyItems: OdooSuggestion[] = [];
+        try {
+          const historyResponse = await fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation/entry-suggestions`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload),
-          }),
-        ]);
-
-        const accountsData = await accountsResponse.json().catch(() => null);
-        const partnersData = await partnersResponse.json().catch(() => null);
-        const analyticsData = await analyticsResponse.json().catch(() => null);
-        const historyData = await historyResponse.json().catch(() => null);
-        if (!historyResponse.ok) throw new Error(historyData?.detail || `Error ${historyResponse.status}`);
+          });
+          const historyData = await jsonOrNull(historyResponse);
+          if (historyResponse.ok && Array.isArray(historyData?.items)) {
+            historyItems = historyData.items;
+          } else {
+            const detail = historyData?.detail || `HTTP ${historyResponse.status}`;
+            historyWarning = String(detail).includes("429")
+              ? (isAr ? "تم تجاوز حد طلبات Odoo مؤقتًا، لذلك تم استخدام اقتراحات محلية من الحسابات والشركاء المحملين." : "Odoo rate limit was reached, so local suggestions from loaded accounts and partners were used.")
+              : String(detail);
+          }
+        } catch (historyErr: any) {
+          historyWarning = historyErr?.message || String(historyErr);
+        }
 
         const suggestions = new Map<string, OdooSuggestion>();
-        (Array.isArray(historyData?.items) ? historyData.items : []).forEach((item: OdooSuggestion) => {
+        historyItems.forEach((item: OdooSuggestion) => {
           suggestions.set(keyFor({ row_number: item.row_number, date: item.date, amount: item.amount }), item);
         });
 
-        const nextRows = rows.map(row => applySuggestion(row, suggestions.get(keyFor(row))));
+        const nextRows = rows.map(row => applySuggestion(row, suggestions.get(keyFor(row)) || null, accountOptions, partnerOptions, analyticOptions));
 
         if (!alive) return;
-        setAccounts(accountsResponse.ok ? asOptions(accountsData) : []);
-        setPartners(partnersResponse.ok ? asOptions(partnersData) : []);
-        setAnalytics(analyticsResponse.ok ? asOptions(analyticsData) : []);
         setSuggestedRows(nextRows);
         const suggestedCount = nextRows.filter(row => row.suggested_account_label || row.suggested_partner_label).length;
+        const historicalCount = nextRows.filter(row => row.suggestion_source === "odoo_historical_move_lines").length;
         setNotice(isAr
-          ? `تم تجهيز الحسابات والشركاء المقترحين أمام ${suggestedCount} عملية من بيانات أودو.`
-          : `Suggested accounts and partners were prepared inline for ${suggestedCount} rows from Odoo data.`);
+          ? `تم تجهيز الحسابات والشركاء أمام ${suggestedCount} عملية. المطابقة التاريخية: ${historicalCount}.`
+          : `Prepared account and partner suggestions for ${suggestedCount} rows. Historical matches: ${historicalCount}.`);
+        if (historyWarning) setError(historyWarning);
       } catch (err: any) {
         if (!alive) return;
-        setSuggestedRows(rows.map(row => applySuggestion(row)));
-        setError((isAr ? "تعذر تجهيز اقتراحات أودو: " : "Could not prepare Odoo suggestions: ") + (err?.message || err));
+        const fallbackRows = rows.map(row => applySuggestion(row, null, accounts, partners, analytics));
+        setSuggestedRows(fallbackRows);
+        setError((isAr ? "تعذر تحميل بيانات أودو بالكامل، وتم استخدام المتاح فقط: " : "Could not fully load Odoo data; using available data only: ") + (err?.message || err));
       } finally {
         if (alive) setLoading(false);
       }
@@ -205,8 +345,8 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
         <p className="text-sm font-bold text-cyan-200">{isAr ? "اقتراحات AI للحسابات والشركاء" : "AI account and partner suggestions"}</p>
         <p className="mt-1 text-[11px] text-white/60">
           {isAr
-            ? "كل عملية يظهر أمامها الحساب المقترح والشريك المقترح مباشرة. القيم قابلة للتعديل من بيانات أودو للشركة المختارة، ولا يوجد ترحيل من هذه الشاشة."
-            : "Each transaction shows its suggested account and partner inline. Values are editable from the selected company's Odoo data, and this screen does not post entries."}
+            ? "كل عملية يظهر أمامها الحساب المقترح والشريك المقترح مباشرة. عند ضغط Odoo أو فشل المطابقة التاريخية يتم استخدام الحسابات والشركاء المحملين محليًا بدل ترك الحقول فارغة."
+            : "Each transaction shows its suggested account and partner inline. If Odoo is rate-limited or history lookup fails, loaded accounts and partners are used locally instead of leaving fields blank."}
         </p>
       </div>
 
@@ -237,7 +377,9 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
             {suggestedRows.map((row, index) => {
               const sourceLabel = row.suggestion_source === "odoo_historical_move_lines"
                 ? (isAr ? "مطابقة تاريخية من أودو" : "Odoo historical match")
-                : (isAr ? "اقتراح AI يحتاج مراجعة" : "AI suggestion needs review");
+                : row.suggestion_source === "local_odoo_lookup_fallback"
+                  ? (isAr ? "اقتراح محلي من بيانات أودو" : "Local Odoo lookup fallback")
+                  : (isAr ? "اقتراح AI يحتاج مراجعة" : "AI suggestion needs review");
               return (
                 <tr key={`${row.row_number}-${row.date}-${row.amount}-${index}`} className="border-b border-white/5 align-top hover:bg-white/5">
                   <td className="px-3 py-2 text-center font-mono text-white/40">{row.row_number || index + 1}</td>

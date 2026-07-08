@@ -1,41 +1,177 @@
 "use client";
 
 import { useState } from "react";
-import JournalEntrySuggestionsEditor from "@/components/JournalEntrySuggestionsEditor";
+import HistoricalJournalEntrySuggestionsEditor from "@/components/HistoricalJournalEntrySuggestionsEditor";
 
-interface Transaction { date: string; hijri_date?: string; description: string; main_description?: string; details?: string[]; amount: number; debit?: number | null; credit?: number | null; balance?: number | null; row_number: number; ai_suggested_account?: string; }
-interface MatchedPair { statement_txn: Transaction; ledger_txn: Transaction; }
-interface SmartMatch { statement_txn: Transaction; ledger_txn: Transaction; confidence: number; reason: string; }
-interface ReconciliationResult { statement_only: Transaction[]; ledger_only: Transaction[]; matched: MatchedPair[]; smart_matched: SmartMatch[]; statement_total: number; ledger_total: number; difference: number; statement_count: number; ledger_count: number; }
-type ResultView = "matched" | "statement_only" | "ledger_only" | "difference";
-
-function fmt(value?: number | null) { return Number(value || 0).toLocaleString("en-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-function amountColor(value?: number | null) { const n = Number(value || 0); if (n > 0) return "text-emerald-400"; if (n < 0) return "text-rose-400"; return "text-white/50"; }
-function selectedBankLabel() { if (typeof document === "undefined") return ""; const options = Array.from(document.querySelectorAll("select option:checked")) as HTMLOptionElement[]; const found = options.find(opt => { const t = (opt.textContent || "").trim(); return t && !/اختر الحساب|select bank/i.test(t); }); return (found?.textContent || "").trim(); }
-function downloadCSV(filename: string, rows: string[][]) { const csv = rows.map(row => row.map(cell => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\n"); const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" }); const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = filename; link.click(); URL.revokeObjectURL(url); }
-
-function TxnCard({ txn, label, isAr }: { txn: Transaction; label: string; isAr: boolean }) {
-  return <div className="rounded-xl border border-white/10 bg-black/25 p-3 text-[11px] hover:bg-white/5 transition-colors"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex items-center gap-2 flex-wrap"><span className="rounded-full bg-white/10 px-2 py-0.5 text-white/60">{label}</span><span className="font-mono text-white/60">{txn.date || "—"}</span>{txn.hijri_date && <span className="font-mono text-white/40">{txn.hijri_date}</span>}</div><p className="mt-2 font-bold text-white leading-relaxed">{txn.main_description || txn.description || "—"}</p>{txn.details && txn.details.length > 0 && <details className="mt-2 text-white/55"><summary className="cursor-pointer text-blue-300 font-semibold">{isAr ? "تفاصيل إضافية" : "More details"}</summary><div className="mt-2 space-y-1">{txn.details.map((detail, idx) => <div key={idx} className="border-b border-white/5 pb-1">{detail}</div>)}</div></details>}</div><div className={`shrink-0 text-end font-mono text-sm font-bold ${amountColor(txn.amount)}`}>{fmt(txn.amount)}<div className="text-[9px] text-white/40">SAR</div></div></div></div>;
+interface Transaction {
+  date: string;
+  hijri_date?: string;
+  description: string;
+  main_description?: string;
+  details?: string[];
+  amount: number;
+  debit?: number | null;
+  credit?: number | null;
+  balance?: number | null;
+  row_number: number;
+  ai_suggested_account?: string;
+  suggested_action?: string;
+  suggested_action_label?: string;
+  confidence?: number;
+  explanation?: string;
+  detected_category?: string;
 }
 
-export default function ReconciliationResultsPanel({ result, isAr, bankAccountLabel = "" }: { result: ReconciliationResult; isAr: boolean; bankAccountLabel?: string }) {
+interface MatchedPair { statement_txn: Transaction; ledger_txn: Transaction; }
+interface SmartMatch { statement_txn: Transaction; ledger_txn: Transaction; confidence: number; reason: string; }
+interface ReconciliationResult {
+  statement_only: Transaction[];
+  ledger_only: Transaction[];
+  matched: MatchedPair[];
+  smart_matched: SmartMatch[];
+  statement_total: number;
+  ledger_total: number;
+  difference: number;
+  statement_count: number;
+  ledger_count: number;
+}
+
+type ResultView = "matched" | "statement_only" | "ledger_only" | "difference";
+
+function fmt(value?: number | null) {
+  return Number(value || 0).toLocaleString("en-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function amountColor(value?: number | null) {
+  const n = Number(value || 0);
+  if (n > 0) return "text-emerald-400";
+  if (n < 0) return "text-rose-400";
+  return "text-white/50";
+}
+
+function confidenceBadge(confidence = 0): string {
+  if (confidence >= 0.8) return "border-emerald-500/40 bg-emerald-500/15 text-emerald-300";
+  if (confidence >= 0.6) return "border-amber-500/40 bg-amber-500/15 text-amber-300";
+  return "border-rose-500/40 bg-rose-500/15 text-rose-300";
+}
+
+function downloadCSV(filename: string, rows: string[][]) {
+  const csv = rows.map(row => row.map(cell => `"${String(cell ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function TxnCard({ txn, label, isAr }: { txn: Transaction; label: string; isAr: boolean }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-black/25 p-3 text-[11px] hover:bg-white/5 transition-colors">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="rounded-full bg-white/10 px-2 py-0.5 text-white/60">{label}</span>
+            <span className="font-mono text-white/60">{txn.date || "—"}</span>
+            {txn.hijri_date && <span className="font-mono text-white/40">{txn.hijri_date}</span>}
+          </div>
+          <p className="mt-2 font-bold text-white leading-relaxed">{txn.main_description || txn.description || "—"}</p>
+          {txn.details && txn.details.length > 0 && (
+            <details className="mt-2 text-white/55">
+              <summary className="cursor-pointer text-blue-300 font-semibold">{isAr ? "تفاصيل إضافية" : "More details"}</summary>
+              <div className="mt-2 space-y-1">{txn.details.map((detail, idx) => <div key={idx} className="border-b border-white/5 pb-1">{detail}</div>)}</div>
+            </details>
+          )}
+        </div>
+        <div className={`shrink-0 text-end font-mono text-sm font-bold ${amountColor(txn.amount)}`}>{fmt(txn.amount)}<div className="text-[9px] text-white/40">SAR</div></div>
+      </div>
+    </div>
+  );
+}
+
+export default function ReconciliationResultsPanel({ result, isAr }: { result: ReconciliationResult; isAr: boolean; bankAccountLabel?: string }) {
   const [activeView, setActiveView] = useState<ResultView>("matched");
-  const [showJournalDrafts, setShowJournalDrafts] = useState(false);
   const [wideMode, setWideMode] = useState(false);
   const [reviewed, setReviewed] = useState<Record<ResultView, boolean>>({ matched: false, statement_only: false, ledger_only: false, difference: false });
   const [notice, setNotice] = useState("");
   const matchedCount = result.matched.length + result.smart_matched.length;
   const isBalanced = Math.abs(result.difference) < 0.01;
-  const bank = bankAccountLabel || selectedBankLabel();
   const meta: Record<ResultView, { icon: string; title: string; count: string | number; border: string; text: string; hint: string }> = {
-    matched: { icon: "✅", title: isAr ? "متطابق" : "Matched", count: matchedCount, border: "border-emerald-500/40", text: "text-emerald-300", hint: isAr ? "اضغط لعرض العمليات المتطابقة" : "Click to show matched rows" },
-    statement_only: { icon: "📄", title: isAr ? "المسجلة في كشف البنك فقط" : "Recorded in bank statement only", count: result.statement_only.length, border: "border-amber-500/40", text: "text-amber-300", hint: isAr ? "اضغط ثم سجل العمليات في الحسابات" : "Click then prepare journal entries" },
+    matched: { icon: "✅", title: isAr ? "متطابق" : "Matched", count: matchedCount, border: "border-emerald-500/40", text: "text-emerald-300", hint: isAr ? "العمليات المتطابقة، بما فيها الذكية، بدون تبويب منفصل" : "Matched rows, including smart matches, without a separate AI tab" },
+    statement_only: { icon: "🧠", title: isAr ? "اقتراحات AI للحسابات والشركاء" : "AI account/partner suggestions", count: result.statement_only.length, border: "border-amber-500/40", text: "text-amber-300", hint: isAr ? "الحساب والشريك أمام كل عملية" : "Account and partner inline for each row" },
     ledger_only: { icon: "📚", title: isAr ? "المسجلة في الدفاتر فقط" : "Recorded in books only", count: result.ledger_only.length, border: "border-rose-500/40", text: "text-rose-300", hint: isAr ? "موجودة في الدفاتر وغير موجودة في الكشف" : "In books but missing from statement" },
     difference: { icon: isBalanced ? "🟢" : "⚠️", title: isAr ? "الفرق" : "Difference", count: fmt(result.difference), border: isBalanced ? "border-emerald-500/40" : "border-rose-500/40", text: isBalanced ? "text-emerald-300" : "text-rose-300", hint: isAr ? "تحليل الفرق" : "Difference analysis" },
   };
   const current = meta[activeView];
-  const exportCurrent = () => { const rows = [["Group", "Date", "Description", "Amount"], ...[...result.statement_only, ...result.ledger_only].map(txn => [activeView, txn.date, txn.description, fmt(txn.amount)])]; downloadCSV(`reconciliation_${activeView}.csv`, rows); setNotice(isAr ? "تم تجهيز ملف CSV." : "CSV exported."); };
-  const copyCurrent = async () => { if (!navigator.clipboard) return; await navigator.clipboard.writeText(JSON.stringify(result, null, 2)); setNotice(isAr ? "تم نسخ التفاصيل." : "Details copied."); };
 
-  return <div className="space-y-3"><div className="grid grid-cols-2 md:grid-cols-4 gap-2">{(Object.keys(meta) as ResultView[]).map(view => { const item = meta[view]; const active = activeView === view; return <button key={view} onClick={() => { setActiveView(view); setNotice(""); }} className={`wood-card !p-3 text-start border transition-all hover:-translate-y-0.5 hover:bg-white/5 ${item.border} ${active ? "ring-2 ring-amber-400/70 bg-white/5" : ""}`}><div className="flex items-center justify-between gap-2"><span className="text-2xl">{item.icon}</span>{reviewed[view] && <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] text-emerald-300">{isAr ? "تمت المراجعة" : "Reviewed"}</span>}</div><p className="mt-2 text-[10px] text-white/50">{item.title}</p><p className={`text-2xl font-bold tabular-nums ${item.text}`}>{item.count}</p><p className="mt-1 text-[9px] text-white/40 leading-relaxed">{item.hint}</p></button>; })}</div><div className={`rounded-xl border p-3 ${isBalanced ? "border-emerald-500/30 bg-emerald-500/10" : "border-amber-500/30 bg-amber-500/10"}`}><p className="font-bold text-sm text-white">{isBalanced ? (isAr ? "✅ نتيجة المطابقة: لا يوجد فرق" : "✅ No difference") : (isAr ? "⚠️ نتيجة المطابقة: يوجد فرق يحتاج مراجعة" : "⚠️ Review needed")}</p><p className="text-[11px] text-white/60 mt-1">{isAr ? "اضغط على أي بطاقة لفتح تفاصيلها ومعالجتها." : "Click any card to open details and actions."}</p></div><div className={`${wideMode ? "fixed inset-3 z-[9999] bg-[#050505] shadow-2xl flex flex-col" : "bg-black/25"} rounded-2xl border ${current.border} overflow-hidden`}><div className="p-3 border-b border-white/10 flex flex-col md:flex-row md:items-center md:justify-between gap-3"><div><h4 className={`text-base font-bold ${current.text}`}>{current.icon} {current.title}</h4><p className="text-[10px] text-white/50 mt-1">{activeView === "statement_only" ? (isAr ? "الحساب والشريك قابلان للتعديل، والافتراضي يختار من النظام حسب وصف العملية." : "Account and partner are editable; defaults are selected semantically from the system.") : activeView === "ledger_only" ? (isAr ? "هذه العمليات موجودة في الدفاتر فقط." : "These rows exist only in books.") : activeView === "difference" ? (isAr ? "تحليل الفرق النهائي بين كشف البنك والدفاتر." : "Final difference analysis.") : (isAr ? "هذه العمليات تمت مطابقتها بين كشف البنك والدفاتر." : "Matched between statement and books.")}</p></div><div className="flex flex-wrap gap-2">{activeView === "statement_only" && <button onClick={() => setShowJournalDrafts(prev => !prev)} className="px-3 py-1.5 rounded-lg bg-cyan-500/15 border border-cyan-500/40 text-cyan-300 text-xs font-bold">🧾 {isAr ? "تسجيل العمليات في الحسابات" : "Prepare journal entries"}</button>}<button onClick={() => setWideMode(prev => !prev)} className="px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-bold">{wideMode ? "↩️" : "⛶"} {wideMode ? (isAr ? "رجوع" : "Back") : (isAr ? "عرض موسّع" : "Wide view")}</button><button onClick={() => { setReviewed(prev => ({ ...prev, [activeView]: true })); setNotice(isAr ? "تم تحديد المجموعة كمراجعة." : "Marked reviewed."); }} className="px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold">✅ {isAr ? "تحديد كمراجعة" : "Mark reviewed"}</button><button onClick={exportCurrent} className="px-3 py-1.5 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-300 text-xs font-bold">📊 {isAr ? "تصدير" : "Export"}</button><button onClick={copyCurrent} className="px-3 py-1.5 rounded-lg bg-purple-500/15 border border-purple-500/40 text-purple-300 text-xs font-bold">📋 {isAr ? "نسخ" : "Copy"}</button><button onClick={() => window.print()} className="px-3 py-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold">🖨️ {isAr ? "طباعة" : "Print"}</button></div></div>{notice && <div className="mx-3 mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2 text-[11px] text-emerald-300">{notice}</div>}<div className={`${wideMode ? "flex-1 min-h-0 overflow-auto p-4" : "p-3 max-h-[520px] overflow-auto"} space-y-3`}>{activeView === "matched" && <div className="space-y-3">{result.matched.length === 0 && result.smart_matched.length === 0 && <p className="text-white/40">{isAr ? "لا توجد عمليات متطابقة." : "No matched rows."}</p>}{result.matched.map((pair, idx) => <div key={`m-${idx}`} className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3"><div className="mb-2 flex items-center justify-between gap-2"><span className="font-bold text-emerald-300">✅ {isAr ? "مطابقة مباشرة" : "Exact match"} #{idx + 1}</span><span className="font-mono text-emerald-300">100%</span></div><div className="grid md:grid-cols-2 gap-2"><TxnCard txn={pair.statement_txn} label={isAr ? "كشف البنك" : "Bank statement"} isAr={isAr} /><TxnCard txn={pair.ledger_txn} label={isAr ? "الدفاتر" : "Books"} isAr={isAr} /></div></div>)}{result.smart_matched.map((pair, idx) => <div key={`s-${idx}`} className="rounded-xl border border-purple-500/20 bg-purple-500/5 p-3"><div className="mb-2 flex items-center justify-between gap-2"><span className="font-bold text-purple-300">🧠 {isAr ? "مطابقة دلالية" : "Semantic match"} #{idx + 1}</span><span className="font-mono text-purple-300">{Math.round(pair.confidence * 100)}%</span></div><div className="grid md:grid-cols-2 gap-2"><TxnCard txn={pair.statement_txn} label={isAr ? "كشف البنك" : "Bank statement"} isAr={isAr} /><TxnCard txn={pair.ledger_txn} label={isAr ? "الدفاتر" : "Books"} isAr={isAr} /></div></div>)}</div>}{activeView === "statement_only" && <div className="space-y-3">{result.statement_only.length === 0 ? <p className="text-white/40">{isAr ? "لا توجد عمليات مسجلة في كشف البنك فقط." : "No bank-statement-only rows."}</p> : showJournalDrafts ? <JournalEntrySuggestionsEditor rows={result.statement_only} isAr={isAr} bankAccountLabel={bank} /> : <div className="space-y-2">{result.statement_only.map((txn, idx) => <TxnCard key={idx} txn={txn} label={isAr ? "كشف البنك فقط" : "Bank statement only"} isAr={isAr} />)}</div>}</div>}{activeView === "ledger_only" && <div className="space-y-2">{result.ledger_only.length === 0 ? <p className="text-white/40">{isAr ? "لا توجد عمليات مسجلة في الدفاتر فقط." : "No books-only rows."}</p> : result.ledger_only.map((txn, idx) => <TxnCard key={idx} txn={txn} label={isAr ? "الدفاتر فقط" : "Books only"} isAr={isAr} />)}</div>}{activeView === "difference" && <div className="grid md:grid-cols-3 gap-2"><div className="rounded-xl border border-white/10 bg-black/20 p-3"><p className="text-[10px] text-white/50">{isAr ? "إجمالي كشف البنك" : "Statement total"}</p><p className="text-xl font-bold text-amber-300 font-mono">{fmt(result.statement_total)}</p></div><div className="rounded-xl border border-white/10 bg-black/20 p-3"><p className="text-[10px] text-white/50">{isAr ? "إجمالي الدفاتر" : "Books total"}</p><p className="text-xl font-bold text-blue-300 font-mono">{fmt(result.ledger_total)}</p></div><div className="rounded-xl border border-white/10 bg-black/20 p-3"><p className="text-[10px] text-white/50">{isAr ? "الفرق" : "Difference"}</p><p className={`text-xl font-bold font-mono ${isBalanced ? "text-emerald-300" : "text-rose-300"}`}>{fmt(result.difference)}</p></div></div>}</div></div></div>;
+  const exportCurrent = () => {
+    const sourceRows = activeView === "statement_only" ? result.statement_only : activeView === "ledger_only" ? result.ledger_only : [];
+    const rows = [["Group", "Date", "Description", "Amount"], ...sourceRows.map(txn => [activeView, txn.date, txn.description, fmt(txn.amount)])];
+    downloadCSV(`reconciliation_${activeView}.csv`, rows);
+    setNotice(isAr ? "تم تجهيز ملف CSV." : "CSV exported.");
+  };
+
+  const copyCurrent = async () => {
+    if (!navigator.clipboard) return;
+    await navigator.clipboard.writeText(JSON.stringify(result, null, 2));
+    setNotice(isAr ? "تم نسخ التفاصيل." : "Details copied.");
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        {(Object.keys(meta) as ResultView[]).map(view => {
+          const item = meta[view];
+          const active = activeView === view;
+          return (
+            <button key={view} onClick={() => { setActiveView(view); setNotice(""); }} className={`wood-card !p-3 text-start border transition-all hover:-translate-y-0.5 hover:bg-white/5 ${item.border} ${active ? "ring-2 ring-amber-400/70 bg-white/5" : ""}`}>
+              <div className="flex items-center justify-between gap-2"><span className="text-2xl">{item.icon}</span>{reviewed[view] && <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[9px] text-emerald-300">{isAr ? "تمت المراجعة" : "Reviewed"}</span>}</div>
+              <p className="mt-2 text-[10px] text-white/50">{item.title}</p>
+              <p className={`text-2xl font-bold tabular-nums ${item.text}`}>{item.count}</p>
+              <p className="mt-1 text-[9px] text-white/40 leading-relaxed">{item.hint}</p>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className={`rounded-xl border p-3 ${isBalanced ? "border-emerald-500/30 bg-emerald-500/10" : "border-amber-500/30 bg-amber-500/10"}`}>
+        <p className="font-bold text-sm text-white">{isBalanced ? (isAr ? "✅ نتيجة المطابقة: لا يوجد فرق" : "✅ No difference") : (isAr ? "⚠️ نتيجة المطابقة: يوجد فرق يحتاج مراجعة" : "⚠️ Review needed")}</p>
+        <p className="text-[11px] text-white/60 mt-1">{isAr ? "تم إلغاء شاشة تسجيل العمليات. الاقتراحات تظهر داخل الجدول فقط." : "The journal posting workspace was removed. Suggestions now appear inline only."}</p>
+      </div>
+
+      <div className={`${wideMode ? "fixed inset-3 z-[9999] bg-[#050505] shadow-2xl flex flex-col" : "bg-black/25"} rounded-2xl border ${current.border} overflow-hidden`}>
+        <div className="p-3 border-b border-white/10 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <h4 className={`text-base font-bold ${current.text}`}>{current.icon} {current.title}</h4>
+            <p className="text-[10px] text-white/50 mt-1">{current.hint}</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button onClick={() => setWideMode(prev => !prev)} className="px-3 py-1.5 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs font-bold">{wideMode ? "↩️" : "⛶"} {wideMode ? (isAr ? "رجوع" : "Back") : (isAr ? "عرض موسّع" : "Wide view")}</button>
+            <button onClick={() => { setReviewed(prev => ({ ...prev, [activeView]: true })); setNotice(isAr ? "تم تحديد المجموعة كمراجعة." : "Marked reviewed."); }} className="px-3 py-1.5 rounded-lg bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs font-bold">✅ {isAr ? "تحديد كمراجعة" : "Mark reviewed"}</button>
+            <button onClick={exportCurrent} className="px-3 py-1.5 rounded-lg bg-blue-500/15 border border-blue-500/40 text-blue-300 text-xs font-bold">📊 {isAr ? "تصدير" : "Export"}</button>
+            <button onClick={copyCurrent} className="px-3 py-1.5 rounded-lg bg-purple-500/15 border border-purple-500/40 text-purple-300 text-xs font-bold">📋 {isAr ? "نسخ" : "Copy"}</button>
+            <button onClick={() => window.print()} className="px-3 py-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs font-bold">🖨️ {isAr ? "طباعة" : "Print"}</button>
+          </div>
+        </div>
+        {notice && <div className="mx-3 mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2 text-[11px] text-emerald-300">{notice}</div>}
+        <div className={`${wideMode ? "flex-1 min-h-0 overflow-auto p-4" : "p-3 max-h-[520px] overflow-auto"} space-y-3`}>
+          {activeView === "matched" && <MatchedView matched={result.matched} smart={result.smart_matched} isAr={isAr} />}
+          {activeView === "statement_only" && <HistoricalJournalEntrySuggestionsEditor rows={result.statement_only} isAr={isAr} />}
+          {activeView === "ledger_only" && <div className="space-y-2">{result.ledger_only.length === 0 ? <p className="text-white/40">{isAr ? "لا توجد عمليات مسجلة في الدفاتر فقط." : "No books-only rows."}</p> : result.ledger_only.map((txn, idx) => <TxnCard key={idx} txn={txn} label={isAr ? "الدفاتر فقط" : "Books only"} isAr={isAr} />)}</div>}
+          {activeView === "difference" && <div className="rounded-xl border border-white/10 bg-black/30 p-4 text-sm text-white/70"><p>{isAr ? "الفرق النهائي:" : "Final difference:"} <span className={isBalanced ? "text-emerald-300" : "text-rose-300"}>{fmt(result.difference)} SAR</span></p><p className="mt-2 text-[11px] text-white/45">{isAr ? "راجع عمليات كشف البنك فقط وعمليات الدفاتر فقط لمعرفة سبب الفرق." : "Review statement-only and books-only rows to understand the difference."}</p></div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MatchedView({ matched, smart, isAr }: { matched: MatchedPair[]; smart: SmartMatch[]; isAr: boolean }) {
+  if (!matched.length && !smart.length) return <p className="text-white/40">{isAr ? "لا توجد عمليات متطابقة." : "No matched rows."}</p>;
+  return (
+    <div className="space-y-3">
+      {matched.map((pair, idx) => <div key={`m-${idx}`} className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3"><div className="mb-2 flex items-center justify-between gap-2"><span className="font-bold text-emerald-300">✅ {isAr ? "مطابقة مباشرة" : "Exact match"} #{idx + 1}</span><span className="font-mono text-emerald-300">100%</span></div><div className="grid md:grid-cols-2 gap-2"><TxnCard txn={pair.statement_txn} label={isAr ? "كشف البنك" : "Bank statement"} isAr={isAr} /><TxnCard txn={pair.ledger_txn} label={isAr ? "الدفاتر" : "Books"} isAr={isAr} /></div></div>)}
+      {smart.map((pair, idx) => <div key={`s-${idx}`} className="rounded-xl border border-purple-500/20 bg-purple-500/5 p-3"><div className="mb-2 flex items-center justify-between gap-2"><span className="font-bold text-purple-300">🧠 {isAr ? "مطابقة ذكية مدمجة" : "Merged smart match"} #{idx + 1}</span><span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${confidenceBadge(pair.confidence)}`}>{Math.round(pair.confidence * 100)}%</span></div><p className="mb-2 text-[11px] text-white/55">{pair.reason}</p><div className="grid md:grid-cols-2 gap-2"><TxnCard txn={pair.statement_txn} label={isAr ? "كشف البنك" : "Bank statement"} isAr={isAr} /><TxnCard txn={pair.ledger_txn} label={isAr ? "الدفاتر" : "Books"} isAr={isAr} /></div></div>)}
+    </div>
+  );
 }

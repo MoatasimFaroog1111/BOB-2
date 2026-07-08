@@ -2,12 +2,15 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "@/lib/api";
-import JournalEntrySuggestionsEditor from "@/components/JournalEntrySuggestionsEditor";
 
 interface Transaction {
   date: string;
   description: string;
+  main_description?: string;
+  details?: string[];
   amount: number;
+  debit?: number | null;
+  credit?: number | null;
   row_number: number;
   suggested_action?: string;
   suggested_action_label?: string;
@@ -15,25 +18,36 @@ interface Transaction {
   explanation?: string;
   detected_category?: string;
   ai_suggested_account?: string;
-  bank_rule_suggestion?: any;
-  historical_suggestion?: any;
+  bank_rule_suggestion?: HistoricalSuggestion;
+  historical_suggestion?: HistoricalSuggestion;
 }
 
 interface Props {
   rows: Transaction[];
   isAr: boolean;
   bankAccountLabel?: string;
-  companyId?: number | null;
+  companyId?: number | string | null;
   bankJournalId?: number | string | null;
-  bankAccountId?: number | null;
+  bankAccountId?: number | string | null;
+}
+
+interface LookupOption {
+  id?: number | string;
+  code?: string;
+  name: string;
+  type?: string;
+  label: string;
 }
 
 interface HistoricalSuggestion {
   row_number?: number | null;
   date?: string;
   amount?: number;
+  suggested_account_id?: number | null;
   suggested_account_label?: string;
+  suggested_partner_id?: number | null;
   suggested_partner_label?: string;
+  suggested_analytic_account_id?: number | null;
   suggested_analytic_account_label?: string;
   confidence?: number;
   reason?: string;
@@ -41,6 +55,16 @@ interface HistoricalSuggestion {
   historical_date?: string;
   needs_review?: boolean;
   source?: string;
+}
+
+interface SuggestedRow extends Transaction {
+  suggested_account_label?: string;
+  suggested_partner_label?: string;
+  suggested_analytic_account_label?: string;
+  suggestion_confidence?: number;
+  suggestion_reason?: string;
+  suggestion_source?: string;
+  suggestion_needs_review?: boolean;
 }
 
 interface BankRuleLine {
@@ -62,8 +86,19 @@ interface BankRule {
   lines?: BankRuleLine[];
 }
 
+function selectedCompanyFromStorage() {
+  if (typeof window === "undefined") return null;
+  const raw = window.localStorage.getItem("selectedCompanyId");
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
 function keyFor(row: Pick<Transaction, "row_number" | "date" | "amount">) {
   return `${row.row_number ?? ""}|${row.date || ""}|${Number(row.amount || 0).toFixed(2)}`;
+}
+
+function fmt(value?: number | null) {
+  return Number(value || 0).toLocaleString("en-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function pct(value?: number) {
@@ -133,7 +168,7 @@ function ruleText(rule: BankRule) {
 }
 
 function matchBankRule(row: Transaction, rules: BankRule[]): HistoricalSuggestion | null {
-  const text = [row.description, row.suggested_action_label, row.explanation, row.detected_category].filter(Boolean).join(" ");
+  const text = [row.description, row.main_description, ...(row.details || []), row.suggested_action_label, row.explanation, row.detected_category].filter(Boolean).join(" ");
   const rowCategory = category(text);
   let best: { score: number; rule: BankRule; line: BankRuleLine } | null = null;
 
@@ -157,9 +192,12 @@ function matchBankRule(row: Transaction, rules: BankRule[]): HistoricalSuggestio
     row_number: row.row_number,
     date: row.date,
     amount: row.amount,
-    suggested_account_label: account.label,
-    suggested_partner_label: partner.label,
-    suggested_analytic_account_label: analytic.label,
+    suggested_account_id: account.id || null,
+    suggested_account_label: account.label || "",
+    suggested_partner_id: partner.id || null,
+    suggested_partner_label: partner.label || "",
+    suggested_analytic_account_id: analytic.id || null,
+    suggested_analytic_account_label: analytic.label || "",
     confidence: best.score,
     reason: `Matched Odoo bank rule ${best.rule.name || best.rule.id}`,
     source: "odoo_bank_reconciliation_rule",
@@ -167,41 +205,58 @@ function matchBankRule(row: Transaction, rules: BankRule[]): HistoricalSuggestio
   };
 }
 
-function enrichRow(row: Transaction, item: HistoricalSuggestion | null, isAr: boolean) {
-  if (!item || !item.suggested_account_label) return row;
-  const parts = [item.suggested_account_label, item.suggested_partner_label, item.suggested_analytic_account_label].filter(Boolean);
-  const isRule = item.source === "odoo_bank_reconciliation_rule";
-  const label = isRule ? (isAr ? "اقتراح من قاعدة البنك" : "Bank rule suggestion") : (isAr ? "اقتراح تاريخي من أودو" : "Historical Odoo suggestion");
+function asOptions(data: any): LookupOption[] {
+  const arr = Array.isArray(data) ? data : data?.accounts || data?.partners || data?.journals || data?.analytic_accounts || data?.analyticAccounts || data?.items || [];
+  return arr
+    .map((x: any) => ({
+      id: x.id,
+      code: x.code || "",
+      name: x.name || x.display_name || "",
+      type: x.type || x.account_type || "",
+      label: `${x.code || ""} ${x.name || x.display_name || ""}${x.type ? ` (${x.type})` : ""}${x.vat ? ` - ${x.vat}` : ""}`.trim(),
+    }))
+    .filter((x: LookupOption) => x.label);
+}
+
+function applySuggestion(row: Transaction, item: HistoricalSuggestion | null): SuggestedRow {
   return {
     ...row,
-    ai_suggested_account: parts.join(" | "),
-    bank_rule_suggestion: isRule ? item : row.bank_rule_suggestion,
-    historical_suggestion: isRule ? row.historical_suggestion : item,
-    confidence: Math.max(Number(row.confidence || 0), Number(item.confidence || 0)),
-    suggested_action_label: item.needs_review ? (row.suggested_action_label || (isAr ? "يحتاج مراجعة" : "Needs review")) : `${label} ${pct(item.confidence)}`,
-    explanation: `${row.explanation || ""}${row.explanation ? " | " : ""}${item.reason || label}`,
+    suggested_account_label: item?.suggested_account_label || row.ai_suggested_account || "",
+    suggested_partner_label: item?.suggested_partner_label || "",
+    suggested_analytic_account_label: item?.suggested_analytic_account_label || "",
+    suggestion_confidence: Number(item?.confidence || row.confidence || 0),
+    suggestion_reason: item?.reason || row.explanation || "",
+    suggestion_source: item?.source || "ai_statement_suggestion",
+    suggestion_needs_review: item?.needs_review ?? true,
+    bank_rule_suggestion: item?.source === "odoo_bank_reconciliation_rule" ? item : row.bank_rule_suggestion,
+    historical_suggestion: item?.source === "odoo_bank_reconciliation_rule" ? row.historical_suggestion : item || row.historical_suggestion,
   };
 }
 
-export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, bankAccountLabel = "", companyId, bankJournalId, bankAccountId }: Props) {
-  const [enhancedRows, setEnhancedRows] = useState<Transaction[]>(rows);
+export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, companyId, bankJournalId, bankAccountId }: Props) {
+  const [suggestedRows, setSuggestedRows] = useState<SuggestedRow[]>(rows);
+  const [accounts, setAccounts] = useState<LookupOption[]>([]);
+  const [partners, setPartners] = useState<LookupOption[]>([]);
+  const [analytics, setAnalytics] = useState<LookupOption[]>([]);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
+  const effectiveCompanyId = companyId || selectedCompanyFromStorage();
+
   const payload = useMemo(() => ({
     transactions: rows,
-    company_id: companyId || null,
+    company_id: effectiveCompanyId || null,
     bank_journal_id: bankJournalId ? Number(bankJournalId) : null,
-    bank_account_id: bankAccountId || null,
+    bank_account_id: bankAccountId ? Number(bankAccountId) : null,
     history_limit: 600,
-  }), [rows, companyId, bankJournalId, bankAccountId]);
+  }), [rows, effectiveCompanyId, bankJournalId, bankAccountId]);
 
   useEffect(() => {
     let alive = true;
     async function loadSuggestions() {
       if (!rows.length) {
-        setEnhancedRows([]);
+        setSuggestedRows([]);
         return;
       }
       setLoading(true);
@@ -209,9 +264,14 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, ba
       setNotice("");
       try {
         const params = new URLSearchParams();
-        if (companyId) params.set("company_id", String(companyId));
+        if (effectiveCompanyId) params.set("company_id", String(effectiveCompanyId));
         if (bankJournalId) params.set("bank_journal_id", String(bankJournalId));
-        const [rulesResponse, historyResponse] = await Promise.all([
+        const qs = effectiveCompanyId ? `?company_id=${effectiveCompanyId}` : "";
+
+        const [accountsResponse, partnersResponse, analyticsResponse, rulesResponse, historyResponse] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/v1/erp/accounts${qs}`),
+          fetch(`${API_BASE_URL}/api/v1/erp/partners${qs}`),
+          fetch(`${API_BASE_URL}/api/v1/erp/analytic-accounts${qs}`),
           fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation/bank-rules?${params.toString()}`),
           fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation/entry-suggestions`, {
             method: "POST",
@@ -220,6 +280,9 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, ba
           }),
         ]);
 
+        const accountsData = await accountsResponse.json().catch(() => null);
+        const partnersData = await partnersResponse.json().catch(() => null);
+        const analyticsData = await analyticsResponse.json().catch(() => null);
         const rulesData = await rulesResponse.json().catch(() => null);
         const historyData = await historyResponse.json().catch(() => null);
         const rules: BankRule[] = rulesResponse.ok && Array.isArray(rulesData?.items) ? rulesData.items : [];
@@ -227,25 +290,28 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, ba
 
         const historySuggestions = new Map<string, HistoricalSuggestion>();
         (Array.isArray(historyData?.items) ? historyData.items : []).forEach((item: HistoricalSuggestion) => {
-          historySuggestions.set(keyFor({ row_number: Number(item.row_number || "", amount: Number(item.amount || 0) }), item);
+          historySuggestions.set(keyFor({ row_number: item.row_number ?? null, date: item.date || "", amount: Number(item.amount || 0) }), item);
         });
 
         const nextRows = rows.map((row) => {
           const ruleItem = matchBankRule(row, rules);
-          if (ruleItem?.suggested_account_label) return enrichRow(row, ruleItem, isAr);
-          const historyItem = historySuggestions.get(keyFor(row));
-          return enrichRow(row, historyItem || null, isAr);
+          if (ruleItem?.suggested_account_label) return applySuggestion(row, ruleItem);
+          return applySuggestion(row, historySuggestions.get(keyFor(row)) || null);
         });
 
         if (!alive) return;
-        setEnhancedRows(nextRows);
-        const ruleCount = nextRows.filter(r => r.bank_rule_suggestion).length;
+        setAccounts(accountsResponse.ok ? asOptions(accountsData) : []);
+        setPartners(partnersResponse.ok ? asOptions(partnersData) : []);
+        setAnalytics(analyticsResponse.ok ? asOptions(analyticsData) : []);
+        setSuggestedRows(nextRows);
+        const ruleCount = nextRows.filter(r => r.suggestion_source === "odoo_bank_reconciliation_rule").length;
+        const suggestedCount = nextRows.filter(r => r.suggested_account_label || r.suggested_partner_label).length;
         setNotice(isAr
-          ? `تم تطبيق ${ruleCount} اقتراح من قواعد البنك، والباقي من البيانات التاريخية عند الحاجة.`
-          : `${ruleCount} suggestions came from bank rules; remaining rows used history when needed.`);
+          ? `تم إنشاء اقتراحات للحسابات والشركاء أمام ${suggestedCount} عملية. قواعد البنك: ${ruleCount}.`
+          : `Account and partner suggestions were prepared for ${suggestedCount} rows. Bank rules: ${ruleCount}.`);
       } catch (err: any) {
         if (!alive) return;
-        setEnhancedRows(rows);
+        setSuggestedRows(rows.map(row => applySuggestion(row, null)));
         setError((isAr ? "تعذر قراءة قواعد البنك أو البيانات التاريخية: " : "Could not read bank rules or history: ") + (err?.message || err));
       } finally {
         if (alive) setLoading(false);
@@ -253,16 +319,101 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, ba
     }
     loadSuggestions();
     return () => { alive = false; };
-  }, [payload, rows, isAr, companyId, bankJournalId]);
+  }, [payload, rows, isAr, effectiveCompanyId, bankJournalId]);
+
+  const accountList = "inline-odoo-account-suggestions";
+  const partnerList = "inline-odoo-partner-suggestions";
+  const analyticList = "inline-odoo-analytic-suggestions";
+
+  const updateSuggestedRow = (index: number, patch: Partial<SuggestedRow>) => {
+    setSuggestedRows(prev => prev.map((row, i) => i === index ? { ...row, ...patch } : row));
+  };
+
+  if (!rows.length) {
+    return <p className="p-6 text-center text-gray-500">{isAr ? "لا توجد عمليات تحتاج اقتراحات." : "No rows need suggestions."}</p>;
+  }
 
   return (
-    <>
-      <div className="fixed top-5 right-5 z-[10001] max-w-xl space-y-2 text-xs">
-        {loading && <div className="rounded-xl border border-cyan-500/40 bg-cyan-500/15 px-4 py-2 font-bold text-cyan-200 shadow-2xl">{isAr ? "جاري قراءة قواعد البنك والبيانات التاريخية من أودو..." : "Reading Odoo bank rules and historical entries..."}</div>}
-        {notice && <div className="rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 font-bold text-emerald-200 shadow-2xl">{notice}</div>}
-        {error && <div className="rounded-xl border border-amber-500/40 bg-amber-500/15 px-4 py-2 font-bold text-amber-200 shadow-2xl">{error}</div>}
+    <div className="space-y-3">
+      <datalist id={accountList}>{accounts.map((account, index) => <option key={index} value={account.label} />)}</datalist>
+      <datalist id={partnerList}>{partners.map((partner, index) => <option key={index} value={partner.label} />)}</datalist>
+      <datalist id={analyticList}>{analytics.map((analytic, index) => <option key={index} value={analytic.label} />)}</datalist>
+
+      <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/10 px-4 py-3">
+        <p className="text-sm font-bold text-cyan-200">{isAr ? "اقتراحات AI للحسابات والشركاء" : "AI account and partner suggestions"}</p>
+        <p className="mt-1 text-[11px] text-white/60">
+          {isAr
+            ? "كل صف يعرض الحساب المقترح والشريك المقترح مباشرة أمام العملية. يمكن تعديل القيم يدويًا من بيانات أودو للشركة المختارة. لا يوجد ترحيل من هذه الشاشة."
+            : "Each row shows the suggested account and partner inline. Values are editable from the selected company's Odoo data. This screen does not post journal entries."}
+        </p>
       </div>
-      <JournalEntrySuggestionsEditor rows={enhancedRows} isAr={isAr} bankAccountLabel={bankAccountLabel} />
-    </>
+
+      {(loading || notice || error) && (
+        <div className="flex flex-wrap gap-2 text-[11px]">
+          {loading && <span className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 font-bold text-cyan-200">{isAr ? "جاري تجهيز الاقتراحات من أودو..." : "Preparing suggestions from Odoo..."}</span>}
+          {notice && <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 font-bold text-emerald-200">{notice}</span>}
+          {error && <span className="rounded-lg border border-amber-500/40 bg-amber-500/15 px-3 py-1.5 font-bold text-amber-200">{error}</span>}
+        </div>
+      )}
+
+      <div className="overflow-auto rounded-xl border border-white/10 bg-black/20">
+        <table className="w-full min-w-[1280px] text-[11px]">
+          <thead className="bg-white/5 text-white/60">
+            <tr className="border-b border-white/10">
+              <th className="px-3 py-2 text-center">#</th>
+              <th className="px-3 py-2 text-start">{isAr ? "التاريخ" : "Date"}</th>
+              <th className="px-3 py-2 text-start min-w-[300px]">{isAr ? "البيان / الوصف" : "Statement description"}</th>
+              <th className="px-3 py-2 text-end">{isAr ? "المبلغ" : "Amount"}</th>
+              <th className="px-3 py-2 text-start min-w-[260px]">{isAr ? "الحساب المقترح" : "Suggested account"}</th>
+              <th className="px-3 py-2 text-start min-w-[220px]">{isAr ? "الشريك المقترح" : "Suggested partner"}</th>
+              <th className="px-3 py-2 text-start min-w-[220px]">{isAr ? "الحساب التحليلي" : "Analytic account"}</th>
+              <th className="px-3 py-2 text-center">{isAr ? "الثقة" : "Confidence"}</th>
+              <th className="px-3 py-2 text-start min-w-[260px]">{isAr ? "مصدر الاقتراح" : "Suggestion source"}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {suggestedRows.map((row, index) => {
+              const sourceLabel = row.suggestion_source === "odoo_bank_reconciliation_rule"
+                ? (isAr ? "قاعدة بنك من أودو" : "Odoo bank rule")
+                : row.suggestion_source === "odoo_historical_move_lines"
+                  ? (isAr ? "مطابقة تاريخية من أودو" : "Odoo historical match")
+                  : (isAr ? "اقتراح AI يحتاج مراجعة" : "AI suggestion needs review");
+              return (
+                <tr key={`${row.row_number}-${row.date}-${row.amount}-${index}`} className="border-b border-white/5 align-top hover:bg-white/5">
+                  <td className="px-3 py-2 text-center font-mono text-white/40">{row.row_number || index + 1}</td>
+                  <td className="px-3 py-2 font-mono text-white/70">{row.date || "—"}</td>
+                  <td className="px-3 py-2 text-white">
+                    <div className="font-semibold leading-relaxed">{row.main_description || row.description || "—"}</div>
+                    {row.details && row.details.length > 0 && (
+                      <details className="mt-1 text-white/45">
+                        <summary className="cursor-pointer text-blue-300">{isAr ? "تفاصيل" : "Details"}</summary>
+                        <div className="mt-1 space-y-1">{row.details.map((detail, detailIndex) => <div key={detailIndex}>{detail}</div>)}</div>
+                      </details>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-end font-mono font-bold text-amber-300">{fmt(row.amount)} SAR</td>
+                  <td className="px-3 py-2">
+                    <input list={accountList} value={row.suggested_account_label || ""} onChange={event => updateSuggestedRow(index, { suggested_account_label: event.target.value })} placeholder={isAr ? "اختر الحساب من أودو" : "Select Odoo account"} className="w-full rounded-lg border border-cyan-500/20 bg-black/40 px-2 py-2 text-white outline-none focus:border-cyan-400" />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input list={partnerList} value={row.suggested_partner_label || ""} onChange={event => updateSuggestedRow(index, { suggested_partner_label: event.target.value })} placeholder={isAr ? "اختر الشريك" : "Select partner"} className="w-full rounded-lg border border-purple-500/20 bg-black/40 px-2 py-2 text-white outline-none focus:border-purple-400" />
+                  </td>
+                  <td className="px-3 py-2">
+                    <input list={analyticList} value={row.suggested_analytic_account_label || ""} onChange={event => updateSuggestedRow(index, { suggested_analytic_account_label: event.target.value })} placeholder={isAr ? "اختياري" : "Optional"} className="w-full rounded-lg border border-amber-500/20 bg-black/40 px-2 py-2 text-white outline-none focus:border-amber-400" />
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${Number(row.suggestion_confidence || 0) >= 0.7 ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300" : "border-amber-500/40 bg-amber-500/15 text-amber-300"}`}>{pct(row.suggestion_confidence)}</span>
+                  </td>
+                  <td className="px-3 py-2 text-white/55">
+                    <div className="font-bold text-cyan-200">{sourceLabel}</div>
+                    <div className="mt-1 leading-relaxed">{row.suggestion_reason || (isAr ? "راجع الحساب والشريك قبل الاعتماد." : "Review the account and partner before approval.")}</div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }

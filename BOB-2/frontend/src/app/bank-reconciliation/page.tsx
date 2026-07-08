@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import JournalEntrySuggestionsEditor from "@/components/JournalEntrySuggestionsEditor";
+import HistoricalJournalEntrySuggestionsEditor from "@/components/HistoricalJournalEntrySuggestionsEditor";
 import { API_BASE_URL } from "@/lib/api";
 import { useCompany } from "@/lib/CompanyContext";
 import { useLanguage } from "@/lib/LanguageContext";
@@ -25,6 +25,11 @@ interface Transaction {
   confidence?: number;
   explanation?: string;
   detected_category?: string;
+  main_description?: string;
+  details?: string[];
+  debit?: number | null;
+  credit?: number | null;
+  balance?: number | null;
 }
 
 interface MatchedPair {
@@ -72,7 +77,7 @@ interface ReconciliationResult {
   safe_to_post?: boolean;
 }
 
-type TabKey = "matched" | "ai_suggested" | "bank_only" | "odoo_only";
+type TabKey = "matched" | "bank_only" | "odoo_only";
 
 function extOf(name: string): string {
   const idx = name.lastIndexOf(".");
@@ -198,7 +203,6 @@ export default function BankReconciliationPage() {
   const [saveMessage, setSaveMessage] = useState("");
   const [result, setResult] = useState<ReconciliationResult | null>(null);
   const [activeTab, setActiveTab] = useState<TabKey>("matched");
-  const [showProposedEntries, setShowProposedEntries] = useState(false);
 
   const msg = useCallback((ar: string, en: string) => (language === "ar" ? ar : en), [language]);
 
@@ -252,7 +256,6 @@ export default function BankReconciliationPage() {
     setError("");
     setSaveMessage("");
     setResult(null);
-    setShowProposedEntries(false);
   }, [validateFile]);
 
   const handleReconcile = async () => {
@@ -260,7 +263,6 @@ export default function BankReconciliationPage() {
     setLoading(true);
     setError("");
     setSaveMessage("");
-    setShowProposedEntries(false);
     try {
       const form = new FormData();
       form.append("statement", file);
@@ -298,13 +300,16 @@ export default function BankReconciliationPage() {
         [t("bankRecon.difference"), result.difference],
         [t("bankRecon.statementCount"), result.statement_count],
         [t("bankRecon.ledgerCount"), result.ledger_count],
-        [t("bankRecon.matchedCount"), result.matched.length],
-        [t("bankRecon.aiSuggestedCount"), result.smart_matched.length],
+        [t("bankRecon.matchedCount"), result.matched.length + result.smart_matched.length],
         [t("bankRecon.bankOnlyCount"), result.statement_only.length],
         [t("bankRecon.odooOnlyCount"), result.ledger_only.length],
         ["Footer", "Reconciliation report generated before any manual posting action."],
       ]), "Summary");
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(result.statement_only), "Bank Only");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
+        ...result.matched.map(row => ({ type: "exact", ...row.statement_txn, odoo_date: row.ledger_txn.date, odoo_description: row.ledger_txn.description })),
+        ...result.smart_matched.map(row => ({ type: "smart", ...row.statement_txn, confidence: row.confidence, reason: row.reason, odoo_date: row.ledger_txn.date, odoo_description: row.ledger_txn.description })),
+      ]), "Matched");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(result.statement_only), "Bank Only Suggestions");
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(result.ledger_only), "Odoo Only");
       XLSX.writeFile(wb, "bank-reconciliation.xlsx");
     } catch {
@@ -316,7 +321,7 @@ export default function BankReconciliationPage() {
     if (!result) return;
     const journal = result.selected_bank_journal || selectedJournal;
     const lines: string[] = [];
-    lines.push("Bank Reconciliation AI Report");
+    lines.push("Bank Reconciliation Report");
     lines.push(`Run timestamp: ${new Date().toISOString()}`);
     lines.push(`Bank journal/account: ${journal ? `${journal.journal_name} (${journal.journal_code}) / ${journal.account_code || ""} ${journal.account_name || ""}` : "Not selected"}`);
     lines.push(`Date range: ${result.date_range_used.from || "-"} to ${result.date_range_used.to || "-"}`);
@@ -325,24 +330,19 @@ export default function BankReconciliationPage() {
     lines.push(`Difference: ${formatAmount(result.difference)}`);
     lines.push(`Statement row count: ${result.statement_count}`);
     lines.push(`Odoo ledger row count: ${result.ledger_count}`);
-    lines.push(`Matched count: ${result.matched.length}`);
-    lines.push(`AI suggested count: ${result.smart_matched.length}`);
-    lines.push(`Bank-only count: ${result.statement_only.length}`);
+    lines.push(`Matched count: ${result.matched.length + result.smart_matched.length}`);
+    lines.push(`Bank-only rows needing account/partner suggestions: ${result.statement_only.length}`);
     lines.push(`Odoo-only count: ${result.ledger_only.length}`);
     lines.push("");
     lines.push("Matched table");
-    result.matched.slice(0, 80).forEach((row, idx) => lines.push(`${idx + 1}. ${row.statement_txn.date} | ${formatAmount(row.statement_txn.amount)} | ${truncate(row.statement_txn.description)} | Odoo: ${row.ledger_txn.date} ${truncate(row.ledger_txn.description)}`));
+    result.matched.slice(0, 80).forEach((row, idx) => lines.push(`${idx + 1}. exact | ${row.statement_txn.date} | ${formatAmount(row.statement_txn.amount)} | ${truncate(row.statement_txn.description)} | Odoo: ${row.ledger_txn.date} ${truncate(row.ledger_txn.description)}`));
+    result.smart_matched.slice(0, 80).forEach((row, idx) => lines.push(`${idx + 1}. smart | ${row.statement_txn.date} | ${formatAmount(row.statement_txn.amount)} | confidence ${(row.confidence * 100).toFixed(0)}% | ${truncate(row.reason, 120)}`));
     lines.push("");
-    lines.push("AI suggested table with confidence and reason");
-    result.smart_matched.slice(0, 80).forEach((row, idx) => lines.push(`${idx + 1}. ${row.statement_txn.date} | ${formatAmount(row.statement_txn.amount)} | confidence ${(row.confidence * 100).toFixed(0)}% | ${truncate(row.reason, 120)}`));
-    lines.push("");
-    lines.push("Bank-only table");
+    lines.push("Bank-only rows with inline account/partner suggestion workspace");
     result.statement_only.slice(0, 120).forEach((row, idx) => lines.push(`${idx + 1}. ${row.date} | ${formatAmount(row.amount)} | row ${row.row_number} | ${row.suggested_action || "needs_review"} | confidence ${((row.confidence || 0) * 100).toFixed(0)}% | ${truncate(row.description)}`));
     lines.push("");
     lines.push("Odoo-only table");
-    result.ledger_only.slice(0, 120).forEach((row, idx) => lines.push(`${idx + 1}. ${row.date} | ${formatAmount(row.amount)} | row ${row.row_number} | ${row.suggested_action || "needs_review"} | confidence ${((row.confidence || 0) * 100).toFixed(0)}% | ${truncate(row.description)}`));
-    lines.push("");
-    lines.push("Manual proposed journal entries can be previewed separately before posting.");
+    result.ledger_only.slice(0, 120).forEach((row, idx) => lines.push(`${idx + 1}. ${row.date} | ${formatAmount(row.amount)} | row ${row.row_number} | ${truncate(row.description)}`));
     downloadBlob(buildPdf(lines), "bank-reconciliation-report.pdf");
   };
 
@@ -377,15 +377,13 @@ export default function BankReconciliationPage() {
   };
 
   const tabs: { key: TabKey; label: string; count: number }[] = [
-    { key: "matched", label: t("bankRecon.exactMatch"), count: result?.matched.length ?? 0 },
-    { key: "ai_suggested", label: t("bankRecon.aiSuggested"), count: result?.smart_matched.length ?? 0 },
-    { key: "bank_only", label: t("bankRecon.bankOnly"), count: result?.statement_only.length ?? 0 },
+    { key: "matched", label: t("bankRecon.exactMatch"), count: (result?.matched.length ?? 0) + (result?.smart_matched.length ?? 0) },
+    { key: "bank_only", label: msg("اقتراحات AI للحسابات والشركاء", "AI account/partner suggestions"), count: result?.statement_only.length ?? 0 },
     { key: "odoo_only", label: t("bankRecon.systemOnly"), count: result?.ledger_only.length ?? 0 },
   ];
 
   const canReconcile = Boolean(file && fileValid && selectedJournalId && !loading);
-  const journalForPosting = result?.selected_bank_journal || selectedJournal;
-  const bankAccountLabel = journalForPosting ? `${journalForPosting.account_code || ""} ${journalForPosting.account_name || journalForPosting.journal_name || ""}`.trim() : "";
+  const journalForSuggestions = result?.selected_bank_journal || selectedJournal;
 
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -466,8 +464,7 @@ export default function BankReconciliationPage() {
               { label: t("bankRecon.difference"), value: formatAmount(result.difference), color: diffColor(result.difference) },
               { label: t("bankRecon.statementCount"), value: String(result.statement_count), color: "text-white" },
               { label: t("bankRecon.ledgerCount"), value: String(result.ledger_count), color: "text-white" },
-              { label: t("bankRecon.matchedCount"), value: String(result.matched.length), color: "text-emerald-400" },
-              { label: t("bankRecon.aiSuggestedCount"), value: String(result.smart_matched.length), color: "text-purple-400" },
+              { label: t("bankRecon.matchedCount"), value: String(result.matched.length + result.smart_matched.length), color: "text-emerald-400" },
               { label: t("bankRecon.bankOnlyCount"), value: String(result.statement_only.length), color: result.statement_only.length ? "text-orange-400" : "text-white" },
               { label: t("bankRecon.odooOnlyCount"), value: String(result.ledger_only.length), color: result.ledger_only.length ? "text-orange-400" : "text-white" },
               { label: t("bankRecon.dateRangeUsed"), value: `${result.date_range_used.from || "—"} → ${result.date_range_used.to || "—"}`, color: "text-gray-300" },
@@ -483,11 +480,8 @@ export default function BankReconciliationPage() {
             <button onClick={exportExcel} className="px-4 py-2 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 text-sm font-medium hover:bg-emerald-600/30 transition-colors">{t("bankRecon.exportExcel")}</button>
             <button onClick={exportPdf} className="px-4 py-2 rounded-lg bg-sky-600/20 border border-sky-500/30 text-sky-400 text-sm font-medium hover:bg-sky-600/30 transition-colors">{t("bankRecon.exportPdf")}</button>
             <button disabled={saving || result.report_status === "saved"} onClick={saveReport} className="px-4 py-2 rounded-lg bg-amber-600/20 border border-amber-500/30 text-amber-300 text-sm font-medium hover:bg-amber-600/30 disabled:opacity-40 transition-colors">{saving ? msg("جاري الحفظ...", "Saving...") : msg("حفظ تقرير التسوية", "Save Reconciliation Report")}</button>
-            <button disabled={!result.statement_only.length} onClick={() => { setActiveTab("bank_only"); setShowProposedEntries(true); }} className="px-4 py-2 rounded-lg bg-cyan-600/20 border border-cyan-500/30 text-cyan-300 text-sm font-bold hover:bg-cyan-600/30 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-              🧾 {msg("القيود المقترحة", "Proposed Journal Entries")} ({result.statement_only.length})
-            </button>
           </div>
-          <p className="text-[11px] text-cyan-200/70">{msg("زر القيود المقترحة يفتح شاشة واسعة لمعاينة قيود العمليات الموجودة في كشف البنك فقط قبل ترحيلها إلى أودو، مع إمكانية ترحيل قيد واحد أو كل القيود.", "Proposed Journal Entries opens a wide preview for bank-statement-only rows before sending them to Odoo, with one-by-one or bulk posting actions.")}</p>
+          <p className="text-[11px] text-cyan-200/70">{msg("تم إلغاء شاشة تسجيل العمليات المنفصلة. الحسابات والشركاء المقترحون تظهر الآن مباشرة داخل تبويب اقتراحات AI للحسابات والشركاء.", "The separate journal posting screen has been removed. Suggested accounts and partners now appear inline in the AI account/partner suggestions tab.")}</p>
           {saveMessage && <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">{saveMessage}</div>}
 
           <div className="flex gap-1 border-b border-white/10 pb-0 overflow-x-auto">
@@ -499,44 +493,34 @@ export default function BankReconciliationPage() {
           </div>
 
           <div className="rounded-xl border border-white/10 bg-black/20 overflow-x-auto">
-            {activeTab === "matched" && <MatchedTable rows={result.matched} t={t} />}
-            {activeTab === "ai_suggested" && <SmartTable rows={result.smart_matched} t={t} />}
-            {activeTab === "bank_only" && <ExceptionTable rows={result.statement_only} t={t} empty={t("bankRecon.noDiscrepancies")} />}
+            {activeTab === "matched" && <MatchedTable matched={result.matched} smart={result.smart_matched} t={t} />}
+            {activeTab === "bank_only" && <HistoricalJournalEntrySuggestionsEditor rows={result.statement_only} isAr={language === "ar"} companyId={selectedCompanyId} bankJournalId={journalForSuggestions?.journal_id || selectedJournalId} bankAccountId={journalForSuggestions?.account_id || null} />}
             {activeTab === "odoo_only" && <ExceptionTable rows={result.ledger_only} t={t} empty={t("bankRecon.noDiscrepancies")} />}
           </div>
-        </>
-      )}
-
-      {showProposedEntries && result && (
-        <>
-          <div className="fixed top-5 left-5 z-[10000]">
-            <button onClick={() => setShowProposedEntries(false)} className="rounded-xl border border-rose-500/50 bg-rose-500/20 px-4 py-2 text-xs font-bold text-rose-200 shadow-2xl hover:bg-rose-500/30">
-              ✕ {msg("إغلاق القيود المقترحة", "Close proposed entries")}
-            </button>
-          </div>
-          <JournalEntrySuggestionsEditor rows={result.statement_only} isAr={language === "ar"} bankAccountLabel={bankAccountLabel} />
         </>
       )}
     </div>
   );
 }
 
-function MatchedTable({ rows, t }: { rows: MatchedPair[]; t: (key: string) => string }) {
-  if (!rows.length) return <p className="p-6 text-center text-gray-500">{t("bankRecon.noDiscrepancies")}</p>;
+function MatchedTable({ matched, smart, t }: { matched: MatchedPair[]; smart: SmartMatch[]; t: (key: string) => string }) {
+  if (!matched.length && !smart.length) return <p className="p-6 text-center text-gray-500">{t("bankRecon.noDiscrepancies")}</p>;
   return (
     <table className="w-full text-sm">
-      <thead><tr className="border-b border-white/10 text-gray-400 text-xs uppercase"><th className="px-3 py-2 text-start">{t("bankRecon.date")}</th><th className="px-3 py-2 text-start">{t("bankRecon.description")}</th><th className="px-3 py-2 text-end">{t("bankRecon.amount")}</th><th className="px-3 py-2 text-start">Odoo</th></tr></thead>
-      <tbody>{rows.map((row, index) => <tr key={index} className="border-b border-white/5"><td className="px-3 py-2 text-gray-300">{row.statement_txn.date}</td><td className="px-3 py-2 text-white">{row.statement_txn.description}</td><td className="px-3 py-2 text-end text-gray-300">{formatAmount(row.statement_txn.amount)}</td><td className="px-3 py-2 text-gray-300">{row.ledger_txn.date} · {row.ledger_txn.description}</td></tr>)}</tbody>
-    </table>
-  );
-}
-
-function SmartTable({ rows, t }: { rows: SmartMatch[]; t: (key: string) => string }) {
-  if (!rows.length) return <p className="p-6 text-center text-gray-500">{t("bankRecon.noDiscrepancies")}</p>;
-  return (
-    <table className="w-full text-sm">
-      <thead><tr className="border-b border-white/10 text-gray-400 text-xs uppercase"><th className="px-3 py-2 text-start">{t("bankRecon.date")}</th><th className="px-3 py-2 text-start">{t("bankRecon.description")}</th><th className="px-3 py-2 text-end">{t("bankRecon.amount")}</th><th className="px-3 py-2 text-center">{t("bankRecon.confidence")}</th><th className="px-3 py-2 text-start">{t("bankRecon.reason")}</th></tr></thead>
-      <tbody>{rows.map((row, index) => <tr key={index} className="border-b border-white/5"><td className="px-3 py-2 text-gray-300">{row.statement_txn.date}</td><td className="px-3 py-2 text-white">{row.statement_txn.description}</td><td className="px-3 py-2 text-end text-gray-300">{formatAmount(row.statement_txn.amount)}</td><td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded text-xs border ${confidenceBadge(row.confidence)}`}>{(row.confidence * 100).toFixed(0)}%</span></td><td className="px-3 py-2 text-gray-400 text-xs">{row.reason}</td></tr>)}</tbody>
+      <thead>
+        <tr className="border-b border-white/10 text-gray-400 text-xs uppercase">
+          <th className="px-3 py-2 text-start">{t("bankRecon.matchType")}</th>
+          <th className="px-3 py-2 text-start">{t("bankRecon.date")}</th>
+          <th className="px-3 py-2 text-start">{t("bankRecon.description")}</th>
+          <th className="px-3 py-2 text-end">{t("bankRecon.amount")}</th>
+          <th className="px-3 py-2 text-center">{t("bankRecon.confidence")}</th>
+          <th className="px-3 py-2 text-start">Odoo</th>
+        </tr>
+      </thead>
+      <tbody>
+        {matched.map((row, index) => <tr key={`exact-${index}`} className="border-b border-white/5"><td className="px-3 py-2 text-emerald-300 font-bold">Exact</td><td className="px-3 py-2 text-gray-300">{row.statement_txn.date}</td><td className="px-3 py-2 text-white">{row.statement_txn.description}</td><td className="px-3 py-2 text-end text-gray-300">{formatAmount(row.statement_txn.amount)}</td><td className="px-3 py-2 text-center"><span className="px-2 py-0.5 rounded text-xs border bg-emerald-500/20 text-emerald-400 border-emerald-500/30">100%</span></td><td className="px-3 py-2 text-gray-300">{row.ledger_txn.date} · {row.ledger_txn.description}</td></tr>)}
+        {smart.map((row, index) => <tr key={`smart-${index}`} className="border-b border-white/5"><td className="px-3 py-2 text-purple-300 font-bold">Smart</td><td className="px-3 py-2 text-gray-300">{row.statement_txn.date}</td><td className="px-3 py-2 text-white">{row.statement_txn.description}<div className="mt-1 text-[11px] text-white/45">{row.reason}</div></td><td className="px-3 py-2 text-end text-gray-300">{formatAmount(row.statement_txn.amount)}</td><td className="px-3 py-2 text-center"><span className={`px-2 py-0.5 rounded text-xs border ${confidenceBadge(row.confidence)}`}>{(row.confidence * 100).toFixed(0)}%</span></td><td className="px-3 py-2 text-gray-300">{row.ledger_txn.date} · {row.ledger_txn.description}</td></tr>)}
+      </tbody>
     </table>
   );
 }

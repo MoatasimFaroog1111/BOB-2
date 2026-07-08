@@ -229,23 +229,26 @@ def _fetch_historical_bank_entries(erp: Any, payload: HistoricalEntrySuggestionR
 
 
 def _suggest_for_txn(txn: BankTxnForSuggestion, historical: list[dict[str, Any]]) -> dict[str, Any]:
+    # Historical matching intentionally ignores dates. Dates are kept only for display/evidence.
+    # Ranking is driven mainly by description/statement text, with amount as a light supporting signal.
     txn_text = " ".join(filter(None, [txn.description, txn.suggested_action_label, txn.explanation, txn.detected_category]))
     txn_cat = _category(txn_text)
     best: tuple[float, dict[str, Any], dict[str, Any]] | None = None
 
     for entry in historical:
-        text_score = _text_similarity(txn_text, entry.get("bank_text") or "")
+        bank_text_score = _text_similarity(txn_text, entry.get("bank_text") or "")
         amount_score = _amount_similarity(txn.amount, entry.get("bank_amount") or 0.0)
-        cat_score = 1.0 if txn_cat == _category(entry.get("bank_text") or "") else 0.0
-        base_score = text_score * 0.62 + amount_score * 0.23 + cat_score * 0.15
+        cat_score = 1.0 if txn_cat != "general" and txn_cat == _category(entry.get("bank_text") or "") else 0.0
+
         for counter in entry["counterparts"]:
             account_id, account_label = _m2o(counter.get("account_id"))
             if not account_id:
                 continue
             partner_id, partner_label = _m2o(counter.get("partner_id"))
             analytic_id, analytic_label = _m2o(counter.get("analytic_account_id"))
-            counter_text_bonus = _text_similarity(txn_text, _line_text(counter)) * 0.10
-            score = min(base_score + counter_text_bonus, 1.0)
+            counter_text_score = _text_similarity(txn_text, _line_text(counter))
+            text_score = max(bank_text_score, counter_text_score)
+            score = min(text_score * 0.82 + amount_score * 0.12 + cat_score * 0.06, 1.0)
             if best is None or score > best[0]:
                 best = (score, entry, counter)
 
@@ -267,7 +270,7 @@ def _suggest_for_txn(txn: BankTxnForSuggestion, historical: list[dict[str, Any]]
     analytic_id, analytic_label = _m2o(counter.get("analytic_account_id"))
     reason = (
         f"Matched against historical posted Odoo move {entry.get('move_name') or entry.get('move_id')} "
-        f"dated {entry.get('date')} using natural-language similarity, category, and amount pattern."
+        f"using description/statement similarity as the main factor and amount as a light supporting factor. Date was not used for scoring."
     )
     return {
         "row_number": txn.row_number,
@@ -286,14 +289,14 @@ def _suggest_for_txn(txn: BankTxnForSuggestion, historical: list[dict[str, Any]]
         "historical_move_id": entry.get("move_id"),
         "historical_move_name": entry.get("move_name"),
         "historical_date": entry.get("date"),
-        "needs_review": score < 0.55,
+        "needs_review": score < 0.60,
     }
 
 
 @router.post("/bank-reconciliation/entry-suggestions")
 def suggest_bank_reconciliation_entries(payload: HistoricalEntrySuggestionRequest, db: Session = Depends(get_db)):
     if not payload.transactions:
-        return {"status": "success", "items": [], "history_count": 0, "method": "odoo_historical_nlp_similarity"}
+        return {"status": "success", "items": [], "history_count": 0, "method": "odoo_historical_description_amount_similarity"}
 
     erp = _get_active_erp_provider(db)
     try:
@@ -305,9 +308,9 @@ def suggest_bank_reconciliation_entries(payload: HistoricalEntrySuggestionReques
             "items": items,
             "history_count": len(historical),
             "confident_count": confident,
-            "method": "odoo_historical_nlp_similarity",
+            "method": "odoo_historical_description_amount_similarity",
             "safe_to_post": False,
-            "note": "Suggestions are derived from posted historical Odoo bank journal entries and must be reviewed before posting.",
+            "note": "Historical suggestions are matched mainly by description/statement text. Amount is only a supporting signal, and transaction dates are not used for scoring.",
         }
     except HTTPException:
         raise

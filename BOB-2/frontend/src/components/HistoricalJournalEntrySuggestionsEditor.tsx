@@ -40,8 +40,11 @@ interface OdooSuggestion {
   row_number?: number | null;
   date?: string;
   amount?: number;
+  suggested_account_id?: number | null;
   suggested_account_label?: string;
+  suggested_partner_id?: number | null;
   suggested_partner_label?: string;
+  suggested_analytic_account_id?: number | null;
   suggested_analytic_account_label?: string;
   confidence?: number;
   reason?: string;
@@ -50,13 +53,36 @@ interface OdooSuggestion {
 }
 
 interface SuggestedRow extends Transaction {
+  suggested_account_id?: number | null;
   suggested_account_label: string;
+  suggested_partner_id?: number | null;
   suggested_partner_label: string;
+  suggested_analytic_account_id?: number | null;
   suggested_analytic_account_label: string;
   suggestion_confidence: number;
   suggestion_reason: string;
   suggestion_source: string;
   suggestion_needs_review: boolean;
+}
+
+interface PostingLinePreview {
+  account_id: number;
+  account_label: string;
+  debit: number;
+  credit: number;
+  name: string;
+  partner_id?: number;
+  partner_label?: string;
+  analytic_account_id?: number;
+  analytic_account_label?: string;
+}
+
+interface PostingPreview {
+  key: string;
+  row: SuggestedRow;
+  payload: any;
+  lines: PostingLinePreview[];
+  warning?: string;
 }
 
 function selectedCompanyFromStorage() {
@@ -202,14 +228,39 @@ function applySuggestion(row: Transaction, suggestion: OdooSuggestion | null, ac
   const usedFallback = !suggestion?.suggested_account_label && Boolean(account);
   return {
     ...row,
+    suggested_account_id: suggestion?.suggested_account_id || null,
     suggested_account_label: account,
+    suggested_partner_id: suggestion?.suggested_partner_id || null,
     suggested_partner_label: partner,
+    suggested_analytic_account_id: suggestion?.suggested_analytic_account_id || null,
     suggested_analytic_account_label: analytic,
     suggestion_confidence: Number(suggestion?.confidence || row.confidence || (usedFallback ? 0.58 : 0)),
     suggestion_reason: suggestion?.reason || row.explanation || (usedFallback ? "Local fallback from loaded Odoo accounts and transaction keywords after historical lookup was unavailable." : ""),
     suggestion_source: suggestion?.source || (usedFallback ? "local_odoo_lookup_fallback" : "odoo_historical_or_ai_review"),
     suggestion_needs_review: suggestion?.needs_review ?? true,
   };
+}
+
+function findOptionByValue(options: LookupOption[], value?: string, id?: number | string | null): LookupOption | undefined {
+  if (id) {
+    const byId = options.find(option => String(option.id) === String(id));
+    if (byId) return byId;
+  }
+  const cleanedValue = clean(value || "");
+  if (!cleanedValue) return undefined;
+  const exact = options.find(option => clean(option.label) === cleanedValue || clean(`${option.code || ""} ${option.name || ""}`) === cleanedValue);
+  if (exact) return exact;
+  const firstToken = cleanedValue.split(" ")[0];
+  if (/^\d{3,}$/.test(firstToken)) {
+    const byCode = options.find(option => clean(option.code || "") === firstToken || clean(option.label).startsWith(firstToken));
+    if (byCode) return byCode;
+  }
+  return options.find(option => clean(option.label).includes(cleanedValue) || cleanedValue.includes(clean(option.name)));
+}
+
+function firstLine(value: string, max = 120) {
+  const plain = String(value || "").replace(/\s+/g, " ").trim();
+  return plain.length > max ? `${plain.slice(0, max - 1)}…` : plain;
 }
 
 async function jsonOrNull(response: Response) {
@@ -220,7 +271,7 @@ async function delay(ms: number) {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, companyId, bankJournalId, bankAccountId }: Props) {
+export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, companyId, bankJournalId, bankAccountId, bankAccountLabel }: Props) {
   const [suggestedRows, setSuggestedRows] = useState<SuggestedRow[]>(rows.map(row => applySuggestion(row, null, [], [], [])));
   const [accounts, setAccounts] = useState<LookupOption[]>([]);
   const [partners, setPartners] = useState<LookupOption[]>([]);
@@ -228,6 +279,12 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [wideMode, setWideMode] = useState(false);
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+  const [preview, setPreview] = useState<PostingPreview | null>(null);
+  const [posting, setPosting] = useState<Record<string, boolean>>({});
+  const [posted, setPosted] = useState<Record<string, { move_name?: string; odoo_url?: string }>>({});
+  const [postError, setPostError] = useState<Record<string, string>>({});
 
   const effectiveCompanyId = companyId || selectedCompanyFromStorage();
 
@@ -331,23 +388,124 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
     setSuggestedRows(prev => prev.map((row, i) => i === index ? { ...row, ...patch } : row));
   };
 
+  const buildPreview = (row: SuggestedRow): PostingPreview => {
+    const rowKey = keyFor(row);
+    const amount = Math.abs(Number(row.amount || 0));
+    const counterAccount = findOptionByValue(accounts, row.suggested_account_label, row.suggested_account_id);
+    const partner = findOptionByValue(partners, row.suggested_partner_label, row.suggested_partner_id);
+    const analytic = findOptionByValue(analytics, row.suggested_analytic_account_label, row.suggested_analytic_account_id);
+    const description = firstLine(row.main_description || row.description || `Bank statement row ${row.row_number}`, 180);
+    const ref = `BANK-STMT-ROW-${row.row_number || "NA"}-${row.date || "NO-DATE"}`;
+    const bankId = bankAccountId ? Number(bankAccountId) : 0;
+    const warning = !counterAccount?.id
+      ? (isAr ? "لا يمكن الترحيل قبل اختيار حساب صحيح من أودو." : "Select a valid Odoo account before posting.")
+      : !bankId
+        ? (isAr ? "لا يمكن الترحيل قبل توفر حساب البنك المختار." : "The selected bank account is required before posting.")
+        : amount <= 0
+          ? (isAr ? "المبلغ صفر أو غير صالح." : "The amount is zero or invalid.")
+          : "";
+
+    const counterLine: PostingLinePreview = {
+      account_id: Number(counterAccount?.id || 0),
+      account_label: counterAccount?.label || row.suggested_account_label || "—",
+      debit: row.amount < 0 ? amount : 0,
+      credit: row.amount > 0 ? amount : 0,
+      name: description,
+      partner_id: partner?.id ? Number(partner.id) : undefined,
+      partner_label: partner?.label || row.suggested_partner_label || undefined,
+      analytic_account_id: analytic?.id ? Number(analytic.id) : undefined,
+      analytic_account_label: analytic?.label || row.suggested_analytic_account_label || undefined,
+    };
+    const bankLine: PostingLinePreview = {
+      account_id: bankId,
+      account_label: bankAccountLabel || (isAr ? "الحساب البنكي المختار" : "Selected bank account"),
+      debit: row.amount > 0 ? amount : 0,
+      credit: row.amount < 0 ? amount : 0,
+      name: description,
+    };
+    const lines = [counterLine, bankLine];
+    return {
+      key: rowKey,
+      row,
+      warning,
+      lines,
+      payload: {
+        company_id: effectiveCompanyId ? Number(effectiveCompanyId) : null,
+        journal_type: "bank",
+        journal_id: bankJournalId ? Number(bankJournalId) : null,
+        date: row.date || "",
+        ref,
+        filename: "bank_statement_reconciliation",
+        amount: Number(row.amount || 0),
+        partner_name: partner?.label || row.suggested_partner_label || "",
+        lines: lines.map(line => ({
+          account_id: line.account_id,
+          account_name: line.account_label,
+          debit: line.debit,
+          credit: line.credit,
+          name: line.name,
+          partner_id: line.partner_id,
+          partner_name: line.partner_label || "",
+          analytic_account_id: line.analytic_account_id,
+          analytic_account_name: line.analytic_account_label || "",
+        })),
+      },
+    };
+  };
+
+  const openPreview = (row: SuggestedRow) => setPreview(buildPreview(row));
+
+  const postRow = async (row: SuggestedRow) => {
+    const currentPreview = buildPreview(row);
+    setPreview(currentPreview);
+    if (currentPreview.warning) return;
+    setPosting(prev => ({ ...prev, [currentPreview.key]: true }));
+    setPostError(prev => ({ ...prev, [currentPreview.key]: "" }));
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/v1/erp/register-bank-reconciliation-entry-v2`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(currentPreview.payload),
+      });
+      const data = await jsonOrNull(response);
+      if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
+      setPosted(prev => ({ ...prev, [currentPreview.key]: { move_name: data?.move_name, odoo_url: data?.odoo_url } }));
+      setPreview(prev => prev ? { ...prev, warning: isAr ? `تم إنشاء القيد في Odoo: ${data?.move_name || data?.move_id}` : `Created in Odoo: ${data?.move_name || data?.move_id}` } : prev);
+    } catch (err: any) {
+      setPostError(prev => ({ ...prev, [currentPreview.key]: err?.message || String(err) }));
+    } finally {
+      setPosting(prev => ({ ...prev, [currentPreview.key]: false }));
+    }
+  };
+
   if (!rows.length) {
     return <p className="p-6 text-center text-gray-500">{isAr ? "لا توجد عمليات تحتاج اقتراحات." : "No rows need suggestions."}</p>;
   }
 
+  const shellClass = wideMode
+    ? "fixed inset-3 z-[9999] overflow-hidden rounded-2xl border border-cyan-500/30 bg-[#050505] p-4 shadow-2xl flex flex-col"
+    : "space-y-3";
+
   return (
-    <div className="space-y-3">
+    <div className={shellClass} dir={isAr ? "rtl" : "ltr"}>
       <datalist id={accountList}>{accounts.map((account, index) => <option key={index} value={account.label} />)}</datalist>
       <datalist id={partnerList}>{partners.map((partner, index) => <option key={index} value={partner.label} />)}</datalist>
       <datalist id={analyticList}>{analytics.map((analytic, index) => <option key={index} value={analytic.label} />)}</datalist>
 
       <div className="rounded-xl border border-cyan-500/25 bg-cyan-500/10 px-4 py-3">
-        <p className="text-sm font-bold text-cyan-200">{isAr ? "اقتراحات AI للحسابات والشركاء" : "AI account and partner suggestions"}</p>
-        <p className="mt-1 text-[11px] text-white/60">
-          {isAr
-            ? "كل عملية يظهر أمامها الحساب المقترح والشريك المقترح مباشرة. عند ضغط Odoo أو فشل المطابقة التاريخية يتم استخدام الحسابات والشركاء المحملين محليًا بدل ترك الحقول فارغة."
-            : "Each transaction shows its suggested account and partner inline. If Odoo is rate-limited or history lookup fails, loaded accounts and partners are used locally instead of leaving fields blank."}
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold text-cyan-200">{isAr ? "اقتراحات AI للحسابات والشركاء" : "AI account and partner suggestions"}</p>
+            <p className="mt-1 text-[11px] text-white/60">
+              {isAr
+                ? "كل عملية يظهر أمامها الحساب والشريك. استخدم 👁️ لعرض القيد المقترح قبل الإرسال، واستخدم 🚀 لإنشاء القيد في Odoo بعد المراجعة."
+                : "Each transaction shows its account and partner. Use 👁️ to preview the suggested journal entry, then 🚀 to create it in Odoo after review."}
+            </p>
+          </div>
+          <button onClick={() => setWideMode(prev => !prev)} className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-xs font-bold text-cyan-200 hover:bg-cyan-500/25">
+            {wideMode ? "↩" : "⛶"} {wideMode ? (isAr ? "رجوع" : "Back") : (isAr ? "توسعة الشاشة" : "Expand")}
+          </button>
+        </div>
       </div>
 
       {(loading || notice || error) && (
@@ -358,9 +516,9 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
         </div>
       )}
 
-      <div className="overflow-auto rounded-xl border border-white/10 bg-black/20">
-        <table className="w-full min-w-[1280px] text-[11px]">
-          <thead className="bg-white/5 text-white/60">
+      <div className={`${wideMode ? "flex-1 min-h-0" : ""} overflow-auto rounded-xl border border-white/10 bg-black/20`}>
+        <table className="w-full min-w-[1440px] text-[11px]">
+          <thead className="sticky top-0 z-10 bg-zinc-950 text-white/60">
             <tr className="border-b border-white/10">
               <th className="px-3 py-2 text-center">#</th>
               <th className="px-3 py-2 text-start">{isAr ? "التاريخ" : "Date"}</th>
@@ -370,41 +528,81 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
               <th className="px-3 py-2 text-start min-w-[220px]">{isAr ? "الشريك المقترح" : "Suggested partner"}</th>
               <th className="px-3 py-2 text-start min-w-[220px]">{isAr ? "الحساب التحليلي" : "Analytic account"}</th>
               <th className="px-3 py-2 text-center">{isAr ? "الثقة" : "Confidence"}</th>
-              <th className="px-3 py-2 text-start min-w-[260px]">{isAr ? "مصدر الاقتراح" : "Suggestion source"}</th>
+              <th className="px-3 py-2 text-start min-w-[230px]">{isAr ? "مصدر الاقتراح" : "Suggestion source"}</th>
+              <th className="px-3 py-2 text-center min-w-[150px]">{isAr ? "الإجراءات" : "Actions"}</th>
             </tr>
           </thead>
           <tbody>
             {suggestedRows.map((row, index) => {
+              const rowKey = keyFor(row);
               const sourceLabel = row.suggestion_source === "odoo_historical_move_lines"
                 ? (isAr ? "مطابقة تاريخية من أودو" : "Odoo historical match")
                 : row.suggestion_source === "local_odoo_lookup_fallback"
                   ? (isAr ? "اقتراح محلي من بيانات أودو" : "Local Odoo lookup fallback")
                   : (isAr ? "اقتراح AI يحتاج مراجعة" : "AI suggestion needs review");
+              const postedInfo = posted[rowKey];
               return (
                 <tr key={`${row.row_number}-${row.date}-${row.amount}-${index}`} className="border-b border-white/5 align-top hover:bg-white/5">
-                  <td className="px-3 py-2 text-center font-mono text-white/40">{row.row_number || index + 1}</td>
+                  <td className="px-3 py-2 text-center font-mono text-white/40">
+                    <button onClick={() => setExpandedRows(prev => ({ ...prev, [rowKey]: !prev[rowKey] }))} className="me-1 rounded border border-white/10 px-1 text-white/60 hover:text-white">{expandedRows[rowKey] ? "▾" : "▸"}</button>
+                    {row.row_number || index + 1}
+                  </td>
                   <td className="px-3 py-2 font-mono text-white/70">{row.date || "—"}</td>
                   <td className="px-3 py-2 text-white">
-                    <div className="font-semibold leading-relaxed">{row.main_description || row.description || "—"}</div>
-                    {row.details && row.details.length > 0 && (
-                      <details className="mt-1 text-white/45">
-                        <summary className="cursor-pointer text-blue-300">{isAr ? "تفاصيل" : "Details"}</summary>
-                        <div className="mt-1 space-y-1">{row.details.map((detail, detailIndex) => <div key={detailIndex}>{detail}</div>)}</div>
-                      </details>
-                    )}
+                    <div className="font-semibold leading-relaxed">{expandedRows[rowKey] ? (row.main_description || row.description || "—") : firstLine(row.main_description || row.description || "—", 170)}</div>
+                    {expandedRows[rowKey] && row.details && row.details.length > 0 && <div className="mt-2 space-y-1 text-white/45">{row.details.map((detail, detailIndex) => <div key={detailIndex}>{detail}</div>)}</div>}
                   </td>
                   <td className="px-3 py-2 text-end font-mono font-bold text-amber-300">{fmt(row.amount)} SAR</td>
-                  <td className="px-3 py-2"><input list={accountList} value={row.suggested_account_label} onChange={event => updateSuggestedRow(index, { suggested_account_label: event.target.value })} placeholder={isAr ? "اختر الحساب من أودو" : "Select Odoo account"} className="w-full rounded-lg border border-cyan-500/20 bg-black/40 px-2 py-2 text-white outline-none focus:border-cyan-400" /></td>
-                  <td className="px-3 py-2"><input list={partnerList} value={row.suggested_partner_label} onChange={event => updateSuggestedRow(index, { suggested_partner_label: event.target.value })} placeholder={isAr ? "اختر الشريك" : "Select partner"} className="w-full rounded-lg border border-purple-500/20 bg-black/40 px-2 py-2 text-white outline-none focus:border-purple-400" /></td>
-                  <td className="px-3 py-2"><input list={analyticList} value={row.suggested_analytic_account_label} onChange={event => updateSuggestedRow(index, { suggested_analytic_account_label: event.target.value })} placeholder={isAr ? "اختياري" : "Optional"} className="w-full rounded-lg border border-amber-500/20 bg-black/40 px-2 py-2 text-white outline-none focus:border-amber-400" /></td>
+                  <td className="px-3 py-2"><input list={accountList} value={row.suggested_account_label} onChange={event => updateSuggestedRow(index, { suggested_account_label: event.target.value, suggested_account_id: null })} placeholder={isAr ? "اختر الحساب من أودو" : "Select Odoo account"} className="w-full rounded-lg border border-cyan-500/20 bg-black/40 px-2 py-2 text-white outline-none focus:border-cyan-400" /></td>
+                  <td className="px-3 py-2"><input list={partnerList} value={row.suggested_partner_label} onChange={event => updateSuggestedRow(index, { suggested_partner_label: event.target.value, suggested_partner_id: null })} placeholder={isAr ? "اختر الشريك" : "Select partner"} className="w-full rounded-lg border border-purple-500/20 bg-black/40 px-2 py-2 text-white outline-none focus:border-purple-400" /></td>
+                  <td className="px-3 py-2"><input list={analyticList} value={row.suggested_analytic_account_label} onChange={event => updateSuggestedRow(index, { suggested_analytic_account_label: event.target.value, suggested_analytic_account_id: null })} placeholder={isAr ? "اختياري" : "Optional"} className="w-full rounded-lg border border-amber-500/20 bg-black/40 px-2 py-2 text-white outline-none focus:border-amber-400" /></td>
                   <td className="px-3 py-2 text-center"><span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${row.suggestion_confidence >= 0.7 ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300" : "border-amber-500/40 bg-amber-500/15 text-amber-300"}`}>{pct(row.suggestion_confidence)}</span></td>
-                  <td className="px-3 py-2 text-white/55"><div className="font-bold text-cyan-200">{sourceLabel}</div><div className="mt-1 leading-relaxed">{row.suggestion_reason || (isAr ? "راجع الحساب والشريك قبل الاعتماد." : "Review the account and partner before approval.")}</div></td>
+                  <td className="px-3 py-2 text-white/55"><div className="font-bold text-cyan-200">{sourceLabel}</div><div className="mt-1 leading-relaxed">{expandedRows[rowKey] ? (row.suggestion_reason || (isAr ? "راجع الحساب والشريك قبل الاعتماد." : "Review the account and partner before approval.")) : firstLine(row.suggestion_reason || "", 120)}</div></td>
+                  <td className="px-3 py-2 text-center">
+                    <div className="flex items-center justify-center gap-2">
+                      <button title={isAr ? "عرض القيد المقترح" : "Preview suggested entry"} onClick={() => openPreview(row)} className="rounded-lg border border-blue-500/40 bg-blue-500/15 px-2 py-1 text-blue-200 hover:bg-blue-500/25">👁️</button>
+                      <button title={isAr ? "ترحيل إلى Odoo" : "Post to Odoo"} disabled={posting[rowKey] || Boolean(postedInfo)} onClick={() => postRow(row)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-2 py-1 text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40">{posting[rowKey] ? "⏳" : postedInfo ? "✅" : "🚀"}</button>
+                    </div>
+                    {postedInfo && <a href={postedInfo.odoo_url} target="_blank" rel="noreferrer" className="mt-1 block text-[10px] text-emerald-300 underline">{postedInfo.move_name || "Odoo"}</a>}
+                    {postError[rowKey] && <div className="mt-1 text-[10px] text-rose-300">{postError[rowKey]}</div>}
+                  </td>
                 </tr>
               );
             })}
           </tbody>
         </table>
       </div>
+
+      {preview && (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/70 p-4" onClick={() => setPreview(null)}>
+          <div className="max-h-[88vh] w-full max-w-4xl overflow-auto rounded-2xl border border-white/15 bg-zinc-950 p-5 shadow-2xl" onClick={event => event.stopPropagation()}>
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-white">👁️ {isAr ? "معاينة القيد المقترح" : "Suggested journal entry preview"}</h3>
+                <p className="mt-1 text-xs text-white/50">{isAr ? "هذه معاينة قبل إنشاء القيد في Odoo. راجع الحسابات والمبالغ ثم اضغط ترحيل." : "Review the accounts and amounts before creating the entry in Odoo."}</p>
+              </div>
+              <button onClick={() => setPreview(null)} className="rounded-lg border border-white/10 px-3 py-1 text-white/70 hover:text-white">✕</button>
+            </div>
+            {preview.warning && <div className={`mb-3 rounded-xl border px-3 py-2 text-xs ${preview.warning.includes("تم إنشاء") || preview.warning.includes("Created") ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200" : "border-amber-500/40 bg-amber-500/15 text-amber-200"}`}>{preview.warning}</div>}
+            <div className="mb-3 grid gap-2 md:grid-cols-4 text-xs">
+              <div className="rounded-xl border border-white/10 bg-black/30 p-3"><div className="text-white/40">{isAr ? "التاريخ" : "Date"}</div><div className="font-bold text-white">{preview.row.date || "—"}</div></div>
+              <div className="rounded-xl border border-white/10 bg-black/30 p-3"><div className="text-white/40">{isAr ? "الصف" : "Row"}</div><div className="font-bold text-white">{preview.row.row_number}</div></div>
+              <div className="rounded-xl border border-white/10 bg-black/30 p-3"><div className="text-white/40">{isAr ? "المبلغ" : "Amount"}</div><div className="font-bold text-amber-300">{fmt(preview.row.amount)} SAR</div></div>
+              <div className="rounded-xl border border-white/10 bg-black/30 p-3"><div className="text-white/40">{isAr ? "المرجع" : "Reference"}</div><div className="font-bold text-white">{preview.payload.ref}</div></div>
+            </div>
+            <div className="overflow-auto rounded-xl border border-white/10">
+              <table className="w-full min-w-[720px] text-xs">
+                <thead className="bg-white/5 text-white/50"><tr><th className="px-3 py-2 text-start">{isAr ? "الحساب" : "Account"}</th><th className="px-3 py-2 text-end">{isAr ? "مدين" : "Debit"}</th><th className="px-3 py-2 text-end">{isAr ? "دائن" : "Credit"}</th><th className="px-3 py-2 text-start">{isAr ? "الشريك / التحليلي" : "Partner / Analytic"}</th><th className="px-3 py-2 text-start">{isAr ? "البيان" : "Label"}</th></tr></thead>
+                <tbody>{preview.lines.map((line, idx) => <tr key={idx} className="border-t border-white/5"><td className="px-3 py-2 text-white">{line.account_label}</td><td className="px-3 py-2 text-end font-mono text-emerald-300">{fmt(line.debit)}</td><td className="px-3 py-2 text-end font-mono text-rose-300">{fmt(line.credit)}</td><td className="px-3 py-2 text-white/60">{line.partner_label || "—"}{line.analytic_account_label ? ` / ${line.analytic_account_label}` : ""}</td><td className="px-3 py-2 text-white/60">{line.name}</td></tr>)}</tbody>
+              </table>
+            </div>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button onClick={() => setPreview(null)} className="rounded-lg border border-white/10 px-4 py-2 text-sm text-white/70 hover:text-white">{isAr ? "إغلاق" : "Close"}</button>
+              <button disabled={Boolean(preview.warning) && !preview.warning.includes("تم إنشاء") && !preview.warning.includes("Created") || posting[preview.key] || Boolean(posted[preview.key])} onClick={() => postRow(preview.row)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40">{posting[preview.key] ? (isAr ? "جاري الترحيل..." : "Posting...") : posted[preview.key] ? "✅" : `🚀 ${isAr ? "ترحيل إلى Odoo" : "Post to Odoo"}`}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

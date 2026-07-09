@@ -36,6 +36,9 @@ class BankPostingRequestV2(BaseModel):
     filename: str = "bank_statement_reconciliation"
     amount: float = 0.0
     partner_name: str = ""
+    attachment_name: str = ""
+    attachment_mimetype: str = ""
+    attachment_content_base64: str = ""
     lines: List[BankPostingLineV2]
 
 
@@ -92,6 +95,33 @@ def remove_analytic(move_vals: dict) -> dict:
             clean_lines.append(cmd)
     clean["line_ids"] = clean_lines
     return clean
+
+
+def normalize_attachment_content(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    if "," in raw and raw.lower().startswith("data:"):
+        return raw.split(",", 1)[1]
+    return raw
+
+
+def attach_document_to_move(erp, move_id: int, payload: BankPostingRequestV2) -> tuple[Optional[int], str]:
+    content = normalize_attachment_content(payload.attachment_content_base64)
+    if not content:
+        return None, ""
+    name = payload.attachment_name or f"{payload.ref or 'bank-reconciliation-entry'}.pdf"
+    vals = {
+        "name": name,
+        "res_model": "account.move",
+        "res_id": int(move_id),
+        "type": "binary",
+        "datas": content,
+    }
+    if payload.attachment_mimetype:
+        vals["mimetype"] = payload.attachment_mimetype
+    attachment_id = erp.execute_kw("ir.attachment", "create", [vals])
+    return int(attachment_id), name
 
 
 @router.post("/register-bank-reconciliation-entry-v2")
@@ -186,6 +216,14 @@ def register_bank_reconciliation_entry_v2(payload: BankPostingRequestV2, db_sess
         except Exception:
             pass
 
+        attachment_id = None
+        attachment_name = ""
+        attachment_error = ""
+        try:
+            attachment_id, attachment_name = attach_document_to_move(erp, int(move_id), payload)
+        except Exception as attachment_exc:
+            attachment_error = str(attachment_exc)
+
         base_url = conn.base_url.rstrip("/")
         return {
             "status": "success",
@@ -193,6 +231,9 @@ def register_bank_reconciliation_entry_v2(payload: BankPostingRequestV2, db_sess
             "move_id": move_id,
             "move_name": move_name,
             "odoo_url": f"{base_url}/web#id={move_id}&model=account.move&view_type=form",
+            "attachment_id": attachment_id,
+            "attachment_name": attachment_name,
+            "attachment_error": attachment_error,
             "company_id": company_id,
             "journal_id": journal_id,
             "journal_name": journal_name,

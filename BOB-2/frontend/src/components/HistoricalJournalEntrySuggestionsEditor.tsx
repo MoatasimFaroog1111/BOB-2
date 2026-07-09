@@ -725,7 +725,7 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
             </div>
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               <button onClick={() => setPreview(null)} className="rounded-lg border border-white/10 px-4 py-2 text-sm text-white/70 hover:text-white">{isAr ? "إغلاق" : "Close"}</button>
-              <button disabled={(Boolean(preview.warning) && !preview.warning.includes("تم إنشاء") && !preview.warning.includes("Created")) || posting[preview.key] || Boolean(posted[preview.key])} onClick={() => postRow(preview.row)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40">{posting[preview.key] ? (isAr ? "جاري الترحيل..." : "Posting...") : posted[preview.key] ? "✅" : `🚀 ${isAr ? "ترحيل القيد إلى Odoo" : "Post entry to Odoo"}`}</button>
+              <button disabled={(Boolean(preview.warning) && !preview.warning?.includes("تم إنشاء") && !preview.warning?.includes("Created")) || posting[preview.key] || Boolean(posted[preview.key])} onClick={() => postRow(preview.row)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40">{posting[preview.key] ? (isAr ? "جاري الترحيل..." : "Posting...") : posted[preview.key] ? "✅" : `🚀 ${isAr ? "ترحيل القيد إلى Odoo" : "Post entry to Odoo"}`}</button>
             </div>
           </div>
         </div>

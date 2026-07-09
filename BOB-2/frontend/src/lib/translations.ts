@@ -4,11 +4,11 @@ export const translations: Record<string, any> = {
     sidebar: {
       title: "GuardianAI للمؤسسات",
       subtitle: "المحاسبة • التدقيق • أنظمة ERP • الامتثال",
-      home: "فريق العمل",
-      documents: "ذكاء المستندات",
-      audit: "غرفة التحكم بالتدقيق",
+      home: "محاسب عام",
+      documents: "محاسب العمليات البنكية",
+      audit: "المدقق الذكي",
       accountingAI: "مطابقة AI محاسبية",
-      erp: "اتصالات أنظمة ERP",
+      erp: "الاتصال بالأنظمة المحاسبية",
       company: "الشركة",
     },
     home: {
@@ -226,7 +226,7 @@ export const translations: Record<string, any> = {
       thWorkPhone: "هاتف العمل",
     },
     excel: {
-      title: "ذكاء المستندات - لوحة جداول البيانات",
+      title: "محاسب العمليات البنكية - لوحة جداول البيانات",
       subtitle: "جداول بيانات تفاعلية لإدخال ومطابقة البيانات يدويًا أو عبر النسخ واللصق مباشرة من إكسيل",
       addRow: "إضافة صف",
       deleteRow: "حذف صف",
@@ -235,7 +235,7 @@ export const translations: Record<string, any> = {
       clearGrid: "مسح الجدول",
       exportCSV: "تصدير CSV",
       submitOdoo: "تسجيل في Odoo",
-      backToTeam: "رجوع لفريق العمل",
+      backToTeam: "رجوع لمحاسب عام",
       editMenu: "تعديل الجدول",
       manualEntry: "لصق / كتابة يدوية",
       column: "عمود",

@@ -93,6 +93,11 @@ interface PostingPreview {
   warning?: string;
 }
 
+type BulkResult = {
+  status: "pending" | "success" | "error";
+  message: string;
+};
+
 function selectedCompanyFromStorage() {
   if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem("selectedCompanyId");
@@ -354,6 +359,9 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
   const [posted, setPosted] = useState<Record<string, { move_name?: string; odoo_url?: string; attachment_name?: string }>>({});
   const [postError, setPostError] = useState<Record<string, string>>({});
   const [attachments, setAttachments] = useState<Record<string, AttachmentInfo>>({});
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkPosting, setBulkPosting] = useState(false);
+  const [bulkResults, setBulkResults] = useState<Record<string, BulkResult>>({});
 
   const effectiveCompanyId = companyId || selectedCompanyFromStorage();
 
@@ -569,10 +577,14 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
 
   const openPreview = (row: SuggestedRow) => setPreview(buildPreview(row));
 
-  const postRow = async (row: SuggestedRow) => {
+  const postRow = async (row: SuggestedRow, options?: { showPreview?: boolean; throwOnError?: boolean }) => {
     const currentPreview = buildPreview(row);
-    setPreview(currentPreview);
-    if (currentPreview.warning) return;
+    const showPreview = options?.showPreview !== false;
+    if (showPreview) setPreview(currentPreview);
+    if (currentPreview.warning) {
+      if (options?.throwOnError) throw new Error(currentPreview.warning);
+      return;
+    }
     setPosting(prev => ({ ...prev, [currentPreview.key]: true }));
     setPostError(prev => ({ ...prev, [currentPreview.key]: "" }));
     try {
@@ -590,18 +602,47 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
         : data?.attachment_error
           ? (isAr ? `، لكن فشل إرفاق المستند: ${data.attachment_error}` : `, but attachment failed: ${data.attachment_error}`)
           : "";
-      setPreview(prev => prev ? { ...prev, warning: isAr ? `تم إنشاء القيد في Odoo: ${data?.move_name || data?.move_id}${attachmentMessage}` : `Created in Odoo: ${data?.move_name || data?.move_id}${attachmentMessage}` } : prev);
+      if (showPreview) setPreview(prev => prev ? { ...prev, warning: isAr ? `تم إنشاء القيد في Odoo: ${data?.move_name || data?.move_id}${attachmentMessage}` : `Created in Odoo: ${data?.move_name || data?.move_id}${attachmentMessage}` } : prev);
       if (data?.attachment_error) setPostError(prev => ({ ...prev, [currentPreview.key]: data.attachment_error }));
+      return data;
     } catch (err: any) {
       setPostError(prev => ({ ...prev, [currentPreview.key]: err?.message || String(err) }));
+      if (options?.throwOnError) throw err;
     } finally {
       setPosting(prev => ({ ...prev, [currentPreview.key]: false }));
     }
   };
 
+  const postAllRows = async () => {
+    if (bulkPosting) return;
+    const targets = suggestedRows.filter(row => !posted[keyFor(row)]);
+    const initialResults: Record<string, BulkResult> = {};
+    targets.forEach(row => {
+      initialResults[keyFor(row)] = { status: "pending", message: isAr ? "بانتظار الترحيل" : "Pending" };
+    });
+    setBulkResults(initialResults);
+    setBulkPosting(true);
+
+    for (const row of targets) {
+      const rowKey = keyFor(row);
+      try {
+        await postRow(row, { showPreview: false, throwOnError: true });
+        setBulkResults(prev => ({ ...prev, [rowKey]: { status: "success", message: isAr ? "تم الترحيل إلى Odoo" : "Posted to Odoo" } }));
+      } catch (err: any) {
+        setBulkResults(prev => ({ ...prev, [rowKey]: { status: "error", message: err?.message || String(err) } }));
+      }
+    }
+
+    setBulkPosting(false);
+  };
+
   if (!rows.length) {
     return <p className="p-6 text-center text-gray-500">{isAr ? "لا توجد عمليات تحتاج اقتراحات." : "No rows need suggestions."}</p>;
   }
+
+  const bulkPreviews = suggestedRows.map(row => buildPreview(row));
+  const bulkReadyCount = bulkPreviews.filter(item => !item.warning && !posted[item.key]).length;
+  const bulkPostedCount = bulkPreviews.filter(item => Boolean(posted[item.key])).length;
 
   const shellClass = wideMode
     ? "fixed inset-3 z-[9999] overflow-hidden rounded-2xl border border-cyan-500/30 bg-[#050505] p-4 shadow-2xl flex flex-col"
@@ -632,7 +673,7 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
       {(loading || notice || error) && (
         <div className="flex flex-wrap gap-2 text-[11px]">
           {loading && <span className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 font-bold text-cyan-200">{isAr ? "جاري تجهيز الاقتراحات من أودو..." : "Preparing suggestions from Odoo..."}</span>}
-          {notice && <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 font-bold text-emerald-200">{notice}</span>}
+          {notice && <button type="button" onClick={() => setBulkOpen(true)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 text-start font-bold text-emerald-200 underline-offset-4 hover:bg-emerald-500/25 hover:underline">{notice} <span className="text-emerald-100/70">{isAr ? "اضغط لعرض وترحيل كافة القيود" : "Click to preview and post all entries"}</span></button>}
           {error && <span className="rounded-lg border border-amber-500/40 bg-amber-500/15 px-3 py-1.5 font-bold text-amber-200">{error}</span>}
         </div>
       )}
@@ -698,6 +739,86 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
           </tbody>
         </table>
       </div>
+
+      {bulkOpen && (
+        <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/75 p-4" onClick={() => !bulkPosting && setBulkOpen(false)}>
+          <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-emerald-500/25 bg-zinc-950 shadow-2xl" onClick={event => event.stopPropagation()}>
+            <div className="border-b border-white/10 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h3 className="text-lg font-bold text-white">🧾 {isAr ? "عرض وترحيل كافة القيود المقترحة" : "Preview and post all suggested entries"}</h3>
+                  <p className="mt-1 text-xs text-white/55">{isAr ? "هذه شاشة مستقلة لمراجعة كل القيود. زر ترحيل كافة القيود سيرحل كل صف غير مرحّل مع مرفقه إن وجد." : "Review all entries here. Post all entries will post every unposted row with its attachment when available."}</p>
+                </div>
+                <button disabled={bulkPosting} onClick={() => setBulkOpen(false)} className="rounded-lg border border-white/10 px-3 py-1 text-white/70 hover:text-white disabled:opacity-40">✕</button>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                <span className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 font-bold text-cyan-200">{isAr ? `إجمالي القيود: ${bulkPreviews.length}` : `Total entries: ${bulkPreviews.length}`}</span>
+                <span className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-3 py-1.5 font-bold text-emerald-200">{isAr ? `جاهزة للترحيل: ${bulkReadyCount}` : `Ready: ${bulkReadyCount}`}</span>
+                <span className="rounded-lg border border-amber-500/40 bg-amber-500/15 px-3 py-1.5 font-bold text-amber-200">{isAr ? `مرحّلة سابقًا: ${bulkPostedCount}` : `Already posted: ${bulkPostedCount}`}</span>
+              </div>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-auto p-4">
+              <table className="w-full min-w-[980px] text-xs">
+                <thead className="sticky top-0 bg-zinc-950 text-white/50">
+                  <tr className="border-b border-white/10">
+                    <th className="px-3 py-2 text-center">#</th>
+                    <th className="px-3 py-2 text-start">{isAr ? "التاريخ" : "Date"}</th>
+                    <th className="px-3 py-2 text-start">{isAr ? "البيان" : "Description"}</th>
+                    <th className="px-3 py-2 text-end">{isAr ? "المبلغ" : "Amount"}</th>
+                    <th className="px-3 py-2 text-start">{isAr ? "القيد المقترح" : "Suggested entry"}</th>
+                    <th className="px-3 py-2 text-center">{isAr ? "المرفق" : "Attachment"}</th>
+                    <th className="px-3 py-2 text-start">{isAr ? "الحالة" : "Status"}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {bulkPreviews.map(item => {
+                    const result = bulkResults[item.key];
+                    const alreadyPosted = posted[item.key];
+                    const status = alreadyPosted
+                      ? (isAr ? `مرحّل: ${alreadyPosted.move_name || "Odoo"}` : `Posted: ${alreadyPosted.move_name || "Odoo"}`)
+                      : result?.message || item.warning || (isAr ? "جاهز" : "Ready");
+                    const statusClass = alreadyPosted || result?.status === "success"
+                      ? "text-emerald-300"
+                      : result?.status === "error" || item.warning
+                        ? "text-rose-300"
+                        : result?.status === "pending"
+                          ? "text-amber-300"
+                          : "text-cyan-200";
+                    return (
+                      <tr key={item.key} className="border-b border-white/5 align-top hover:bg-white/5">
+                        <td className="px-3 py-2 text-center font-mono text-white/45">{item.row.row_number}</td>
+                        <td className="px-3 py-2 font-mono text-white/65">{item.row.date || "—"}</td>
+                        <td className="px-3 py-2 text-white">{firstLine(item.row.main_description || item.row.description || "—", 110)}</td>
+                        <td className="px-3 py-2 text-end font-mono text-amber-300">{fmt(item.row.amount)} SAR</td>
+                        <td className="px-3 py-2 text-white/70">
+                          {item.lines.map((line, idx) => (
+                            <div key={idx} className="mb-1 rounded border border-white/5 bg-black/20 px-2 py-1">
+                              <span className="font-bold text-white">{line.account_label}</span>
+                              <span className="ms-2 text-emerald-300">D {fmt(line.debit)}</span>
+                              <span className="ms-2 text-rose-300">C {fmt(line.credit)}</span>
+                            </div>
+                          ))}
+                        </td>
+                        <td className="px-3 py-2 text-center text-amber-200">{item.attachment ? `📎 ${firstLine(item.attachment.name, 24)}` : "—"}</td>
+                        <td className={`px-3 py-2 font-bold ${statusClass}`}>{status}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 p-4">
+              <p className="text-xs text-white/50">{isAr ? "سيتم تجاوز القيود المرحّلة سابقًا، وسيتم تسجيل أي خطأ أمام الصف نفسه بدون إيقاف باقي القيود." : "Already posted rows are skipped. Errors are shown per row without stopping the remaining entries."}</p>
+              <div className="flex gap-2">
+                <button disabled={bulkPosting} onClick={() => setBulkOpen(false)} className="rounded-lg border border-white/10 px-4 py-2 text-sm text-white/70 hover:text-white disabled:opacity-40">{isAr ? "إغلاق" : "Close"}</button>
+                <button disabled={bulkPosting || bulkReadyCount === 0} onClick={postAllRows} className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40">{bulkPosting ? (isAr ? "جاري ترحيل كافة القيود..." : "Posting all entries...") : `🚀 ${isAr ? "ترحيل كافة القيود" : "Post all entries"}`}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {preview && (
         <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/70 p-4" onClick={() => setPreview(null)}>

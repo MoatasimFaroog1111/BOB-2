@@ -1,21 +1,29 @@
-﻿from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.security.auth import decode_access_token
 from app.security.roles import role_has_permission
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 def get_current_token_payload(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ) -> dict:
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
     try:
         return decode_access_token(credentials.credentials)
     except Exception:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired authentication token.",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
 

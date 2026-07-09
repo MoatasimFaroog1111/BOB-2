@@ -104,6 +104,10 @@ function keyFor(row: { row_number?: number | null; date?: string | null; amount?
   return `${row.row_number ?? ""}|${row.date || ""}|${Number(row.amount || 0).toFixed(2)}`;
 }
 
+function round2(value: number) {
+  return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
 function fmt(value?: number | null) {
   return Number(value || 0).toLocaleString("en-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -273,6 +277,46 @@ function findOptionByValue(options: LookupOption[], value?: string, id?: number 
   return options.find(option => clean(option.label).includes(cleanedValue) || cleanedValue.includes(clean(option.name)));
 }
 
+function isVatAccount(option?: LookupOption | null) {
+  const label = clean(`${option?.code || ""} ${option?.name || ""} ${option?.label || ""}`);
+  return Boolean(option) && (label.includes("vat input") || label.includes("input vat") || label.includes("value added tax") || label.includes("ضريبه القيمه المضافه") || label.includes("104041"));
+}
+
+function findVatInputAccount(accounts: LookupOption[]) {
+  return accounts.find(option => isVatAccount(option)) || bestOption(accounts, ["104041", "VAT Input", "Input VAT", "ضريبة القيمة المضافة", "value added tax"], 6);
+}
+
+function findBankChargeAccount(accounts: LookupOption[]) {
+  return bestOption(accounts, ["400051", "Other Bank Charges", "Bank Charges", "رسوم بنكية", "مصروفات بنكية", "عمولات بنكية"], 6);
+}
+
+function parseFirstMoney(patterns: RegExp[], text: string) {
+  const normalized = String(text || "").replace(/,/g, " ");
+  for (const pattern of patterns) {
+    const match = normalized.match(pattern);
+    if (match?.[1]) {
+      const value = Number(String(match[1]).replace(/[^0-9.]/g, ""));
+      if (Number.isFinite(value) && value > 0) return round2(value);
+    }
+  }
+  return 0;
+}
+
+function extractVatAmount(row: Transaction, totalAmount: number) {
+  const text = rowText(row);
+  const explicitVat = parseFirstMoney([
+    /VAT\s*AMOUNT\s*0*([0-9]+(?:\.[0-9]+)?)/i,
+    /VAT\s*0*([0-9]+(?:\.[0-9]+)?)/i,
+    /الضريبه\s*المضافه\s*0*([0-9]+(?:\.[0-9]+)?)/i,
+    /الضريبة\s*المضافة\s*0*([0-9]+(?:\.[0-9]+)?)/i,
+  ], text);
+  if (explicitVat > 0 && explicitVat < totalAmount) return explicitVat;
+
+  const hasVatSignal = /VAT\s*%?\s*15|VAT%\s*15|15\s*%|ضريبةالقيمةالمضافة|ضريبه\s*القيمه\s*المضافه|الضريبة\s*المضافة/i.test(text);
+  if (hasVatSignal && totalAmount > 0) return round2(totalAmount * 15 / 115);
+  return 0;
+}
+
 function firstLine(value: string, max = 120) {
   const plain = String(value || "").replace(/\s+/g, " ").trim();
   return plain.length > max ? `${plain.slice(0, max - 1)}…` : plain;
@@ -435,9 +479,16 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
 
   const buildPreview = (row: SuggestedRow): PostingPreview => {
     const rowKey = keyFor(row);
-    const amount = Math.abs(Number(row.amount || 0));
+    const amount = round2(Math.abs(Number(row.amount || 0)));
     const attachment = attachments[rowKey];
-    const counterAccount = findOptionByValue(accounts, row.suggested_account_label, row.suggested_account_id);
+    const vatAmount = row.amount < 0 ? extractVatAmount(row, amount) : 0;
+    const vatDetected = vatAmount > 0;
+    const vatAccount = vatDetected ? findVatInputAccount(accounts) : undefined;
+    const originallySuggestedAccount = findOptionByValue(accounts, row.suggested_account_label, row.suggested_account_id);
+    const bankChargeAccount = findBankChargeAccount(accounts);
+    const counterAccount = vatDetected && isVatAccount(originallySuggestedAccount)
+      ? (bankChargeAccount && !isVatAccount(bankChargeAccount) ? bankChargeAccount : originallySuggestedAccount)
+      : originallySuggestedAccount;
     const partner = findOptionByValue(partners, row.suggested_partner_label, row.suggested_partner_id);
     const analytic = findOptionByValue(analytics, row.suggested_analytic_account_label, row.suggested_analytic_account_id);
     const description = firstLine(row.main_description || row.description || `Bank statement row ${row.row_number}`, 180);
@@ -445,23 +496,37 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
     const bankId = bankAccountId ? Number(bankAccountId) : 0;
     const warning = !counterAccount?.id
       ? (isAr ? "لا يمكن الترحيل قبل اختيار حساب صحيح من أودو." : "Select a valid Odoo account before posting.")
-      : !bankId
-        ? (isAr ? "لا يمكن الترحيل قبل توفر حساب البنك المختار." : "The selected bank account is required before posting.")
-        : amount <= 0
-          ? (isAr ? "المبلغ صفر أو غير صالح." : "The amount is zero or invalid.")
-          : "";
+      : vatDetected && !vatAccount?.id
+        ? (isAr ? "تم اكتشاف ضريبة قيمة مضافة في البيان، لكن لم يتم العثور على حساب VAT Input في أودو." : "VAT was detected, but no VAT Input account was found in Odoo.")
+        : !bankId
+          ? (isAr ? "لا يمكن الترحيل قبل توفر حساب البنك المختار." : "The selected bank account is required before posting.")
+          : amount <= 0
+            ? (isAr ? "المبلغ صفر أو غير صالح." : "The amount is zero or invalid.")
+            : "";
 
+    const counterAmount = vatDetected && vatAccount?.id ? round2(amount - vatAmount) : amount;
     const counterLine: PostingLinePreview = {
       account_id: Number(counterAccount?.id || 0),
       account_label: counterAccount?.label || row.suggested_account_label || "—",
-      debit: row.amount < 0 ? amount : 0,
-      credit: row.amount > 0 ? amount : 0,
+      debit: row.amount < 0 ? counterAmount : 0,
+      credit: row.amount > 0 ? counterAmount : 0,
       name: description,
       partner_id: partner?.id ? Number(partner.id) : undefined,
       partner_label: partner?.label || row.suggested_partner_label || undefined,
       analytic_account_id: analytic?.id ? Number(analytic.id) : undefined,
       analytic_account_label: analytic?.label || row.suggested_analytic_account_label || undefined,
     };
+    const vatLine: PostingLinePreview | null = vatDetected && vatAccount?.id ? {
+      account_id: Number(vatAccount.id),
+      account_label: vatAccount.label,
+      debit: row.amount < 0 ? vatAmount : 0,
+      credit: row.amount > 0 ? vatAmount : 0,
+      name: `VAT Input - ${description}`,
+      partner_id: partner?.id ? Number(partner.id) : undefined,
+      partner_label: partner?.label || row.suggested_partner_label || undefined,
+      analytic_account_id: analytic?.id ? Number(analytic.id) : undefined,
+      analytic_account_label: analytic?.label || row.suggested_analytic_account_label || undefined,
+    } : null;
     const bankLine: PostingLinePreview = {
       account_id: bankId,
       account_label: bankAccountLabel || (isAr ? "الحساب البنكي المختار" : "Selected bank account"),
@@ -469,7 +534,7 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
       credit: row.amount < 0 ? amount : 0,
       name: description,
     };
-    const lines = [counterLine, bankLine];
+    const lines = vatLine ? [counterLine, vatLine, bankLine] : [counterLine, bankLine];
     return {
       key: rowKey,
       row,
@@ -554,8 +619,8 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
             <p className="text-sm font-bold text-cyan-200">{isAr ? "اقتراحات AI للحسابات والشركاء" : "AI account and partner suggestions"}</p>
             <p className="mt-1 text-[11px] text-white/60">
               {isAr
-                ? "كل عملية يظهر أمامها الحساب والشريك. استخدم عرض ثم ترحيل لمراجعة القيد ثم إنشائه في Odoo، واستخدم إرفاق المستند لربط ملف بالقيد."
-                : "Each transaction shows its account and partner. Use Preview then post to review and create the Odoo entry, and Attach document to link a file to the entry."}
+                ? "كل عملية يظهر أمامها الحساب والشريك. عند وجود VAT AMOUNT في البيان يتم فصل ضريبة القيمة المضافة تلقائيًا في سطر VAT Input قبل الترحيل."
+                : "Each transaction shows its account and partner. When VAT AMOUNT exists in the statement, VAT is automatically split into a VAT Input line before posting."}
             </p>
           </div>
           <button onClick={() => setWideMode(prev => !prev)} className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-xs font-bold text-cyan-200 hover:bg-cyan-500/25">
@@ -640,7 +705,7 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <h3 className="text-lg font-bold text-white">👁️🚀 {isAr ? "عرض ثم ترحيل القيد" : "Preview then post journal entry"}</h3>
-                <p className="mt-1 text-xs text-white/50">{isAr ? "راجع القيد والمستند المرفق قبل إنشاء القيد في Odoo." : "Review the entry and attached document before creating it in Odoo."}</p>
+                <p className="mt-1 text-xs text-white/50">{isAr ? "راجع القيد والمستند المرفق قبل إنشاء القيد في Odoo. إذا وجدت ضريبة قيمة مضافة في البيان ستظهر كسطر مستقل." : "Review the entry and attached document before creating it in Odoo. If VAT is detected in the statement, it appears as a separate line."}</p>
               </div>
               <button onClick={() => setPreview(null)} className="rounded-lg border border-white/10 px-3 py-1 text-white/70 hover:text-white">✕</button>
             </div>
@@ -660,7 +725,7 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
             </div>
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               <button onClick={() => setPreview(null)} className="rounded-lg border border-white/10 px-4 py-2 text-sm text-white/70 hover:text-white">{isAr ? "إغلاق" : "Close"}</button>
-              <button disabled={(Boolean(preview.warning) && !preview.warning?.includes("تم إنشاء") && !preview.warning?.includes("Created")) || posting[preview.key] || Boolean(posted[preview.key])} onClick={() => postRow(preview.row)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40">{posting[preview.key] ? (isAr ? "جاري الترحيل..." : "Posting...") : posted[preview.key] ? "✅" : `🚀 ${isAr ? "ترحيل القيد إلى Odoo" : "Post entry to Odoo"}`}</button>
+              <button disabled={(Boolean(preview.warning) && !preview.warning.includes("تم إنشاء") && !preview.warning.includes("Created")) || posting[preview.key] || Boolean(posted[preview.key])} onClick={() => postRow(preview.row)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40">{posting[preview.key] ? (isAr ? "جاري الترحيل..." : "Posting...") : posted[preview.key] ? "✅" : `🚀 ${isAr ? "ترحيل القيد إلى Odoo" : "Post entry to Odoo"}`}</button>
             </div>
           </div>
         </div>

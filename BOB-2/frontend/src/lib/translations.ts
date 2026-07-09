@@ -5,7 +5,7 @@ export const translations: Record<string, any> = {
       title: "GuardianAI للمؤسسات",
       subtitle: "المحاسبة • التدقيق • أنظمة ERP • الامتثال",
       home: "محاسب عام",
-      documents: "محاسب العمليات البنكية",
+      documents: "محاسب اول",
       audit: "المدقق الذكي",
       accountingAI: "مطابقة AI محاسبية",
       erp: "الاتصال بالأنظمة المحاسبية",
@@ -35,7 +35,7 @@ export const translations: Record<string, any> = {
     },
     bankRecon: {
       title: "محاسب البنك",
-      pageTitle: "التسوية البنكية بالذكاء الاصطناعي",
+      pageTitle: "محاسب العمليات البنكية",
       pageSubtitle: "رفع كشف البنك ومطابقته تلقائياً مع سجلات Odoo",
       reconcile: "إجراء المطابقة البنكية",
       reconciling: "جاري المطابقة...",
@@ -226,7 +226,7 @@ export const translations: Record<string, any> = {
       thWorkPhone: "هاتف العمل",
     },
     excel: {
-      title: "محاسب العمليات البنكية - لوحة جداول البيانات",
+      title: "محاسب اول - لوحة جداول البيانات",
       subtitle: "جداول بيانات تفاعلية لإدخال ومطابقة البيانات يدويًا أو عبر النسخ واللصق مباشرة من إكسيل",
       addRow: "إضافة صف",
       deleteRow: "حذف صف",

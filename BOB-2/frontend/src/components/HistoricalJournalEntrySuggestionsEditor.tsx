@@ -77,11 +77,19 @@ interface PostingLinePreview {
   analytic_account_label?: string;
 }
 
+interface AttachmentInfo {
+  file: File;
+  name: string;
+  type: string;
+  size: number;
+}
+
 interface PostingPreview {
   key: string;
   row: SuggestedRow;
   payload: any;
   lines: PostingLinePreview[];
+  attachment?: AttachmentInfo;
   warning?: string;
 }
 
@@ -98,6 +106,13 @@ function keyFor(row: { row_number?: number | null; date?: string | null; amount?
 
 function fmt(value?: number | null) {
   return Number(value || 0).toLocaleString("en-SA", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtFileSize(bytes?: number) {
+  const value = Number(bytes || 0);
+  if (!value) return "";
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / 1024 / 1024).toFixed(2)} MB`;
 }
 
 function pct(value?: number) {
@@ -271,6 +286,15 @@ async function delay(ms: number) {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
+async function fileToBase64(file: File): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Failed to read attachment"));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, companyId, bankJournalId, bankAccountId, bankAccountLabel }: Props) {
   const [suggestedRows, setSuggestedRows] = useState<SuggestedRow[]>(rows.map(row => applySuggestion(row, null, [], [], [])));
   const [accounts, setAccounts] = useState<LookupOption[]>([]);
@@ -283,8 +307,9 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [preview, setPreview] = useState<PostingPreview | null>(null);
   const [posting, setPosting] = useState<Record<string, boolean>>({});
-  const [posted, setPosted] = useState<Record<string, { move_name?: string; odoo_url?: string }>>({});
+  const [posted, setPosted] = useState<Record<string, { move_name?: string; odoo_url?: string; attachment_name?: string }>>({});
   const [postError, setPostError] = useState<Record<string, string>>({});
+  const [attachments, setAttachments] = useState<Record<string, AttachmentInfo>>({});
 
   const effectiveCompanyId = companyId || selectedCompanyFromStorage();
 
@@ -388,9 +413,30 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
     setSuggestedRows(prev => prev.map((row, i) => i === index ? { ...row, ...patch } : row));
   };
 
+  const onAttachFile = (row: SuggestedRow, file?: File | null) => {
+    const rowKey = keyFor(row);
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      setPostError(prev => ({ ...prev, [rowKey]: isAr ? "حجم المستند أكبر من 10 MB." : "Attachment is larger than 10 MB." }));
+      return;
+    }
+    setAttachments(prev => ({ ...prev, [rowKey]: { file, name: file.name, type: file.type || "application/octet-stream", size: file.size } }));
+    setPostError(prev => ({ ...prev, [rowKey]: "" }));
+  };
+
+  const removeAttachment = (row: SuggestedRow) => {
+    const rowKey = keyFor(row);
+    setAttachments(prev => {
+      const next = { ...prev };
+      delete next[rowKey];
+      return next;
+    });
+  };
+
   const buildPreview = (row: SuggestedRow): PostingPreview => {
     const rowKey = keyFor(row);
     const amount = Math.abs(Number(row.amount || 0));
+    const attachment = attachments[rowKey];
     const counterAccount = findOptionByValue(accounts, row.suggested_account_label, row.suggested_account_id);
     const partner = findOptionByValue(partners, row.suggested_partner_label, row.suggested_partner_id);
     const analytic = findOptionByValue(analytics, row.suggested_analytic_account_label, row.suggested_analytic_account_id);
@@ -429,6 +475,7 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
       row,
       warning,
       lines,
+      attachment,
       payload: {
         company_id: effectiveCompanyId ? Number(effectiveCompanyId) : null,
         journal_type: "bank",
@@ -438,6 +485,8 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
         filename: "bank_statement_reconciliation",
         amount: Number(row.amount || 0),
         partner_name: partner?.label || row.suggested_partner_label || "",
+        attachment_name: attachment?.name || "",
+        attachment_mimetype: attachment?.type || "",
         lines: lines.map(line => ({
           account_id: line.account_id,
           account_name: line.account_label,
@@ -462,15 +511,22 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
     setPosting(prev => ({ ...prev, [currentPreview.key]: true }));
     setPostError(prev => ({ ...prev, [currentPreview.key]: "" }));
     try {
+      const attachmentContent = currentPreview.attachment?.file ? await fileToBase64(currentPreview.attachment.file) : "";
       const response = await fetch(`${API_BASE_URL}/api/v1/erp/register-bank-reconciliation-entry-v2`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(currentPreview.payload),
+        body: JSON.stringify({ ...currentPreview.payload, attachment_content_base64: attachmentContent }),
       });
       const data = await jsonOrNull(response);
       if (!response.ok) throw new Error(data?.detail || `HTTP ${response.status}`);
-      setPosted(prev => ({ ...prev, [currentPreview.key]: { move_name: data?.move_name, odoo_url: data?.odoo_url } }));
-      setPreview(prev => prev ? { ...prev, warning: isAr ? `تم إنشاء القيد في Odoo: ${data?.move_name || data?.move_id}` : `Created in Odoo: ${data?.move_name || data?.move_id}` } : prev);
+      setPosted(prev => ({ ...prev, [currentPreview.key]: { move_name: data?.move_name, odoo_url: data?.odoo_url, attachment_name: data?.attachment_name } }));
+      const attachmentMessage = data?.attachment_name
+        ? (isAr ? ` وتم إرفاق المستند: ${data.attachment_name}` : ` and attached: ${data.attachment_name}`)
+        : data?.attachment_error
+          ? (isAr ? `، لكن فشل إرفاق المستند: ${data.attachment_error}` : `, but attachment failed: ${data.attachment_error}`)
+          : "";
+      setPreview(prev => prev ? { ...prev, warning: isAr ? `تم إنشاء القيد في Odoo: ${data?.move_name || data?.move_id}${attachmentMessage}` : `Created in Odoo: ${data?.move_name || data?.move_id}${attachmentMessage}` } : prev);
+      if (data?.attachment_error) setPostError(prev => ({ ...prev, [currentPreview.key]: data.attachment_error }));
     } catch (err: any) {
       setPostError(prev => ({ ...prev, [currentPreview.key]: err?.message || String(err) }));
     } finally {
@@ -498,8 +554,8 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
             <p className="text-sm font-bold text-cyan-200">{isAr ? "اقتراحات AI للحسابات والشركاء" : "AI account and partner suggestions"}</p>
             <p className="mt-1 text-[11px] text-white/60">
               {isAr
-                ? "كل عملية يظهر أمامها الحساب والشريك. استخدم 👁️ لعرض القيد المقترح قبل الإرسال، واستخدم 🚀 لإنشاء القيد في Odoo بعد المراجعة."
-                : "Each transaction shows its account and partner. Use 👁️ to preview the suggested journal entry, then 🚀 to create it in Odoo after review."}
+                ? "كل عملية يظهر أمامها الحساب والشريك. استخدم عرض ثم ترحيل لمراجعة القيد ثم إنشائه في Odoo، واستخدم إرفاق المستند لربط ملف بالقيد."
+                : "Each transaction shows its account and partner. Use Preview then post to review and create the Odoo entry, and Attach document to link a file to the entry."}
             </p>
           </div>
           <button onClick={() => setWideMode(prev => !prev)} className="rounded-lg border border-cyan-500/40 bg-cyan-500/15 px-3 py-1.5 text-xs font-bold text-cyan-200 hover:bg-cyan-500/25">
@@ -517,7 +573,7 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
       )}
 
       <div className={`${wideMode ? "flex-1 min-h-0" : ""} overflow-auto rounded-xl border border-white/10 bg-black/20`}>
-        <table className="w-full min-w-[1440px] text-[11px]">
+        <table className="w-full min-w-[1540px] text-[11px]">
           <thead className="sticky top-0 z-10 bg-zinc-950 text-white/60">
             <tr className="border-b border-white/10">
               <th className="px-3 py-2 text-center">#</th>
@@ -529,12 +585,13 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
               <th className="px-3 py-2 text-start min-w-[220px]">{isAr ? "الحساب التحليلي" : "Analytic account"}</th>
               <th className="px-3 py-2 text-center">{isAr ? "الثقة" : "Confidence"}</th>
               <th className="px-3 py-2 text-start min-w-[230px]">{isAr ? "مصدر الاقتراح" : "Suggestion source"}</th>
-              <th className="px-3 py-2 text-center min-w-[150px]">{isAr ? "الإجراءات" : "Actions"}</th>
+              <th className="px-3 py-2 text-center min-w-[260px]">{isAr ? "الإجراءات" : "Actions"}</th>
             </tr>
           </thead>
           <tbody>
             {suggestedRows.map((row, index) => {
               const rowKey = keyFor(row);
+              const attachment = attachments[rowKey];
               const sourceLabel = row.suggestion_source === "odoo_historical_move_lines"
                 ? (isAr ? "مطابقة تاريخية من أودو" : "Odoo historical match")
                 : row.suggestion_source === "local_odoo_lookup_fallback"
@@ -559,11 +616,15 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
                   <td className="px-3 py-2 text-center"><span className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${row.suggestion_confidence >= 0.7 ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-300" : "border-amber-500/40 bg-amber-500/15 text-amber-300"}`}>{pct(row.suggestion_confidence)}</span></td>
                   <td className="px-3 py-2 text-white/55"><div className="font-bold text-cyan-200">{sourceLabel}</div><div className="mt-1 leading-relaxed">{expandedRows[rowKey] ? (row.suggestion_reason || (isAr ? "راجع الحساب والشريك قبل الاعتماد." : "Review the account and partner before approval.")) : firstLine(row.suggestion_reason || "", 120)}</div></td>
                   <td className="px-3 py-2 text-center">
-                    <div className="flex items-center justify-center gap-2">
-                      <button title={isAr ? "عرض القيد المقترح" : "Preview suggested entry"} onClick={() => openPreview(row)} className="rounded-lg border border-blue-500/40 bg-blue-500/15 px-2 py-1 text-blue-200 hover:bg-blue-500/25">👁️</button>
-                      <button title={isAr ? "ترحيل إلى Odoo" : "Post to Odoo"} disabled={posting[rowKey] || Boolean(postedInfo)} onClick={() => postRow(row)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-2 py-1 text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40">{posting[rowKey] ? "⏳" : postedInfo ? "✅" : "🚀"}</button>
+                    <div className="flex flex-wrap items-center justify-center gap-2">
+                      <button title={isAr ? "عرض ثم ترحيل القيد" : "Preview then post entry"} onClick={() => openPreview(row)} className="rounded-lg border border-blue-500/40 bg-blue-500/15 px-2 py-1 text-blue-200 hover:bg-blue-500/25">👁️🚀 {isAr ? "عرض ثم ترحيل" : "Preview & post"}</button>
+                      <label title={isAr ? "إرفاق مستند" : "Attach document"} className="cursor-pointer rounded-lg border border-amber-500/40 bg-amber-500/15 px-2 py-1 text-amber-200 hover:bg-amber-500/25">
+                        📎 {isAr ? "إرفاق" : "Attach"}
+                        <input type="file" className="hidden" accept=".pdf,.png,.jpg,.jpeg,.webp,.xls,.xlsx,.csv,.ofx,.txt" onChange={event => onAttachFile(row, event.target.files?.[0])} />
+                      </label>
                     </div>
-                    {postedInfo && <a href={postedInfo.odoo_url} target="_blank" rel="noreferrer" className="mt-1 block text-[10px] text-emerald-300 underline">{postedInfo.move_name || "Odoo"}</a>}
+                    {attachment && <div className="mt-1 flex items-center justify-center gap-1 text-[10px] text-amber-200"><span title={attachment.name}>📄 {firstLine(attachment.name, 28)} {fmtFileSize(attachment.size)}</span><button onClick={() => removeAttachment(row)} className="text-rose-300 hover:text-rose-200">✕</button></div>}
+                    {postedInfo && <a href={postedInfo.odoo_url} target="_blank" rel="noreferrer" className="mt-1 block text-[10px] text-emerald-300 underline">✅ {postedInfo.move_name || "Odoo"}{postedInfo.attachment_name ? ` + ${isAr ? "مستند" : "document"}` : ""}</a>}
                     {postError[rowKey] && <div className="mt-1 text-[10px] text-rose-300">{postError[rowKey]}</div>}
                   </td>
                 </tr>
@@ -578,17 +639,18 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
           <div className="max-h-[88vh] w-full max-w-4xl overflow-auto rounded-2xl border border-white/15 bg-zinc-950 p-5 shadow-2xl" onClick={event => event.stopPropagation()}>
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
-                <h3 className="text-lg font-bold text-white">👁️ {isAr ? "معاينة القيد المقترح" : "Suggested journal entry preview"}</h3>
-                <p className="mt-1 text-xs text-white/50">{isAr ? "هذه معاينة قبل إنشاء القيد في Odoo. راجع الحسابات والمبالغ ثم اضغط ترحيل." : "Review the accounts and amounts before creating the entry in Odoo."}</p>
+                <h3 className="text-lg font-bold text-white">👁️🚀 {isAr ? "عرض ثم ترحيل القيد" : "Preview then post journal entry"}</h3>
+                <p className="mt-1 text-xs text-white/50">{isAr ? "راجع القيد والمستند المرفق قبل إنشاء القيد في Odoo." : "Review the entry and attached document before creating it in Odoo."}</p>
               </div>
               <button onClick={() => setPreview(null)} className="rounded-lg border border-white/10 px-3 py-1 text-white/70 hover:text-white">✕</button>
             </div>
             {preview.warning && <div className={`mb-3 rounded-xl border px-3 py-2 text-xs ${preview.warning.includes("تم إنشاء") || preview.warning.includes("Created") ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200" : "border-amber-500/40 bg-amber-500/15 text-amber-200"}`}>{preview.warning}</div>}
-            <div className="mb-3 grid gap-2 md:grid-cols-4 text-xs">
+            <div className="mb-3 grid gap-2 md:grid-cols-5 text-xs">
               <div className="rounded-xl border border-white/10 bg-black/30 p-3"><div className="text-white/40">{isAr ? "التاريخ" : "Date"}</div><div className="font-bold text-white">{preview.row.date || "—"}</div></div>
               <div className="rounded-xl border border-white/10 bg-black/30 p-3"><div className="text-white/40">{isAr ? "الصف" : "Row"}</div><div className="font-bold text-white">{preview.row.row_number}</div></div>
               <div className="rounded-xl border border-white/10 bg-black/30 p-3"><div className="text-white/40">{isAr ? "المبلغ" : "Amount"}</div><div className="font-bold text-amber-300">{fmt(preview.row.amount)} SAR</div></div>
               <div className="rounded-xl border border-white/10 bg-black/30 p-3"><div className="text-white/40">{isAr ? "المرجع" : "Reference"}</div><div className="font-bold text-white">{preview.payload.ref}</div></div>
+              <div className="rounded-xl border border-white/10 bg-black/30 p-3"><div className="text-white/40">{isAr ? "المستند" : "Attachment"}</div><div className="font-bold text-white">{preview.attachment ? `📎 ${firstLine(preview.attachment.name, 35)}` : (isAr ? "لا يوجد" : "None")}</div></div>
             </div>
             <div className="overflow-auto rounded-xl border border-white/10">
               <table className="w-full min-w-[720px] text-xs">
@@ -598,7 +660,7 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
             </div>
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               <button onClick={() => setPreview(null)} className="rounded-lg border border-white/10 px-4 py-2 text-sm text-white/70 hover:text-white">{isAr ? "إغلاق" : "Close"}</button>
-              <button disabled={Boolean(preview.warning) && !preview.warning.includes("تم إنشاء") && !preview.warning.includes("Created") || posting[preview.key] || Boolean(posted[preview.key])} onClick={() => postRow(preview.row)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40">{posting[preview.key] ? (isAr ? "جاري الترحيل..." : "Posting...") : posted[preview.key] ? "✅" : `🚀 ${isAr ? "ترحيل إلى Odoo" : "Post to Odoo"}`}</button>
+              <button disabled={(Boolean(preview.warning) && !preview.warning.includes("تم إنشاء") && !preview.warning.includes("Created")) || posting[preview.key] || Boolean(posted[preview.key])} onClick={() => postRow(preview.row)} className="rounded-lg border border-emerald-500/40 bg-emerald-500/15 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-500/25 disabled:opacity-40">{posting[preview.key] ? (isAr ? "جاري الترحيل..." : "Posting...") : posted[preview.key] ? "✅" : `🚀 ${isAr ? "ترحيل القيد إلى Odoo" : "Post entry to Odoo"}`}</button>
             </div>
           </div>
         </div>

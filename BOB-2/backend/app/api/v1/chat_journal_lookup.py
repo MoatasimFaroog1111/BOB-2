@@ -60,8 +60,13 @@ def extract_journal_entry_numbers(text: str) -> tuple[list[str], list[int]]:
 
     move_ids: list[int] = []
     for match in ENTRY_ID_PATTERN.finditer(normalized_text):
+        raw_number = _normalize_digits(match.group(1)).strip()
+        # If the user writes فقط رقم التسلسل مثل 001003 بعد عبارة رقم القيد، search it
+        # as a textual Odoo move name fragment as well as a possible internal move id.
+        if len(raw_number) >= 4 and raw_number not in references:
+            references.append(raw_number)
         try:
-            move_id = int(_normalize_digits(match.group(1)))
+            move_id = int(raw_number)
         except Exception:
             continue
         if move_id not in move_ids:
@@ -229,7 +234,6 @@ def _build_grid_from_moves(conn, moves: list[dict[str, Any]], move_lines: list[d
     else:
         header = ["Entry Number", "Date", "Journal", "Partner", "Account Code", "Account Name", "Label", "Debit", "Credit", "Reference", "Odoo URL"]
 
-    move_by_id = {move.get("id"): move for move in moves if isinstance(move.get("id"), int)}
     base_url = (conn.base_url or "").rstrip("/")
     rows: list[list[str]] = [header]
 

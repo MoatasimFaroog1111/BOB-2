@@ -190,7 +190,7 @@ function decorateJournalEntryCells(): void {
         const entryNumber = normalizeEntryRef(match[0]);
         cell.dataset.journalEntryRef = entryNumber;
         cell.classList.add("journal-entry-clickable-cell");
-        cell.setAttribute("title", "اضغط لعرض القيد أو تحديثه أو إرجاعه Draft أو ترحيله إلى Odoo");
+        cell.setAttribute("title", "اضغط لعرض القيد أو تحديثه أو إرجاعه Draft أو عكسه أو ترحيله إلى Odoo");
 
         const contentTarget = cell.querySelector("div") || cell;
         if (!contentTarget.querySelector(".journal-entry-click-icon")) {
@@ -211,6 +211,7 @@ export default function JournalEntrySheetActions() {
   const [posting, setPosting] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [reversing, setReversing] = useState(false);
   const [postResult, setPostResult] = useState<string | null>(null);
   const [postedEntries, setPostedEntries] = useState<Set<string>>(() => new Set());
 
@@ -257,7 +258,7 @@ export default function JournalEntrySheetActions() {
 
   if (!isDocumentsPage || !selectedEntry) return null;
 
-  const actionInProgress = posting || updating || resetting;
+  const actionInProgress = posting || updating || resetting || reversing;
 
   const buildUpdatePayload = () => {
     const firstRow = selectedEntry.rows[0] || {};
@@ -359,6 +360,38 @@ export default function JournalEntrySheetActions() {
       setPostResult(`فشل إرجاع القيد إلى Draft: ${err.message || err}`);
     } finally {
       setResetting(false);
+    }
+  };
+
+  const handleReverseAndReplaceEntry = async () => {
+    if (!selectedEntry || actionInProgress) return;
+    const confirmed = window.confirm(
+      `سيتم عكس القيد posted رقم ${selectedEntry.entryNumber} بقيد عكسي، ثم إنشاء وترحيل قيد بديل من بيانات الورقة المعدلة. هل تريد المتابعة؟`
+    );
+    if (!confirmed) return;
+
+    setReversing(true);
+    setPostResult(null);
+    try {
+      const payload = buildUpdatePayload();
+      const res = await fetch(`${API_BASE_URL}/api/v1/erp/journal-entry/reverse-and-replace`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || (await res.text()));
+      }
+
+      setPostedEntries((prev) => new Set(prev).add(selectedEntry.entryNumber));
+      setPostResult(data.message || "تم عكس القيد وإنشاء القيد البديل المصحح من الورقة.");
+      decorateJournalEntryCells();
+    } catch (err: any) {
+      setPostResult(`فشل عكس القيد: ${err.message || err}`);
+    } finally {
+      setReversing(false);
     }
   };
 
@@ -474,7 +507,7 @@ export default function JournalEntrySheetActions() {
 
           <div className="flex flex-col gap-3 border-t border-white/10 bg-black/35 px-5 py-4 md:flex-row md:items-center md:justify-between">
             <p className="text-[11px] text-white/45 max-w-2xl">
-              إذا كان القيد Posted، استخدم زر إرجاع إلى Draft أولًا إذا سمحت قواعد Odoo بذلك، ثم استخدم زر التعديل. القيود المقفلة أو المسواة قد يرفض Odoo إرجاعها.
+              إذا كان القيد Posted ولا يمكن تعديله، استخدم عكس القيد لإنشاء قيد عكسي يلغي القيد الحالي ثم قيد بديل من الورقة المعدلة. هذا لا يغير القيد القديم مباشرة.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -484,6 +517,14 @@ export default function JournalEntrySheetActions() {
                 title="إرجاع القيد من Posted إلى Draft في Odoo"
               >
                 {resetting ? "جاري الإرجاع..." : "↩ إرجاع إلى Draft"}
+              </button>
+              <button
+                onClick={handleReverseAndReplaceEntry}
+                disabled={actionInProgress}
+                className="rounded-xl border border-rose-400/35 bg-rose-500/15 px-4 py-2.5 text-sm font-extrabold text-rose-100 hover:bg-rose-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                title="عكس القيد الحالي وإنشاء قيد بديل من الورقة"
+              >
+                {reversing ? "جاري عكس القيد..." : "⟲ عكس القيد"}
               </button>
               <button
                 onClick={handleUpdateEntry}

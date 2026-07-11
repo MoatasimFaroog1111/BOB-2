@@ -12,6 +12,7 @@ export function MainNavigation() {
     ["/bank-reconciliation", t("bankRecon.pageTitle")],
     ["/documents", t("sidebar.documents")],
     ["/audit", t("sidebar.audit")],
+    ["/communication-tools", language === "ar" ? "أدوات الاتصال" : "Communication Tools"],
     ["/erp", t("sidebar.erp")],
     ["/team", t("sidebar.home")],
     ["/settings", language === "ar" ? "الإعدادات" : "Settings"],

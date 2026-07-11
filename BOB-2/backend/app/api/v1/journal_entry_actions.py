@@ -13,7 +13,11 @@ from app.security.encryption import decrypt_value
 
 router = APIRouter()
 
-ACCOUNT_CODE_PATTERN = re.compile(r"\b([0-9][0-9.\-]{2,})\b")
+ACCOUNT_CODE_PATTERN = re.compile(r"(?:^|[^\d.])([0-9][0-9]{4,9})(?![\d.])")
+ENTRY_REFERENCE_PATTERN = re.compile(
+    r"\b[A-Z][A-Z0-9]{1,12}\s*/\s*\d{4}\s*(?:/\s*\d{1,2})?\s*/\s*\d{3,8}\b",
+    re.IGNORECASE,
+)
 
 
 class JournalEntryPostRequest(BaseModel):
@@ -60,12 +64,16 @@ def _many2one_id(value: Any) -> int | None:
 
 def _extract_account_code(*values: Optional[str]) -> str:
     for value in values:
-        text = str(value or "").strip()
+        text = str(value or "").replace("↗", "").strip()
         if not text:
             continue
-        match = ACCOUNT_CODE_PATTERN.search(text)
-        if match:
-            return match.group(1)
+        # Do not accidentally pick numbers from Odoo move references such as MISC/2024/12/0040.
+        if ENTRY_REFERENCE_PATTERN.search(text):
+            continue
+        for match in ACCOUNT_CODE_PATTERN.finditer(text):
+            code = (match.group(1) or "").strip()
+            if code:
+                return code
     return ""
 
 
@@ -213,7 +221,10 @@ def _move_payload(conn, move: dict[str, Any], lines: list[dict[str, Any]], messa
 def _find_account_id(erp, account_code: str, account_name: str | None, company_id: int | None) -> int:
     code = _extract_account_code(account_code, account_name)
     if not code:
-        raise HTTPException(status_code=400, detail="Each line must contain an account code from the sheet.")
+        raise HTTPException(
+            status_code=400,
+            detail="Each line must contain a clear account code from the sheet, for example 999002 or Historical Adjustment 999002.",
+        )
 
     domains: list[list[Any]] = [["code", "=", code]]
     if company_id:

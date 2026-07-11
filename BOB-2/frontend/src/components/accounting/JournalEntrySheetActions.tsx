@@ -190,7 +190,7 @@ function decorateJournalEntryCells(): void {
         const entryNumber = normalizeEntryRef(match[0]);
         cell.dataset.journalEntryRef = entryNumber;
         cell.classList.add("journal-entry-clickable-cell");
-        cell.setAttribute("title", "اضغط لعرض القيد أو تحديثه أو ترحيله إلى Odoo");
+        cell.setAttribute("title", "اضغط لعرض القيد أو تحديثه أو إرجاعه Draft أو ترحيله إلى Odoo");
 
         const contentTarget = cell.querySelector("div") || cell;
         if (!contentTarget.querySelector(".journal-entry-click-icon")) {
@@ -210,6 +210,7 @@ export default function JournalEntrySheetActions() {
   const [selectedEntry, setSelectedEntry] = useState<SelectedEntry | null>(null);
   const [posting, setPosting] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [postResult, setPostResult] = useState<string | null>(null);
   const [postedEntries, setPostedEntries] = useState<Set<string>>(() => new Set());
 
@@ -256,6 +257,8 @@ export default function JournalEntrySheetActions() {
 
   if (!isDocumentsPage || !selectedEntry) return null;
 
+  const actionInProgress = posting || updating || resetting;
+
   const buildUpdatePayload = () => {
     const firstRow = selectedEntry.rows[0] || {};
     const date = getHeaderValue(firstRow, ["التاريخ", "date"]);
@@ -294,7 +297,7 @@ export default function JournalEntrySheetActions() {
   };
 
   const handleUpdateEntry = async () => {
-    if (!selectedEntry || updating) return;
+    if (!selectedEntry || actionInProgress) return;
     const confirmed = window.confirm(
       `سيتم تحديث القيد ${selectedEntry.entryNumber} في Odoo بناءً على الصفوف المعدلة في الورقة. هل تريد المتابعة؟`
     );
@@ -324,8 +327,43 @@ export default function JournalEntrySheetActions() {
     }
   };
 
+  const handleResetToDraft = async () => {
+    if (!selectedEntry || actionInProgress) return;
+    const confirmed = window.confirm(
+      `سيتم محاولة إرجاع القيد ${selectedEntry.entryNumber} من Posted إلى Draft في Odoo. هل تريد المتابعة؟`
+    );
+    if (!confirmed) return;
+
+    setResetting(true);
+    setPostResult(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/v1/erp/journal-entry/reset-to-draft`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ entry_number: selectedEntry.entryNumber }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || (await res.text()));
+      }
+
+      setPostedEntries((prev) => {
+        const next = new Set(prev);
+        next.delete(selectedEntry.entryNumber);
+        return next;
+      });
+      setPostResult(data.message || "تم إرجاع القيد إلى Draft في Odoo.");
+      decorateJournalEntryCells();
+    } catch (err: any) {
+      setPostResult(`فشل إرجاع القيد إلى Draft: ${err.message || err}`);
+    } finally {
+      setResetting(false);
+    }
+  };
+
   const handlePostEntry = async () => {
-    if (!selectedEntry || posting) return;
+    if (!selectedEntry || actionInProgress) return;
     const confirmed = window.confirm(`هل تريد ترحيل القيد ${selectedEntry.entryNumber} إلى Odoo؟`);
     if (!confirmed) return;
 
@@ -436,19 +474,27 @@ export default function JournalEntrySheetActions() {
 
           <div className="flex flex-col gap-3 border-t border-white/10 bg-black/35 px-5 py-4 md:flex-row md:items-center md:justify-between">
             <p className="text-[11px] text-white/45 max-w-2xl">
-              زر التعديل يقرأ التاريخ والحساب والشريك والبيان والمدين والدائن من الورقة، ثم يحدّث نفس القيد في Odoo إذا كان Draft. القيود المرحلة لا يتم تعديلها مباشرة.
+              إذا كان القيد Posted، استخدم زر إرجاع إلى Draft أولًا إذا سمحت قواعد Odoo بذلك، ثم استخدم زر التعديل. القيود المقفلة أو المسواة قد يرفض Odoo إرجاعها.
             </p>
             <div className="flex flex-wrap items-center gap-2">
               <button
+                onClick={handleResetToDraft}
+                disabled={actionInProgress}
+                className="rounded-xl border border-sky-400/35 bg-sky-500/15 px-4 py-2.5 text-sm font-extrabold text-sky-100 hover:bg-sky-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+                title="إرجاع القيد من Posted إلى Draft في Odoo"
+              >
+                {resetting ? "جاري الإرجاع..." : "↩ إرجاع إلى Draft"}
+              </button>
+              <button
                 onClick={handleUpdateEntry}
-                disabled={updating || posting}
+                disabled={actionInProgress}
                 className="rounded-xl border border-emerald-400/35 bg-emerald-500/15 px-4 py-2.5 text-sm font-extrabold text-emerald-100 hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {updating ? "جاري تعديل القيد..." : "تعديل القيود في Odoo"}
               </button>
               <button
                 onClick={handlePostEntry}
-                disabled={posting || updating || isPosted}
+                disabled={actionInProgress || isPosted}
                 className="rounded-xl bg-gradient-to-r from-amber-400 to-yellow-600 px-5 py-2.5 text-sm font-extrabold text-black shadow-lg hover:from-amber-300 hover:to-yellow-500 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {posting ? "جاري الترحيل..." : isPosted ? "تم الترحيل" : "ترحيل القيد إلى Odoo"}

@@ -27,6 +27,36 @@ ACCOUNTING_ACTION_SCHEMA = {
     "write_policy": ["draft_only", "requires_confirmation", "read_only"],
 }
 
+# Explicit fetch/read terms must win over incidental words found inside pasted
+# journal-entry descriptions, such as "Reversal of" or "reverse" in Odoo move names.
+FETCH_TERMS = [
+    "احضر",
+    "أحضر",
+    "حضر",
+    "اجلب",
+    "جلب",
+    "هات",
+    "اعرض",
+    "اظهر",
+    "أظهر",
+    "افتح",
+    "فتح",
+    "اقرأ",
+    "إقرأ",
+    "قراءة",
+    "تفاصيل",
+    "تفصيل",
+    "استخرج",
+    "fetch",
+    "get",
+    "show",
+    "display",
+    "open",
+    "read",
+    "lookup",
+    "details",
+    "extract",
+]
 DATE_TERMS = ["تاريخ", "التاريخ", "تايخ", "التايخ", "date"]
 ACCOUNT_TERMS = ["الحساب", "حساب", "رمز الحساب", "كود الحساب", "account"]
 PARTNER_TERMS = ["الشريك", "شريك", "عميل", "مورد", "partner", "customer", "vendor"]
@@ -45,6 +75,13 @@ def _normal(value: str) -> str:
 
 def _contains_any(text: str, terms: list[str]) -> bool:
     return any(term in text for term in terms)
+
+
+def _has_explicit_fetch_command(text: str) -> bool:
+    # This check intentionally runs before reverse/change/post routing. The user
+    # may paste many Odoo move names containing text such as "Reversal of", but
+    # the command itself can still be "احضر هذه القيود من أودو".
+    return _contains_any(text, FETCH_TERMS)
 
 
 def _parse_date(prompt: str) -> tuple[str, str] | None:
@@ -117,6 +154,9 @@ def classify_accounting_command(prompt: str, payload: ChatSpreadsheetRequest) ->
 
     if not text:
         return {"intent": "legacy_chat", "target": "unknown", "field": "unknown", "write_policy": "read_only"}
+
+    if _has_explicit_fetch_command(text):
+        return {"intent": "legacy_chat", "target": "prompt_entries", "field": "unknown", "write_policy": "read_only"}
 
     if _contains_any(text, CAPABILITY_TERMS) and (_contains_any(text, CHANGE_TERMS) or _contains_any(text, POST_TERMS)):
         return {"intent": "explain_capability", "target": "current_sheet", "field": "unknown", "write_policy": "read_only"}

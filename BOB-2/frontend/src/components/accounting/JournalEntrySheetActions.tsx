@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { API_BASE_URL } from "@/lib/api";
 
 const ENTRY_REF_REGEX = /\b[A-Z][A-Z0-9]{1,12}\s*\/\s*\d{4}\s*(?:\/\s*\d{1,2})?\s*\/\s*\d{3,8}\b/i;
+const ACCOUNT_CODE_REGEX = /\b([0-9][0-9.\-]{2,})\b/;
 
 type EntryRow = Record<string, string>;
 
@@ -21,12 +22,14 @@ const normalizeEntryRef = (value: string): string =>
     .replace(/\s+/g, "")
     .trim();
 
-const cellText = (cell: Element | undefined): string => (cell?.textContent || "").trim();
+const cellText = (cell: Element | undefined): string => (cell?.textContent || "").replace("↗", "").trim();
+
+const normalizeHeader = (value: string): string => (value || "").trim().toLowerCase();
 
 const findHeaderIndex = (rows: HTMLTableRowElement[]): number => {
   for (let i = 0; i < Math.min(rows.length, 12); i++) {
     const cells = Array.from(rows[i].querySelectorAll("td")).slice(1);
-    const labels = cells.map((cell) => cellText(cell).toLowerCase());
+    const labels = cells.map((cell) => normalizeHeader(cellText(cell)));
     const hasEntry = labels.some((label) => ["رقم القيد", "entry number", "journal entry", "move"].includes(label));
     const hasDate = labels.some((label) => ["التاريخ", "date"].includes(label));
     if (hasEntry && hasDate) return i;
@@ -36,24 +39,56 @@ const findHeaderIndex = (rows: HTMLTableRowElement[]): number => {
 
 const findEntryColumn = (headers: string[]): number => {
   const exact = headers.findIndex((header) => {
-    const label = header.trim().toLowerCase();
+    const label = normalizeHeader(header);
     return ["رقم القيد", "entry number", "journal entry", "move"].includes(label);
   });
   if (exact !== -1) return exact;
   return headers.findIndex((header) => /قيد|entry|move/i.test(header));
 };
 
+const getHeaderValue = (row: EntryRow, candidates: string[]): string => {
+  for (const [key, value] of Object.entries(row)) {
+    const normalized = normalizeHeader(key);
+    if (candidates.some((candidate) => normalized === normalizeHeader(candidate) || normalized.includes(normalizeHeader(candidate)))) {
+      return String(value || "").trim();
+    }
+  }
+  return "";
+};
+
+const extractAccountCode = (...values: string[]): string => {
+  for (const value of values) {
+    const match = String(value || "").match(ACCOUNT_CODE_REGEX);
+    if (match?.[1]) return match[1];
+  }
+  return "";
+};
+
+const parseAmount = (value: string): number => {
+  const cleaned = String(value || "").replace(/,/g, "").trim();
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const ensureEntryHeader = (headers: string[]): string[] => {
+  if (headers.some((header) => normalizeHeader(header) === "رقم القيد" || normalizeHeader(header) === "entry number")) {
+    return headers;
+  }
+  return ["رقم القيد", ...headers];
+};
+
 const extractSelectedEntry = (cell: HTMLElement, entryNumber: string): SelectedEntry => {
   const table = cell.closest("table");
   if (!table) {
-    return { entryNumber, headers: [], rows: [] };
+    return { entryNumber, headers: ["رقم القيد"], rows: [{ "رقم القيد": entryNumber }] };
   }
 
   const bodyRows = Array.from(table.querySelectorAll("tbody tr")) as HTMLTableRowElement[];
   const headerIndex = findHeaderIndex(bodyRows);
   const headerCells = Array.from(bodyRows[headerIndex]?.querySelectorAll("td") || []).slice(1);
-  const headers = headerCells.map((header, index) => cellText(header) || `Column ${index + 1}`);
-  const entryCol = findEntryColumn(headers);
+  const rawHeaders = headerCells.map((header, index) => cellText(header) || `Column ${index + 1}`);
+  const headers = ensureEntryHeader(rawHeaders);
+  const entryCol = findEntryColumn(rawHeaders);
 
   const rows: EntryRow[] = [];
   for (const row of bodyRows.slice(headerIndex + 1)) {
@@ -65,10 +100,17 @@ const extractSelectedEntry = (cell: HTMLElement, entryNumber: string): SelectedE
     const rowHasEntry = directValue === entryNumber || rowValues.some((value) => normalizeEntryRef(value).includes(entryNumber));
     if (!rowHasEntry) continue;
 
-    const mapped: EntryRow = {};
+    const mapped: EntryRow = { "رقم القيد": entryNumber };
     rowValues.forEach((value, index) => {
-      mapped[headers[index] || `Column ${index + 1}`] = value;
+      const key = rawHeaders[index] || `Column ${index + 1}`;
+      mapped[key] = value;
     });
+
+    // Always keep the entry number visible for every line, even if the rendered grid
+    // only showed it on the first row or the user scrolled/edited that cell.
+    const entryHeader = rawHeaders.find((header) => /رقم القيد|entry number|journal entry|move/i.test(header));
+    if (entryHeader) mapped[entryHeader] = entryNumber;
+    mapped["رقم القيد"] = entryNumber;
     rows.push(mapped);
   }
 
@@ -98,7 +140,7 @@ function decorateJournalEntryCells(): void {
         const entryNumber = normalizeEntryRef(match[0]);
         cell.dataset.journalEntryRef = entryNumber;
         cell.classList.add("journal-entry-clickable-cell");
-        cell.setAttribute("title", "اضغط لعرض القيد وترحيله إلى Odoo");
+        cell.setAttribute("title", "اضغط لعرض القيد أو تحديثه أو ترحيله إلى Odoo");
 
         const contentTarget = cell.querySelector("div") || cell;
         if (!contentTarget.querySelector(".journal-entry-click-icon")) {
@@ -117,6 +159,7 @@ export default function JournalEntrySheetActions() {
   const pathname = usePathname();
   const [selectedEntry, setSelectedEntry] = useState<SelectedEntry | null>(null);
   const [posting, setPosting] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [postResult, setPostResult] = useState<string | null>(null);
   const [postedEntries, setPostedEntries] = useState<Set<string>>(() => new Set());
 
@@ -154,10 +197,79 @@ export default function JournalEntrySheetActions() {
 
   const visibleHeaders = useMemo(() => {
     if (!selectedEntry) return [];
-    return selectedEntry.headers.filter((header) => header && selectedEntry.rows.some((row) => String(row[header] || "").trim()));
+    const headers = ensureEntryHeader(selectedEntry.headers);
+    return headers.filter((header, index) => {
+      if (index === 0 && normalizeHeader(header) === "رقم القيد") return true;
+      return header && selectedEntry.rows.some((row) => String(row[header] || "").trim());
+    });
   }, [selectedEntry]);
 
   if (!isDocumentsPage || !selectedEntry) return null;
+
+  const buildUpdatePayload = () => {
+    const firstRow = selectedEntry.rows[0] || {};
+    const date = getHeaderValue(firstRow, ["التاريخ", "date"]);
+    const ref = getHeaderValue(firstRow, ["المرجع", "reference", "ref"]);
+
+    const rows = selectedEntry.rows.map((row) => {
+      const explicitCode = getHeaderValue(row, ["رمز الحساب", "account code", "account_code", "code"]);
+      const accountName = getHeaderValue(row, ["اسم الحساب", "account name", "account"]);
+      const accountCode = extractAccountCode(explicitCode, accountName);
+
+      return {
+        entry_number: selectedEntry.entryNumber,
+        account_code: accountCode,
+        account_name: accountName,
+        partner_name: getHeaderValue(row, ["الشريك", "partner", "partner name"]),
+        label: getHeaderValue(row, ["البيان", "الوصف", "label", "description", "memo"]),
+        debit: parseAmount(getHeaderValue(row, ["مدين", "debit"])),
+        credit: parseAmount(getHeaderValue(row, ["دائن", "credit"])),
+      };
+    });
+
+    const missingAccountIndex = rows.findIndex((row) => !row.account_code);
+    if (missingAccountIndex !== -1) {
+      throw new Error(`السطر رقم ${missingAccountIndex + 1} لا يحتوي على رمز حساب واضح في الورقة.`);
+    }
+
+    return {
+      entry_number: selectedEntry.entryNumber,
+      date: date || undefined,
+      ref: ref || undefined,
+      rows,
+    };
+  };
+
+  const handleUpdateEntry = async () => {
+    if (!selectedEntry || updating) return;
+    const confirmed = window.confirm(
+      `سيتم تحديث القيد ${selectedEntry.entryNumber} في Odoo بناءً على الصفوف المعدلة في الورقة. هل تريد المتابعة؟`
+    );
+    if (!confirmed) return;
+
+    setUpdating(true);
+    setPostResult(null);
+    try {
+      const payload = buildUpdatePayload();
+      const res = await fetch(`${API_BASE_URL}/api/v1/erp/journal-entry/update`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || (await res.text()));
+      }
+
+      setPostResult(data.message || "تم تحديث القيد في Odoo بناءً على الورقة.");
+      decorateJournalEntryCells();
+    } catch (err: any) {
+      setPostResult(`فشل تعديل القيد: ${err.message || err}`);
+    } finally {
+      setUpdating(false);
+    }
+  };
 
   const handlePostEntry = async () => {
     if (!selectedEntry || posting) return;
@@ -221,12 +333,14 @@ export default function JournalEntrySheetActions() {
         <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-3xl border border-amber-400/25 bg-[#160b05] shadow-2xl flex flex-col">
           <div className="flex items-center justify-between border-b border-white/10 px-5 py-4 bg-black/35">
             <div>
-              <div className="text-[11px] text-amber-300/80 font-bold">عرض قيد محاسبي</div>
+              <div className="text-[11px] text-amber-300/80 font-bold">عرض وتعديل قيد محاسبي</div>
               <h3 className="text-lg font-extrabold text-white mt-1 flex items-center gap-2">
                 <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-amber-400/15 text-amber-300">↗</span>
                 {selectedEntry.entryNumber}
               </h3>
-              <p className="text-[11px] text-white/45 mt-1">تم تجميع بنود القيد من ورقة القيود الحالية.</p>
+              <p className="text-[11px] text-white/45 mt-1">
+                تم تجميع البنود التي تحمل نفس رقم القيد من الورقة الحالية. رقم القيد يظهر أمام كل سطر.
+              </p>
             </div>
             <button
               onClick={() => setSelectedEntry(null)}
@@ -256,7 +370,9 @@ export default function JournalEntrySheetActions() {
                   {selectedEntry.rows.map((row, rowIndex) => (
                     <tr key={rowIndex} className="border-b border-white/5 hover:bg-white/5">
                       {visibleHeaders.map((header) => (
-                        <td key={`${rowIndex}-${header}`} className="px-3 py-2 whitespace-nowrap text-white/75">{row[header]}</td>
+                        <td key={`${rowIndex}-${header}`} className="px-3 py-2 whitespace-nowrap text-white/75">
+                          {normalizeHeader(header) === "رقم القيد" ? selectedEntry.entryNumber : row[header]}
+                        </td>
                       ))}
                     </tr>
                   ))}
@@ -265,17 +381,26 @@ export default function JournalEntrySheetActions() {
             </div>
           </div>
 
-          <div className="flex items-center justify-between gap-3 border-t border-white/10 bg-black/35 px-5 py-4">
-            <p className="text-[11px] text-white/45">
-              زر الترحيل يستخدم Odoo action_post على القيد الموجود. إذا كان القيد مرحّلًا مسبقًا فلن يتكرر الترحيل.
+          <div className="flex flex-col gap-3 border-t border-white/10 bg-black/35 px-5 py-4 md:flex-row md:items-center md:justify-between">
+            <p className="text-[11px] text-white/45 max-w-2xl">
+              زر التعديل يقرأ التاريخ والحساب والشريك والبيان والمدين والدائن من الورقة، ثم يحدّث نفس القيد في Odoo إذا كان Draft. القيود المرحلة لا يتم تعديلها مباشرة.
             </p>
-            <button
-              onClick={handlePostEntry}
-              disabled={posting || isPosted}
-              className="rounded-xl bg-gradient-to-r from-amber-400 to-yellow-600 px-5 py-2.5 text-sm font-extrabold text-black shadow-lg hover:from-amber-300 hover:to-yellow-500 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {posting ? "جاري الترحيل..." : isPosted ? "تم الترحيل" : "ترحيل القيد إلى Odoo"}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={handleUpdateEntry}
+                disabled={updating || posting}
+                className="rounded-xl border border-emerald-400/35 bg-emerald-500/15 px-4 py-2.5 text-sm font-extrabold text-emerald-100 hover:bg-emerald-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {updating ? "جاري تعديل القيد..." : "تعديل القيود في Odoo"}
+              </button>
+              <button
+                onClick={handlePostEntry}
+                disabled={posting || updating || isPosted}
+                className="rounded-xl bg-gradient-to-r from-amber-400 to-yellow-600 px-5 py-2.5 text-sm font-extrabold text-black shadow-lg hover:from-amber-300 hover:to-yellow-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {posting ? "جاري الترحيل..." : isPosted ? "تم الترحيل" : "ترحيل القيد إلى Odoo"}
+              </button>
+            </div>
           </div>
         </div>
       </div>

@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,6 +13,8 @@ from app.security.encryption import decrypt_value
 
 router = APIRouter()
 
+ACCOUNT_CODE_PATTERN = re.compile(r"\b([0-9][0-9.\-]{2,})\b")
+
 
 class JournalEntryPostRequest(BaseModel):
     entry_number: Optional[str] = None
@@ -19,9 +22,50 @@ class JournalEntryPostRequest(BaseModel):
     company_id: Optional[int] = 1
 
 
+class JournalEntryUpdateLine(BaseModel):
+    entry_number: Optional[str] = None
+    account_code: Optional[str] = None
+    account_name: Optional[str] = None
+    partner_name: Optional[str] = None
+    label: Optional[str] = None
+    debit: Optional[float] = 0.0
+    credit: Optional[float] = 0.0
+
+
+class JournalEntryUpdateRequest(BaseModel):
+    entry_number: Optional[str] = None
+    move_id: Optional[int] = None
+    company_id: Optional[int] = 1
+    date: Optional[str] = None
+    ref: Optional[str] = None
+    rows: list[JournalEntryUpdateLine]
+
+
 def _many2one_name(value: Any) -> str:
     if isinstance(value, (list, tuple)) and len(value) > 1:
         return str(value[1] or "")
+    return ""
+
+
+def _many2one_id(value: Any) -> int | None:
+    if isinstance(value, (list, tuple)) and value:
+        try:
+            return int(value[0])
+        except Exception:
+            return None
+    if isinstance(value, int):
+        return value
+    return None
+
+
+def _extract_account_code(*values: Optional[str]) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if not text:
+            continue
+        match = ACCOUNT_CODE_PATTERN.search(text)
+        if match:
+            return match.group(1)
     return ""
 
 
@@ -57,7 +101,7 @@ def _read_saved_erp(db_session: Session):
     return conn, erp
 
 
-def _build_move_domain(payload: JournalEntryPostRequest) -> list[Any]:
+def _build_move_domain(payload: JournalEntryPostRequest | JournalEntryUpdateRequest) -> list[Any]:
     domain: list[Any] = []
 
     if payload.move_id:
@@ -82,6 +126,39 @@ def _build_move_domain(payload: JournalEntryPostRequest) -> list[Any]:
     return domain
 
 
+def _read_matching_move(erp, payload: JournalEntryPostRequest | JournalEntryUpdateRequest) -> dict[str, Any]:
+    domain = _build_move_domain(payload)
+    try:
+        moves = erp.execute_kw(
+            "account.move",
+            "search_read",
+            [domain],
+            {
+                "fields": [
+                    "id",
+                    "name",
+                    "ref",
+                    "date",
+                    "journal_id",
+                    "partner_id",
+                    "state",
+                    "payment_reference",
+                    "company_id",
+                    "line_ids",
+                ],
+                "limit": 2,
+            },
+        ) or []
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to read Odoo journal entry: {exc}") from exc
+
+    if not moves:
+        raise HTTPException(status_code=404, detail="Matching Odoo journal entry was not found.")
+    if len(moves) > 1:
+        raise HTTPException(status_code=409, detail="More than one Odoo journal entry matched this reference.")
+    return moves[0]
+
+
 def _read_move_lines(erp, move_id: int) -> list[dict[str, Any]]:
     try:
         return erp.execute_kw(
@@ -96,6 +173,12 @@ def _read_move_lines(erp, move_id: int) -> list[dict[str, Any]]:
         ) or []
     except Exception:
         return []
+
+
+def _account_payload(account_value: Any) -> tuple[str, str]:
+    account_name = _many2one_name(account_value)
+    account_code = _extract_account_code(account_name)
+    return account_code, account_name
 
 
 def _move_payload(conn, move: dict[str, Any], lines: list[dict[str, Any]], message: str) -> dict[str, Any]:
@@ -115,7 +198,8 @@ def _move_payload(conn, move: dict[str, Any], lines: list[dict[str, Any]], messa
         "odoo_url": odoo_url,
         "lines": [
             {
-                "account": _many2one_name(line.get("account_id")),
+                "account_code": _account_payload(line.get("account_id"))[0],
+                "account": _account_payload(line.get("account_id"))[1],
                 "partner": _many2one_name(line.get("partner_id")),
                 "label": line.get("name") or "",
                 "debit": float(line.get("debit") or 0.0),
@@ -126,43 +210,111 @@ def _move_payload(conn, move: dict[str, Any], lines: list[dict[str, Any]], messa
     }
 
 
+def _find_account_id(erp, account_code: str, account_name: str | None, company_id: int | None) -> int:
+    code = _extract_account_code(account_code, account_name)
+    if not code:
+        raise HTTPException(status_code=400, detail="Each line must contain an account code from the sheet.")
+
+    domains: list[list[Any]] = [["code", "=", code]]
+    if company_id:
+        domains.insert(0, ["company_ids", "in", [company_id]])
+
+    try:
+        accounts = erp.execute_kw(
+            "account.account",
+            "search_read",
+            [domains],
+            {"fields": ["id", "code", "name"], "limit": 2},
+        ) or []
+    except Exception:
+        accounts = []
+
+    if not accounts:
+        try:
+            accounts = erp.execute_kw(
+                "account.account",
+                "search_read",
+                [[["code", "=", code]]],
+                {"fields": ["id", "code", "name"], "limit": 2},
+            ) or []
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Failed to search account {code}: {exc}") from exc
+
+    if not accounts:
+        raise HTTPException(status_code=404, detail=f"Account code {code} was not found in Odoo.")
+    if len(accounts) > 1:
+        raise HTTPException(status_code=409, detail=f"More than one Odoo account matched code {code}.")
+    return int(accounts[0]["id"])
+
+
+def _find_partner_id(erp, partner_name: str | None, company_id: int | None) -> int | None:
+    name = str(partner_name or "").strip()
+    if not name:
+        return None
+
+    domains: list[list[Any]] = [["name", "=", name]]
+    if company_id:
+        domains.append(["company_id", "in", [False, company_id]])
+
+    try:
+        partners = erp.execute_kw(
+            "res.partner",
+            "search_read",
+            [domains],
+            {"fields": ["id", "name"], "limit": 2},
+        ) or []
+    except Exception:
+        partners = []
+
+    if not partners:
+        try:
+            partners = erp.execute_kw(
+                "res.partner",
+                "search_read",
+                [[["name", "ilike", name]]],
+                {"fields": ["id", "name"], "limit": 2},
+            ) or []
+        except Exception:
+            return None
+
+    if len(partners) == 1:
+        return int(partners[0]["id"])
+    return None
+
+
+def _safe_amount(value: float | int | str | None) -> float:
+    try:
+        return round(float(str(value or 0).replace(",", "")), 2)
+    except Exception:
+        return 0.0
+
+
+def _build_line_update_vals(erp, row: JournalEntryUpdateLine, company_id: int | None) -> dict[str, Any]:
+    debit = _safe_amount(row.debit)
+    credit = _safe_amount(row.credit)
+    if debit and credit:
+        raise HTTPException(status_code=400, detail="A journal item cannot have both debit and credit values.")
+
+    vals: dict[str, Any] = {
+        "account_id": _find_account_id(erp, row.account_code or "", row.account_name, company_id),
+        "name": str(row.label or "/"),
+        "debit": debit,
+        "credit": credit,
+    }
+    partner_id = _find_partner_id(erp, row.partner_name, company_id)
+    if partner_id:
+        vals["partner_id"] = partner_id
+    return vals
+
+
 @router.post("/journal-entry/post")
 def post_journal_entry(
     payload: JournalEntryPostRequest,
     db_session: Session = Depends(get_db),
 ):
     conn, erp = _read_saved_erp(db_session)
-    domain = _build_move_domain(payload)
+    move = _read_matching_move(erp, payload)
 
-    try:
-        moves = erp.execute_kw(
-            "account.move",
-            "search_read",
-            [domain],
-            {
-                "fields": [
-                    "id",
-                    "name",
-                    "ref",
-                    "date",
-                    "journal_id",
-                    "partner_id",
-                    "state",
-                    "payment_reference",
-                    "company_id",
-                ],
-                "limit": 2,
-            },
-        ) or []
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Failed to read Odoo journal entry: {exc}") from exc
-
-    if not moves:
-        raise HTTPException(status_code=404, detail="Matching Odoo journal entry was not found.")
-    if len(moves) > 1:
-        raise HTTPException(status_code=409, detail="More than one Odoo journal entry matched this reference.")
-
-    move = moves[0]
     move_id = int(move["id"])
     current_state = move.get("state") or ""
 
@@ -186,7 +338,7 @@ def post_journal_entry(
             "account.move",
             "read",
             [[move_id]],
-            {"fields": ["id", "name", "ref", "date", "journal_id", "partner_id", "state", "payment_reference", "company_id"]},
+            {"fields": ["id", "name", "ref", "date", "journal_id", "partner_id", "state", "payment_reference", "company_id", "line_ids"]},
         )
         if refreshed:
             move = refreshed[0]
@@ -195,3 +347,71 @@ def post_journal_entry(
 
     lines = _read_move_lines(erp, move_id)
     return _move_payload(conn, move, lines, "Journal entry posted successfully in Odoo.")
+
+
+@router.post("/journal-entry/update")
+def update_journal_entry_from_sheet(
+    payload: JournalEntryUpdateRequest,
+    db_session: Session = Depends(get_db),
+):
+    if not payload.rows:
+        raise HTTPException(status_code=400, detail="No sheet rows were provided for updating the journal entry.")
+
+    conn, erp = _read_saved_erp(db_session)
+    move = _read_matching_move(erp, payload)
+    move_id = int(move["id"])
+    current_state = move.get("state") or ""
+
+    if current_state != "draft":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Only draft Odoo journal entries can be updated from the sheet. "
+                f"Current state is: {current_state}. Create a reversal/correction entry for posted moves."
+            ),
+        )
+
+    current_lines = _read_move_lines(erp, move_id)
+    if len(current_lines) != len(payload.rows):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Sheet lines count ({len(payload.rows)}) does not match Odoo journal items count ({len(current_lines)}). "
+                "Refusing to guess line mapping. Fetch the entry again, edit it, then retry."
+            ),
+        )
+
+    move_vals: dict[str, Any] = {}
+    if payload.date:
+        move_vals["date"] = payload.date
+    if payload.ref is not None:
+        move_vals["ref"] = payload.ref
+
+    try:
+        if move_vals:
+            erp.execute_kw("account.move", "write", [[move_id], move_vals])
+
+        for line, row in zip(current_lines, payload.rows):
+            vals = _build_line_update_vals(erp, row, payload.company_id)
+            erp.execute_kw("account.move.line", "write", [[int(line["id"])], vals])
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to update Odoo journal entry from sheet: {exc}") from exc
+
+    refreshed = erp.execute_kw(
+        "account.move",
+        "read",
+        [[move_id]],
+        {"fields": ["id", "name", "ref", "date", "journal_id", "partner_id", "state", "payment_reference", "company_id", "line_ids"]},
+    )
+    if refreshed:
+        move = refreshed[0]
+
+    lines = _read_move_lines(erp, move_id)
+    return _move_payload(
+        conn,
+        move,
+        lines,
+        f"Journal entry {move.get('name') or payload.entry_number or move_id} was updated from the sheet draft successfully.",
+    )

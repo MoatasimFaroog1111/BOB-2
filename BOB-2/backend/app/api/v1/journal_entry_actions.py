@@ -388,6 +388,19 @@ def reset_journal_entry_to_draft(
     try:
         erp.execute_kw("account.move", "button_draft", [[move_id]])
     except Exception as exc:
+        # Odoo 19 XML-RPC can execute button_draft successfully, then fail while
+        # serializing the Python None return value with allow_none=False. In that
+        # case, verify the real move state before reporting a failure.
+        refreshed_after_fault = _read_refreshed_move(erp, move_id, move)
+        if (refreshed_after_fault.get("state") or "") == "draft":
+            lines = _read_move_lines(erp, move_id)
+            return _move_payload(
+                conn,
+                refreshed_after_fault,
+                lines,
+                "Journal entry was reset to draft in Odoo. Odoo returned an XML-RPC None serialization warning, but the entry state is draft now.",
+            )
+
         raise HTTPException(
             status_code=400,
             detail=(

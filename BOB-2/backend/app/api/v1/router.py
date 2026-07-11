@@ -6,6 +6,7 @@ from app.api.v1.bank_reconciliation_compat import router as bank_reconciliation_
 from app.api.v1.bank_reconciliation_hardening import router as bank_reconciliation_hardening_router
 from app.api.v1.bank_reconciliation_entry_suggestions import router as bank_reconciliation_entry_suggestions_router
 from app.api.v1.bank_rule_entry_suggestions import router as bank_rule_entry_suggestions_router
+from app.api.v1.accounting_command_router import router as accounting_command_router
 from app.api.v1.chat_spreadsheet_intent_guard import router as chat_spreadsheet_intent_guard_router
 from app.api.v1.chat_journal_lookup import router as chat_journal_lookup_router
 from app.api.v1.erp import router as erp_router
@@ -23,6 +24,7 @@ api_router.include_router(bank_reconciliation_compat_router, prefix="/erp", tags
 api_router.include_router(bank_reconciliation_hardening_router, prefix="/erp", tags=["ERP Bank Reconciliation"])
 api_router.include_router(bank_rule_entry_suggestions_router, prefix="/erp", tags=["ERP Bank Reconciliation"])
 api_router.include_router(bank_reconciliation_entry_suggestions_router, prefix="/erp", tags=["ERP Bank Reconciliation"])
+api_router.include_router(accounting_command_router, prefix="/erp", tags=["ERP Accounting Command Brain"])
 api_router.include_router(chat_spreadsheet_intent_guard_router, prefix="/erp", tags=["ERP Smart Chat Intent Guard"])
 api_router.include_router(chat_journal_lookup_router, prefix="/erp", tags=["ERP Smart Chat Journal Lookup"])
 api_router.include_router(erp_router, prefix="/erp", tags=["ERP"])

@@ -13,6 +13,11 @@ from app.security.encryption import decrypt_value
 
 router = APIRouter()
 
+MAX_ENTRY_REFERENCES_PER_REQUEST = 12
+MAX_MOVE_IDS_PER_REQUEST = 12
+MAX_FUZZY_SEARCHES_PER_REQUEST = 8
+MAX_MOVE_LINES_PER_REQUEST = 700
+
 ENTRY_REFERENCE_PATTERN = re.compile(
     r"\b([A-Z][A-Z0-9]{1,12}\s*/\s*[0-9]{4}\s*(?:/\s*[0-9]{1,2})?\s*/\s*[0-9]{3,8})\b",
     re.IGNORECASE,
@@ -73,6 +78,18 @@ def extract_journal_entry_numbers(text: str) -> tuple[list[str], list[int]]:
             move_ids.append(move_id)
 
     return references, move_ids
+
+
+def _limit_detected_items(references: list[str], move_ids: list[int]) -> tuple[list[str], list[int], dict[str, int]]:
+    stats = {
+        "detected_references": len(references),
+        "detected_move_ids": len(move_ids),
+        "processed_references": min(len(references), MAX_ENTRY_REFERENCES_PER_REQUEST),
+        "processed_move_ids": min(len(move_ids), MAX_MOVE_IDS_PER_REQUEST),
+        "skipped_references": max(len(references) - MAX_ENTRY_REFERENCES_PER_REQUEST, 0),
+        "skipped_move_ids": max(len(move_ids) - MAX_MOVE_IDS_PER_REQUEST, 0),
+    }
+    return references[:MAX_ENTRY_REFERENCES_PER_REQUEST], move_ids[:MAX_MOVE_IDS_PER_REQUEST], stats
 
 
 def _is_arabic(text: str) -> bool:
@@ -136,31 +153,67 @@ def _dedupe_moves(moves: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return deduped
 
 
-def _search_moves_by_reference(erp, ref: str, company_id: int | None, fields: list[str]) -> list[dict[str, Any]]:
-    searches = [
-        ("name", "=", ref),
-        ("ref", "=", ref),
-        ("payment_reference", "=", ref),
-        ("name", "ilike", ref),
-        ("ref", "ilike", ref),
-        ("payment_reference", "ilike", ref),
+def _or_domain(conditions: list[list[Any]]) -> list[Any]:
+    if not conditions:
+        return []
+    if len(conditions) == 1:
+        return conditions
+    return ["|"] * (len(conditions) - 1) + conditions
+
+
+def _search_moves_by_references(erp, references: list[str], company_id: int | None, fields: list[str]) -> list[dict[str, Any]]:
+    if not references:
+        return []
+
+    exact_conditions = [
+        ["name", "in", references],
+        ["ref", "in", references],
+        ["payment_reference", "in", references],
     ]
+    exact_domain = _or_domain(exact_conditions)
+    if company_id:
+        exact_domain.append(["company_id", "=", company_id])
 
     found: list[dict[str, Any]] = []
-    for field, operator, value in searches:
-        domain: list[Any] = [[field, operator, value]]
+    try:
+        exact_moves = erp.execute_kw(
+            "account.move",
+            "search_read",
+            [exact_domain],
+            {"fields": fields, "order": "date desc, id desc", "limit": MAX_ENTRY_REFERENCES_PER_REQUEST * 3},
+        )
+        found.extend(exact_moves or [])
+    except Exception:
+        pass
+
+    def ref_is_already_found(ref: str) -> bool:
+        ref_lower = ref.lower()
+        for move in found:
+            for field in ["name", "ref", "payment_reference"]:
+                if ref_lower and ref_lower in str(move.get(field) or "").lower():
+                    return True
+        return False
+
+    fuzzy_candidates = [ref for ref in references if not ref_is_already_found(ref)][:MAX_FUZZY_SEARCHES_PER_REQUEST]
+    for ref in fuzzy_candidates:
+        fuzzy_domain = _or_domain([
+            ["name", "ilike", ref],
+            ["ref", "ilike", ref],
+            ["payment_reference", "ilike", ref],
+        ])
         if company_id:
-            domain.append(["company_id", "=", company_id])
+            fuzzy_domain.append(["company_id", "=", company_id])
         try:
-            moves = erp.execute_kw(
+            fuzzy_moves = erp.execute_kw(
                 "account.move",
                 "search_read",
-                [domain],
-                {"fields": fields, "order": "date desc, id desc", "limit": 10},
+                [fuzzy_domain],
+                {"fields": fields, "order": "date desc, id desc", "limit": 3},
             )
-            found.extend(moves or [])
+            found.extend(fuzzy_moves or [])
         except Exception:
             continue
+
     return _dedupe_moves(found)
 
 
@@ -181,22 +234,25 @@ def _search_moves_by_ids(erp, move_ids: list[int], company_id: int | None, field
         return []
 
 
-def _read_move_lines(erp, line_ids: list[int]) -> list[dict[str, Any]]:
+def _read_move_lines(erp, line_ids: list[int]) -> tuple[list[dict[str, Any]], bool]:
     if not line_ids:
-        return []
+        return [], False
+    unique_line_ids = sorted(set(line_ids))
+    truncated = len(unique_line_ids) > MAX_MOVE_LINES_PER_REQUEST
+    safe_line_ids = unique_line_ids[:MAX_MOVE_LINES_PER_REQUEST]
     try:
         return erp.execute_kw(
             "account.move.line",
             "search_read",
-            [[["id", "in", line_ids]]],
+            [[["id", "in", safe_line_ids]]],
             {
                 "fields": ["id", "move_id", "account_id", "name", "debit", "credit", "partner_id"],
                 "order": "id asc",
-                "limit": len(line_ids),
+                "limit": len(safe_line_ids),
             },
-        ) or []
+        ) or [], truncated
     except Exception:
-        return []
+        return [], truncated
 
 
 def _many2one_name(value: Any) -> str:
@@ -271,6 +327,8 @@ def _build_grid_from_moves(conn, moves: list[dict[str, Any]], move_lines: list[d
 
         for line in lines:
             account_name = _many2one_name(line.get("account_id"))
+            debit = float(line.get("debit") or 0.0)
+            credit = float(line.get("credit") or 0.0)
             rows.append([
                 entry_name,
                 move_date,
@@ -279,13 +337,40 @@ def _build_grid_from_moves(conn, moves: list[dict[str, Any]], move_lines: list[d
                 _account_code(account_name),
                 account_name,
                 str(line.get("name") or ""),
-                str(float(line.get("debit") or 0.0)) if float(line.get("debit") or 0.0) else "",
-                str(float(line.get("credit") or 0.0)) if float(line.get("credit") or 0.0) else "",
+                str(debit) if debit else "",
+                str(credit) if credit else "",
                 ref,
                 odoo_url,
             ])
 
     return rows
+
+
+def _build_result_message(arabic: bool, moves_count: int, stats: dict[str, int], lines_truncated: bool) -> str:
+    skipped_refs = stats.get("skipped_references", 0)
+    skipped_ids = stats.get("skipped_move_ids", 0)
+    skipped_total = skipped_refs + skipped_ids
+
+    if arabic:
+        msg = (
+            f"✅ قرأت أرقام القيود من النص حتى مع وجود بيانات إضافية، وجلبت {moves_count} قيد من Odoo. "
+            f"تم عرض تفاصيل بنود القيود في الجدول."
+        )
+        if skipped_total:
+            msg += f"\n\n⚠️ لتجنب تعليق النظام، عالجت أول {stats['processed_references']} رقم/مرجع قيد فقط. أرسل الباقي على دفعات أصغر."
+        if lines_truncated:
+            msg += "\n\n⚠️ عدد بنود القيود كبير، لذلك تم عرض أول جزء فقط."
+        return msg
+
+    msg = (
+        f"✅ I detected journal entry number(s) in the mixed text and fetched {moves_count} Odoo entry/entries. "
+        f"The journal item details are now shown in the sheet."
+    )
+    if skipped_total:
+        msg += f"\n\n⚠️ To prevent long hangs, I processed the first {stats['processed_references']} entry reference(s). Send the rest in smaller batches."
+    if lines_truncated:
+        msg += "\n\n⚠️ The entries contain many lines, so only the first portion was displayed."
+    return msg
 
 
 @router.post("/chat-spreadsheet")
@@ -294,11 +379,12 @@ def chat_spreadsheet_with_odoo_entry_lookup(
     db_session: Session = Depends(get_db),
 ):
     collected_text = _collect_payload_text(payload)
-    references, move_ids = extract_journal_entry_numbers(collected_text)
+    all_references, all_move_ids = extract_journal_entry_numbers(collected_text)
 
-    if not references and not move_ids:
+    if not all_references and not all_move_ids:
         return legacy_chat_spreadsheet(payload=payload, db_session=db_session)
 
+    references, move_ids, stats = _limit_detected_items(all_references, all_move_ids)
     arabic = _is_arabic(payload.prompt)
 
     try:
@@ -308,8 +394,11 @@ def chat_spreadsheet_with_odoo_entry_lookup(
         return {
             "message": "لم أتمكن من جلب القيود لأن اتصال Odoo غير مفعّل أو غير مكتمل." if arabic else "Could not fetch entries because the Odoo connection is not active or complete.",
             "grid_data": None,
-            "detected_entry_numbers": references,
-            "detected_move_ids": move_ids,
+            "detected_entry_numbers": all_references,
+            "processed_entry_numbers": references,
+            "detected_move_ids": all_move_ids,
+            "processed_move_ids": move_ids,
+            "lookup_stats": stats,
             "error": exc.detail,
         }
 
@@ -330,8 +419,7 @@ def chat_spreadsheet_with_odoo_entry_lookup(
     ]
 
     moves: list[dict[str, Any]] = []
-    for ref in references:
-        moves.extend(_search_moves_by_reference(erp, ref, company_id, move_fields))
+    moves.extend(_search_moves_by_references(erp, references, company_id, move_fields))
     moves.extend(_search_moves_by_ids(erp, move_ids, company_id, move_fields))
     moves = _dedupe_moves(moves)
 
@@ -344,8 +432,11 @@ def chat_spreadsheet_with_odoo_entry_lookup(
                 else f"I detected journal entry numbers ({', '.join(detected)}), but no matching Odoo entries were found."
             ),
             "grid_data": None,
-            "detected_entry_numbers": references,
-            "detected_move_ids": move_ids,
+            "detected_entry_numbers": all_references,
+            "processed_entry_numbers": references,
+            "detected_move_ids": all_move_ids,
+            "processed_move_ids": move_ids,
+            "lookup_stats": stats,
         }
 
     all_line_ids: list[int] = []
@@ -356,27 +447,19 @@ def chat_spreadsheet_with_odoo_entry_lookup(
             except Exception:
                 continue
 
-    move_lines = _read_move_lines(erp, sorted(set(all_line_ids)))
+    move_lines, lines_truncated = _read_move_lines(erp, all_line_ids)
     grid_data = _build_grid_from_moves(conn, moves, move_lines, arabic)
-
-    if arabic:
-        msg = (
-            f"✅ قرأت رقم/أرقام القيود من النص حتى مع وجود بيانات إضافية، وجلبت {len(moves)} قيد من Odoo. "
-            f"تم عرض تفاصيل بنود القيود في الجدول."
-        )
-        sheet_name = "قيود Odoo المستخرجة"
-    else:
-        msg = (
-            f"✅ I detected the journal entry number(s) inside the mixed text and fetched {len(moves)} Odoo entry/entries. "
-            f"The journal item details are now shown in the sheet."
-        )
-        sheet_name = "Fetched Odoo Entries"
+    sheet_name = "قيود Odoo المستخرجة" if arabic else "Fetched Odoo Entries"
 
     return {
-        "message": msg,
+        "message": _build_result_message(arabic, len(moves), stats, lines_truncated),
         "grid_data": grid_data,
         "active_sheet_name": sheet_name,
-        "detected_entry_numbers": references,
-        "detected_move_ids": move_ids,
+        "detected_entry_numbers": all_references,
+        "processed_entry_numbers": references,
+        "detected_move_ids": all_move_ids,
+        "processed_move_ids": move_ids,
+        "lookup_stats": stats,
         "odoo_move_count": len(moves),
+        "lines_truncated": lines_truncated,
     }

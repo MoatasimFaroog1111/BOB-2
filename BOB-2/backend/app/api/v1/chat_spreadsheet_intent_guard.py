@@ -37,7 +37,6 @@ FETCH_TERMS_AR = [
     "جلب",
     "هات",
     "اعرض",
-    "عرض",
     "اظهر",
     "أظهر",
     "افتح",
@@ -47,7 +46,6 @@ FETCH_TERMS_AR = [
     "قراءة",
     "تفاصيل",
     "تفصيل",
-    "بيانات",
     "استخرج",
 ]
 FETCH_TERMS_EN = ["fetch", "get", "show", "display", "open", "read", "lookup", "details", "extract"]

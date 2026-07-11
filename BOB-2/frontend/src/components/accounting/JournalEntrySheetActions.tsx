@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import { API_BASE_URL } from "@/lib/api";
 
 const ENTRY_REF_REGEX = /\b[A-Z][A-Z0-9]{1,12}\s*\/\s*\d{4}\s*(?:\/\s*\d{1,2})?\s*\/\s*\d{3,8}\b/i;
-const ACCOUNT_CODE_REGEX = /\b([0-9][0-9.\-]{2,})\b/;
+const ACCOUNT_CODE_REGEX = /(?:^|[^\d.])([0-9][0-9]{4,9})(?![\d.])/g;
+const NUMERIC_AMOUNT_REGEX = /^[-+]?\d{1,3}(?:,\d{3})*(?:\.\d+)?$|^[-+]?\d+(?:\.\d+)?$/;
 
 type EntryRow = Record<string, string>;
 
@@ -49,18 +50,67 @@ const findEntryColumn = (headers: string[]): number => {
 const getHeaderValue = (row: EntryRow, candidates: string[]): string => {
   for (const [key, value] of Object.entries(row)) {
     const normalized = normalizeHeader(key);
-    if (candidates.some((candidate) => normalized === normalizeHeader(candidate) || normalized.includes(normalizeHeader(candidate)))) {
-      return String(value || "").trim();
-    }
+    const matches = candidates.some((candidate) => normalized === normalizeHeader(candidate) || normalized.includes(normalizeHeader(candidate)));
+    if (!matches) continue;
+    const text = String(value || "").trim();
+    if (text) return text;
+  }
+  return "";
+};
+
+const extractAccountCodeFromText = (value: string, allowPureNumeric = true): string => {
+  const text = String(value || "").replace("↗", "").trim();
+  if (!text) return "";
+  if (ENTRY_REF_REGEX.test(text)) return "";
+  if (!allowPureNumeric && NUMERIC_AMOUNT_REGEX.test(text)) return "";
+
+  for (const match of text.matchAll(ACCOUNT_CODE_REGEX)) {
+    const code = match?.[1]?.trim();
+    if (code) return code;
   }
   return "";
 };
 
 const extractAccountCode = (...values: string[]): string => {
   for (const value of values) {
-    const match = String(value || "").match(ACCOUNT_CODE_REGEX);
-    if (match?.[1]) return match[1];
+    const code = extractAccountCodeFromText(value, true);
+    if (code) return code;
   }
+  return "";
+};
+
+const rowLooksLikeNonAccountValue = (key: string, value: string): boolean => {
+  const normalizedKey = normalizeHeader(key);
+  const text = String(value || "").trim();
+  if (!text) return true;
+  if (ENTRY_REF_REGEX.test(text)) return true;
+  if (NUMERIC_AMOUNT_REGEX.test(text)) return true;
+  if (/رقم القيد|entry number|journal entry|move|التاريخ|date|مدين|debit|دائن|credit|المرجع|reference|ref|رابط|url/i.test(normalizedKey)) return true;
+  return false;
+};
+
+const extractAccountCodeFromRow = (row: EntryRow, explicitCode: string, accountName: string): string => {
+  const direct = extractAccountCode(explicitCode, accountName);
+  if (direct) return direct;
+
+  // First scan columns that are likely account columns, even if the rendered header is
+  // slightly different from "رمز الحساب" / "اسم الحساب".
+  for (const [key, value] of Object.entries(row)) {
+    const normalized = normalizeHeader(key);
+    if (!/حساب|account|code/i.test(normalized)) continue;
+    const code = extractAccountCodeFromText(String(value || ""), true);
+    if (code) return code;
+  }
+
+  // Final fallback: scan descriptive row cells, but skip dates, entry refs, amounts,
+  // debit/credit, references and URLs so values like MISC/2024/12/0040 or 27,222.90
+  // are never treated as account codes.
+  for (const [key, value] of Object.entries(row)) {
+    if (rowLooksLikeNonAccountValue(key, String(value || ""))) continue;
+    const code = extractAccountCodeFromText(String(value || ""), false);
+    if (code) return code;
+  }
+
   return "";
 };
 
@@ -212,9 +262,9 @@ export default function JournalEntrySheetActions() {
     const ref = getHeaderValue(firstRow, ["المرجع", "reference", "ref"]);
 
     const rows = selectedEntry.rows.map((row) => {
-      const explicitCode = getHeaderValue(row, ["رمز الحساب", "account code", "account_code", "code"]);
-      const accountName = getHeaderValue(row, ["اسم الحساب", "account name", "account"]);
-      const accountCode = extractAccountCode(explicitCode, accountName);
+      const explicitCode = getHeaderValue(row, ["رمز الحساب", "رقم الحساب", "account code", "account_code", "code"]);
+      const accountName = getHeaderValue(row, ["اسم الحساب", "حساب", "account name", "account"]);
+      const accountCode = extractAccountCodeFromRow(row, explicitCode, accountName);
 
       return {
         entry_number: selectedEntry.entryNumber,
@@ -229,7 +279,10 @@ export default function JournalEntrySheetActions() {
 
     const missingAccountIndex = rows.findIndex((row) => !row.account_code);
     if (missingAccountIndex !== -1) {
-      throw new Error(`السطر رقم ${missingAccountIndex + 1} لا يحتوي على رمز حساب واضح في الورقة.`);
+      const rowValues = Object.values(selectedEntry.rows[missingAccountIndex] || {}).filter(Boolean).join(" | ");
+      throw new Error(
+        `السطر رقم ${missingAccountIndex + 1} لا يحتوي على رمز حساب واضح. القيم المقروءة من السطر: ${rowValues || "لا توجد قيم"}`
+      );
     }
 
     return {

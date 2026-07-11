@@ -2,15 +2,16 @@ import json
 from pathlib import Path
 from typing import Any
 
+from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from app.core.config import settings
-from app.security.encryption import decrypt_value, encrypt_value
 
 router = APIRouter()
 
 CONFIG_FILENAME = "communication_tools.json"
+KEY_FILENAME = "communication_tools.key"
 
 
 class TelegramTokenPayload(BaseModel):
@@ -25,6 +26,35 @@ class TelegramStatusResponse(BaseModel):
 
 def _config_path() -> Path:
     return settings.storage_path / CONFIG_FILENAME
+
+
+def _key_path() -> Path:
+    return settings.storage_path / KEY_FILENAME
+
+
+def _load_or_create_fernet() -> Fernet:
+    """Use a stable local encryption key so saved tokens survive backend restarts."""
+    path = _key_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if path.exists():
+        key = path.read_bytes().strip()
+    else:
+        key = Fernet.generate_key()
+        path.write_bytes(key)
+
+    return Fernet(key)
+
+
+def _encrypt_secret(value: str) -> str:
+    return _load_or_create_fernet().encrypt(value.encode("utf-8")).decode("utf-8")
+
+
+def _decrypt_secret(value: str) -> str:
+    try:
+        return _load_or_create_fernet().decrypt(value.encode("utf-8")).decode("utf-8")
+    except InvalidToken as exc:
+        raise ValueError("Stored Telegram token cannot be decrypted.") from exc
 
 
 def _load_config() -> dict[str, Any]:
@@ -79,7 +109,7 @@ def get_telegram_token_status() -> TelegramStatusResponse:
         return TelegramStatusResponse(configured=False)
 
     try:
-        token = decrypt_value(encrypted_token)
+        token = _decrypt_secret(encrypted_token)
     except ValueError:
         return TelegramStatusResponse(configured=True, masked_token="محفوظ")
 
@@ -90,7 +120,7 @@ def get_telegram_token_status() -> TelegramStatusResponse:
 def save_telegram_token(payload: TelegramTokenPayload) -> TelegramStatusResponse:
     token = _validate_telegram_token(payload.token)
     data = _load_config()
-    data["telegram_bot_token"] = encrypt_value(token)
+    data["telegram_bot_token"] = _encrypt_secret(token)
     data["telegram_bot_token_configured"] = True
     _save_config(data)
 

@@ -12,6 +12,7 @@ type EntryRow = Record<string, string>;
 
 type SelectedEntry = {
   entryNumber: string;
+  moveId?: number | null;
   headers: string[];
   rows: EntryRow[];
 };
@@ -24,6 +25,44 @@ const normalizeEntryRef = (value: string): string =>
     .trim();
 
 const cellText = (cell: Element | undefined): string => (cell?.textContent || "").replace("↗", "").trim();
+
+const cellHref = (cell: Element | undefined): string => {
+  const anchor = cell?.querySelector?.("a[href]") as HTMLAnchorElement | null;
+  return anchor?.href || anchor?.getAttribute?.("href") || "";
+};
+
+const cellValue = (cell: Element | undefined): string => cellHref(cell) || cellText(cell);
+
+const extractOdooMoveIdFromValue = (value: string): number | null => {
+  const raw = String(value || "").replace(/&amp;/g, "&").trim();
+  if (!raw) return null;
+
+  let decoded = raw;
+  try {
+    decoded = decodeURIComponent(raw);
+  } catch {
+    decoded = raw;
+  }
+
+  const hasAccountMoveModel = /model\s*=\s*account\.move/i.test(decoded) || /model\s*=\s*account\.move/i.test(raw);
+  const hasOdooWebHash = /\/web#|#id=|[?&]id=/i.test(decoded);
+  const idMatch = decoded.match(/(?:^|[#?&])id=(\d+)(?:&|$)/i) || decoded.match(/\bid=(\d+)\b/i);
+  const id = idMatch?.[1] ? Number(idMatch[1]) : NaN;
+
+  if (!Number.isFinite(id) || id <= 0) return null;
+  if (hasAccountMoveModel || hasOdooWebHash) return id;
+  return null;
+};
+
+const extractOdooMoveIdFromCells = (cells: Element[]): number | null => {
+  for (const currentCell of cells) {
+    const hrefId = extractOdooMoveIdFromValue(cellHref(currentCell));
+    if (hrefId) return hrefId;
+    const textId = extractOdooMoveIdFromValue(cellText(currentCell));
+    if (textId) return textId;
+  }
+  return null;
+};
 
 const normalizeHeader = (value: string): string => (value || "").trim().toLowerCase();
 
@@ -130,8 +169,11 @@ const ensureEntryHeader = (headers: string[]): string[] => {
 const extractSelectedEntry = (cell: HTMLElement, entryNumber: string): SelectedEntry => {
   const table = cell.closest("table");
   if (!table) {
-    return { entryNumber, headers: ["رقم القيد"], rows: [{ "رقم القيد": entryNumber }] };
+    return { entryNumber, moveId: null, headers: ["رقم القيد"], rows: [{ "رقم القيد": entryNumber }] };
   }
+
+  const clickedRowCells = Array.from(cell.closest("tr")?.querySelectorAll("td") || []).slice(1);
+  const selectedMoveId = extractOdooMoveIdFromCells(clickedRowCells);
 
   const bodyRows = Array.from(table.querySelectorAll("tbody tr")) as HTMLTableRowElement[];
   const headerIndex = findHeaderIndex(bodyRows);
@@ -145,9 +187,12 @@ const extractSelectedEntry = (cell: HTMLElement, entryNumber: string): SelectedE
     const cells = Array.from(row.querySelectorAll("td")).slice(1);
     if (!cells.length) continue;
 
-    const rowValues = cells.map((currentCell) => cellText(currentCell));
+    const rowValues = cells.map((currentCell) => cellValue(currentCell));
+    const rowMoveId = extractOdooMoveIdFromCells(cells);
     const directValue = entryCol >= 0 ? normalizeEntryRef(rowValues[entryCol] || "") : "";
-    const rowHasEntry = directValue === entryNumber || rowValues.some((value) => normalizeEntryRef(value).includes(entryNumber));
+    const rowHasEntry = selectedMoveId
+      ? rowMoveId === selectedMoveId
+      : directValue === entryNumber || rowValues.some((value) => normalizeEntryRef(value).includes(entryNumber));
     if (!rowHasEntry) continue;
 
     const mapped: EntryRow = { "رقم القيد": entryNumber };
@@ -155,6 +200,7 @@ const extractSelectedEntry = (cell: HTMLElement, entryNumber: string): SelectedE
       const key = rawHeaders[index] || `Column ${index + 1}`;
       mapped[key] = value;
     });
+    if (rowMoveId) mapped.__move_id = String(rowMoveId);
 
     // Always keep the entry number visible for every line, even if the rendered grid
     // only showed it on the first row or the user scrolled/edited that cell.
@@ -164,7 +210,7 @@ const extractSelectedEntry = (cell: HTMLElement, entryNumber: string): SelectedE
     rows.push(mapped);
   }
 
-  return { entryNumber, headers, rows };
+  return { entryNumber, moveId: selectedMoveId, headers, rows };
 };
 
 function decorateJournalEntryCells(): void {
@@ -181,6 +227,7 @@ function decorateJournalEntryCells(): void {
     for (const row of rows.slice(headerIndex + 1)) {
       const cells = Array.from(row.querySelectorAll("td")).slice(1) as HTMLElement[];
       const candidates = entryCol >= 0 ? [cells[entryCol]] : cells;
+      const rowMoveId = extractOdooMoveIdFromCells(cells);
       for (const cell of candidates) {
         if (!cell) continue;
         if (cell.querySelector("input, textarea")) continue;
@@ -189,8 +236,9 @@ function decorateJournalEntryCells(): void {
 
         const entryNumber = normalizeEntryRef(match[0]);
         cell.dataset.journalEntryRef = entryNumber;
+        if (rowMoveId) cell.dataset.odooMoveId = String(rowMoveId);
         cell.classList.add("journal-entry-clickable-cell");
-        cell.setAttribute("title", "اضغط لعرض القيد أو تحديثه أو إرجاعه Draft أو عكسه أو ترحيله إلى Odoo");
+        cell.setAttribute("title", rowMoveId ? `اضغط لعرض القيد Odoo move_id=${rowMoveId}` : "اضغط لعرض القيد أو تحديثه أو إرجاعه Draft أو عكسه أو ترحيله إلى Odoo");
 
         const contentTarget = cell.querySelector("div") || cell;
         if (!contentTarget.querySelector(".journal-entry-click-icon")) {
@@ -251,6 +299,7 @@ export default function JournalEntrySheetActions() {
     if (!selectedEntry) return [];
     const headers = ensureEntryHeader(selectedEntry.headers);
     return headers.filter((header, index) => {
+      if (header === "__move_id") return false;
       if (index === 0 && normalizeHeader(header) === "رقم القيد") return true;
       return header && selectedEntry.rows.some((row) => String(row[header] || "").trim());
     });
@@ -259,6 +308,11 @@ export default function JournalEntrySheetActions() {
   if (!isDocumentsPage || !selectedEntry) return null;
 
   const actionInProgress = posting || updating || resetting || reversing;
+
+  const actionIdentityPayload = () => ({
+    entry_number: selectedEntry.entryNumber,
+    move_id: selectedEntry.moveId || undefined,
+  });
 
   const buildUpdatePayload = () => {
     const firstRow = selectedEntry.rows[0] || {};
@@ -283,7 +337,10 @@ export default function JournalEntrySheetActions() {
 
     const missingAccountIndex = rows.findIndex((row) => !row.account_code);
     if (missingAccountIndex !== -1) {
-      const rowValues = Object.values(selectedEntry.rows[missingAccountIndex] || {}).filter(Boolean).join(" | ");
+      const rowValues = Object.entries(selectedEntry.rows[missingAccountIndex] || {})
+        .filter(([key, value]) => key !== "__move_id" && Boolean(value))
+        .map(([, value]) => value)
+        .join(" | ");
       throw new Error(
         `السطر رقم ${missingAccountIndex + 1} لا يحتوي على رمز حساب واضح. القيم المقروءة من السطر: ${rowValues || "لا توجد قيم"}`
       );
@@ -291,6 +348,7 @@ export default function JournalEntrySheetActions() {
 
     return {
       entry_number: selectedEntry.entryNumber,
+      move_id: selectedEntry.moveId || undefined,
       date: date || undefined,
       ref: ref || undefined,
       rows,
@@ -300,7 +358,7 @@ export default function JournalEntrySheetActions() {
   const handleUpdateEntry = async () => {
     if (!selectedEntry || actionInProgress) return;
     const confirmed = window.confirm(
-      `سيتم تحديث القيد ${selectedEntry.entryNumber} في Odoo بناءً على الصفوف المعدلة في الورقة. هل تريد المتابعة؟`
+      `سيتم تحديث القيد ${selectedEntry.entryNumber}${selectedEntry.moveId ? ` / move_id ${selectedEntry.moveId}` : ""} في Odoo بناءً على الصفوف المعدلة في الورقة. هل تريد المتابعة؟`
     );
     if (!confirmed) return;
 
@@ -331,7 +389,7 @@ export default function JournalEntrySheetActions() {
   const handleResetToDraft = async () => {
     if (!selectedEntry || actionInProgress) return;
     const confirmed = window.confirm(
-      `سيتم محاولة إرجاع القيد ${selectedEntry.entryNumber} من Posted إلى Draft في Odoo. هل تريد المتابعة؟`
+      `سيتم محاولة إرجاع القيد ${selectedEntry.entryNumber}${selectedEntry.moveId ? ` / move_id ${selectedEntry.moveId}` : ""} من Posted إلى Draft في Odoo. هل تريد المتابعة؟`
     );
     if (!confirmed) return;
 
@@ -341,7 +399,7 @@ export default function JournalEntrySheetActions() {
       const res = await fetch(`${API_BASE_URL}/api/v1/erp/journal-entry/reset-to-draft`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entry_number: selectedEntry.entryNumber }),
+        body: JSON.stringify(actionIdentityPayload()),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -366,7 +424,7 @@ export default function JournalEntrySheetActions() {
   const handleReverseAndReplaceEntry = async () => {
     if (!selectedEntry || actionInProgress) return;
     const confirmed = window.confirm(
-      `سيتم عكس القيد posted رقم ${selectedEntry.entryNumber} بقيد عكسي، ثم إنشاء وترحيل قيد بديل من بيانات الورقة المعدلة. هل تريد المتابعة؟`
+      `سيتم عكس القيد posted رقم ${selectedEntry.entryNumber}${selectedEntry.moveId ? ` / move_id ${selectedEntry.moveId}` : ""} بقيد عكسي، ثم إنشاء وترحيل قيد بديل من بيانات الورقة المعدلة. هل تريد المتابعة؟`
     );
     if (!confirmed) return;
 
@@ -397,7 +455,7 @@ export default function JournalEntrySheetActions() {
 
   const handlePostEntry = async () => {
     if (!selectedEntry || actionInProgress) return;
-    const confirmed = window.confirm(`هل تريد ترحيل القيد ${selectedEntry.entryNumber} إلى Odoo؟`);
+    const confirmed = window.confirm(`هل تريد ترحيل القيد ${selectedEntry.entryNumber}${selectedEntry.moveId ? ` / move_id ${selectedEntry.moveId}` : ""} إلى Odoo؟`);
     if (!confirmed) return;
 
     setPosting(true);
@@ -406,7 +464,7 @@ export default function JournalEntrySheetActions() {
       const res = await fetch(`${API_BASE_URL}/api/v1/erp/journal-entry/post`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ entry_number: selectedEntry.entryNumber }),
+        body: JSON.stringify(actionIdentityPayload()),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -463,7 +521,9 @@ export default function JournalEntrySheetActions() {
                 {selectedEntry.entryNumber}
               </h3>
               <p className="text-[11px] text-white/45 mt-1">
-                تم تجميع البنود التي تحمل نفس رقم القيد من الورقة الحالية. رقم القيد يظهر أمام كل سطر.
+                {selectedEntry.moveId
+                  ? `تم تحديد القيد بدقة باستخدام Odoo move_id=${selectedEntry.moveId}. لن يتم خلطه مع قيود أخرى تحمل نفس المرجع.`
+                  : "تم تجميع البنود التي تحمل نفس رقم القيد من الورقة الحالية. إذا تكرر المرجع في Odoo، أعد فتح القيد من صف يحتوي رابط Odoo كامل."}
               </p>
             </div>
             <button

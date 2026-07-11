@@ -218,6 +218,21 @@ def _move_payload(conn, move: dict[str, Any], lines: list[dict[str, Any]], messa
     }
 
 
+def _read_refreshed_move(erp, move_id: int, fallback: dict[str, Any]) -> dict[str, Any]:
+    try:
+        refreshed = erp.execute_kw(
+            "account.move",
+            "read",
+            [[move_id]],
+            {"fields": ["id", "name", "ref", "date", "journal_id", "partner_id", "state", "payment_reference", "company_id", "line_ids"]},
+        )
+        if refreshed:
+            return refreshed[0]
+    except Exception:
+        pass
+    return fallback
+
+
 def _find_account_id(erp, account_code: str, account_name: str | None, company_id: int | None) -> int:
     code = _extract_account_code(account_code, account_name)
     if not code:
@@ -344,20 +359,47 @@ def post_journal_entry(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Failed to post Odoo journal entry: {exc}") from exc
 
-    try:
-        refreshed = erp.execute_kw(
-            "account.move",
-            "read",
-            [[move_id]],
-            {"fields": ["id", "name", "ref", "date", "journal_id", "partner_id", "state", "payment_reference", "company_id", "line_ids"]},
-        )
-        if refreshed:
-            move = refreshed[0]
-    except Exception:
-        move["state"] = "posted"
-
+    move = _read_refreshed_move(erp, move_id, {**move, "state": "posted"})
     lines = _read_move_lines(erp, move_id)
     return _move_payload(conn, move, lines, "Journal entry posted successfully in Odoo.")
+
+
+@router.post("/journal-entry/reset-to-draft")
+def reset_journal_entry_to_draft(
+    payload: JournalEntryPostRequest,
+    db_session: Session = Depends(get_db),
+):
+    conn, erp = _read_saved_erp(db_session)
+    move = _read_matching_move(erp, payload)
+
+    move_id = int(move["id"])
+    current_state = move.get("state") or ""
+
+    if current_state == "draft":
+        lines = _read_move_lines(erp, move_id)
+        return _move_payload(conn, move, lines, "Journal entry is already in draft state in Odoo.")
+
+    if current_state != "posted":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Only posted entries can be reset to draft. Current Odoo state is: {current_state}",
+        )
+
+    try:
+        erp.execute_kw("account.move", "button_draft", [[move_id]])
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Failed to reset Odoo journal entry to draft. "
+                "Odoo may block this because of lock dates, reconciled lines, permissions, or audit restrictions. "
+                f"Original error: {exc}"
+            ),
+        ) from exc
+
+    move = _read_refreshed_move(erp, move_id, {**move, "state": "draft"})
+    lines = _read_move_lines(erp, move_id)
+    return _move_payload(conn, move, lines, "Journal entry was reset to draft in Odoo.")
 
 
 @router.post("/journal-entry/update")
@@ -378,7 +420,7 @@ def update_journal_entry_from_sheet(
             status_code=409,
             detail=(
                 "Only draft Odoo journal entries can be updated from the sheet. "
-                f"Current state is: {current_state}. Create a reversal/correction entry for posted moves."
+                f"Current state is: {current_state}. Use reset-to-draft first if Odoo allows it, or create a reversal/correction entry for posted moves."
             ),
         )
 
@@ -410,15 +452,7 @@ def update_journal_entry_from_sheet(
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Failed to update Odoo journal entry from sheet: {exc}") from exc
 
-    refreshed = erp.execute_kw(
-        "account.move",
-        "read",
-        [[move_id]],
-        {"fields": ["id", "name", "ref", "date", "journal_id", "partner_id", "state", "payment_reference", "company_id", "line_ids"]},
-    )
-    if refreshed:
-        move = refreshed[0]
-
+    move = _read_refreshed_move(erp, move_id, move)
     lines = _read_move_lines(erp, move_id)
     return _move_payload(
         conn,

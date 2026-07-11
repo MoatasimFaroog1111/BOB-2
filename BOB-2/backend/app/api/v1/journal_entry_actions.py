@@ -333,6 +333,84 @@ def _build_line_update_vals(erp, row: JournalEntryUpdateLine, company_id: int | 
     return vals
 
 
+def _assert_balanced_line_vals(line_vals: list[dict[str, Any]], context: str) -> None:
+    debit_total = round(sum(float(line.get("debit") or 0.0) for line in line_vals), 2)
+    credit_total = round(sum(float(line.get("credit") or 0.0) for line in line_vals), 2)
+    if debit_total != credit_total:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{context} is not balanced. Debit total {debit_total} does not equal credit total {credit_total}.",
+        )
+
+
+def _build_reversal_lines_from_posted_move(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    reversal_lines: list[dict[str, Any]] = []
+    for line in lines:
+        account_id = _many2one_id(line.get("account_id"))
+        if not account_id:
+            raise HTTPException(status_code=400, detail="Cannot reverse entry because one Odoo line has no account_id.")
+        vals: dict[str, Any] = {
+            "account_id": account_id,
+            "name": f"Reversal: {line.get('name') or '/'}",
+            "debit": _safe_amount(line.get("credit")),
+            "credit": _safe_amount(line.get("debit")),
+        }
+        partner_id = _many2one_id(line.get("partner_id"))
+        if partner_id:
+            vals["partner_id"] = partner_id
+        reversal_lines.append(vals)
+    _assert_balanced_line_vals(reversal_lines, "Reversal journal entry")
+    return reversal_lines
+
+
+def _build_corrected_lines_from_sheet(erp, payload: JournalEntryUpdateRequest, company_id: int | None) -> list[dict[str, Any]]:
+    corrected_lines = [_build_line_update_vals(erp, row, company_id) for row in payload.rows]
+    _assert_balanced_line_vals(corrected_lines, "Corrected journal entry from sheet")
+    return corrected_lines
+
+
+def _create_draft_move(erp, move_vals: dict[str, Any]) -> int:
+    try:
+        move_id = erp.execute_kw("account.move", "create", [move_vals])
+        if isinstance(move_id, list):
+            move_id = move_id[0]
+        return int(move_id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to create Odoo journal entry: {exc}") from exc
+
+
+def _post_move_and_verify(erp, move_id: int, label: str) -> dict[str, Any]:
+    try:
+        erp.execute_kw("account.move", "action_post", [[move_id]])
+    except Exception as exc:
+        refreshed_after_fault = _read_refreshed_move(erp, move_id, {"id": move_id})
+        if (refreshed_after_fault.get("state") or "") == "posted":
+            return refreshed_after_fault
+        raise HTTPException(status_code=400, detail=f"Failed to post {label}: {exc}") from exc
+    return _read_refreshed_move(erp, move_id, {"id": move_id, "state": "posted"})
+
+
+def _prevent_duplicate_reverse_replace(erp, refs: list[str], company_id: int | None) -> None:
+    domain: list[Any] = [["ref", "in", refs]]
+    if company_id:
+        domain.append(["company_id", "=", company_id])
+    try:
+        existing = erp.execute_kw(
+            "account.move",
+            "search_read",
+            [domain],
+            {"fields": ["id", "name", "ref", "state"], "limit": 5},
+        ) or []
+    except Exception:
+        existing = []
+    if existing:
+        refs_found = ", ".join(str(move.get("ref") or move.get("name") or move.get("id")) for move in existing)
+        raise HTTPException(
+            status_code=409,
+            detail=f"A GuardianAI reverse-and-replace entry already exists for this move: {refs_found}. Refusing to duplicate.",
+        )
+
+
 @router.post("/journal-entry/post")
 def post_journal_entry(
     payload: JournalEntryPostRequest,
@@ -354,12 +432,7 @@ def post_journal_entry(
             detail=f"Only draft entries can be posted. Current Odoo state is: {current_state}",
         )
 
-    try:
-        erp.execute_kw("account.move", "action_post", [[move_id]])
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Failed to post Odoo journal entry: {exc}") from exc
-
-    move = _read_refreshed_move(erp, move_id, {**move, "state": "posted"})
+    move = _post_move_and_verify(erp, move_id, "journal entry")
     lines = _read_move_lines(erp, move_id)
     return _move_payload(conn, move, lines, "Journal entry posted successfully in Odoo.")
 
@@ -413,6 +486,92 @@ def reset_journal_entry_to_draft(
     move = _read_refreshed_move(erp, move_id, {**move, "state": "draft"})
     lines = _read_move_lines(erp, move_id)
     return _move_payload(conn, move, lines, "Journal entry was reset to draft in Odoo.")
+
+
+@router.post("/journal-entry/reverse-and-replace")
+def reverse_and_replace_posted_entry_from_sheet(
+    payload: JournalEntryUpdateRequest,
+    db_session: Session = Depends(get_db),
+):
+    if not payload.rows:
+        raise HTTPException(status_code=400, detail="No sheet rows were provided for reverse-and-replace.")
+
+    conn, erp = _read_saved_erp(db_session)
+    move = _read_matching_move(erp, payload)
+    move_id = int(move["id"])
+    current_state = move.get("state") or ""
+
+    if current_state != "posted":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Reverse-and-replace is intended for posted entries only. Current Odoo state is: {current_state}. Use normal update for draft entries.",
+        )
+
+    original_lines = _read_move_lines(erp, move_id)
+    if not original_lines:
+        raise HTTPException(status_code=400, detail="Cannot reverse-and-replace because the original Odoo journal entry has no readable lines.")
+
+    original_name = str(move.get("name") or payload.entry_number or move_id)
+    company_id = _many2one_id(move.get("company_id")) or payload.company_id
+    journal_id = _many2one_id(move.get("journal_id"))
+    if not journal_id:
+        raise HTTPException(status_code=400, detail="Cannot reverse-and-replace because the original entry has no readable journal_id.")
+
+    effective_date = payload.date or str(move.get("date") or "")
+    if not effective_date:
+        raise HTTPException(status_code=400, detail="Cannot reverse-and-replace because no accounting date is available.")
+
+    reversal_ref = f"GuardianAI reversal of {original_name} ({move_id})"
+    replacement_ref = f"GuardianAI corrected replacement of {original_name} ({move_id})"
+    _prevent_duplicate_reverse_replace(erp, [reversal_ref, replacement_ref], company_id)
+
+    reversal_lines = _build_reversal_lines_from_posted_move(original_lines)
+    corrected_lines = _build_corrected_lines_from_sheet(erp, payload, company_id)
+
+    base_move_vals: dict[str, Any] = {
+        "journal_id": journal_id,
+        "date": effective_date,
+        "move_type": "entry",
+    }
+    if company_id:
+        base_move_vals["company_id"] = company_id
+
+    reversal_move_id = _create_draft_move(
+        erp,
+        {
+            **base_move_vals,
+            "ref": reversal_ref,
+            "line_ids": [[0, 0, line] for line in reversal_lines],
+        },
+    )
+    replacement_move_id = _create_draft_move(
+        erp,
+        {
+            **base_move_vals,
+            "ref": payload.ref or replacement_ref,
+            "line_ids": [[0, 0, line] for line in corrected_lines],
+        },
+    )
+
+    reversal_move = _post_move_and_verify(erp, reversal_move_id, "reversal journal entry")
+    replacement_move = _post_move_and_verify(erp, replacement_move_id, "corrected replacement journal entry")
+
+    base_url = (conn.base_url or "").rstrip("/")
+    return {
+        "status": "success",
+        "message": (
+            f"تم عكس القيد {original_name} بقيد عكسي جديد، وتم إنشاء وترحيل قيد بديل مصحح من الورقة. "
+            f"Reversal: {reversal_move.get('name') or reversal_move_id}, Replacement: {replacement_move.get('name') or replacement_move_id}."
+        ),
+        "original_move_id": move_id,
+        "original_entry_number": original_name,
+        "reversal_move_id": reversal_move_id,
+        "reversal_entry_number": reversal_move.get("name") or "",
+        "replacement_move_id": replacement_move_id,
+        "replacement_entry_number": replacement_move.get("name") or "",
+        "reversal_url": f"{base_url}/web#id={reversal_move_id}&model=account.move&view_type=form" if base_url else "",
+        "replacement_url": f"{base_url}/web#id={replacement_move_id}&model=account.move&view_type=form" if base_url else "",
+    }
 
 
 @router.post("/journal-entry/update")

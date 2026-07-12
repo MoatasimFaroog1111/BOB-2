@@ -26,6 +26,7 @@ const HEADER_HINTS = [
   "الوصف",
   "مدين",
   "دائن",
+  "رابط odoo",
   "entry",
   "date",
   "journal",
@@ -34,13 +35,16 @@ const HEADER_HINTS = [
   "description",
   "debit",
   "credit",
+  "odoo",
 ];
 
 const DATE_HEADERS = ["التاريخ", "date"];
 const REF_HEADERS = ["رقم القيد", "رقم المرجع", "reference", "ref", "entry number", "journal entry", "move"];
 const JOURNAL_HEADERS = ["الدفتر", "اليومية", "journal"];
 
-const textOf = (el: Element | null | undefined): string => (el?.textContent || "").replace("↗", "").trim();
+const textOf = (el: Element | null | undefined): string =>
+  (el?.textContent || "").replace("↗", "").trim();
+
 const normalize = (value: string): string => (value || "").trim().toLowerCase();
 
 const escapeHtml = (value: string): string =>
@@ -51,14 +55,40 @@ const escapeHtml = (value: string): string =>
     .replace(/\"/g, "&quot;")
     .replace(/'/g, "&#039;");
 
+const looksLikeRowNumber = (value: string): boolean => /^\d{1,5}$/.test(String(value || "").trim());
+
+const looksLikeColumnLetter = (value: string): boolean => /^[A-Z]{1,3}$/.test(String(value || "").trim());
+
+const isMostlyColumnLetters = (values: string[]): boolean => {
+  const nonEmpty = values.map((v) => v.trim()).filter(Boolean);
+  if (nonEmpty.length < 4) return false;
+  const letters = nonEmpty.filter(looksLikeColumnLetter).length;
+  return letters / nonEmpty.length >= 0.75;
+};
+
+const cleanGridValues = (cells: Element[]): string[] => {
+  let values = cells.map(textOf);
+
+  // Spreadsheet grids often have a row-number cell at one edge. Remove it without touching real data.
+  if (values.length > 4 && looksLikeRowNumber(values[0])) {
+    values = values.slice(1);
+  }
+  if (values.length > 4 && looksLikeRowNumber(values[values.length - 1])) {
+    values = values.slice(0, -1);
+  }
+
+  return values.map((value) => value.trim());
+};
+
 const rowLooksLikeHeader = (values: string[]): boolean => {
   const normalized = values.map(normalize);
   return normalized.some((value) => HEADER_HINTS.some((hint) => value.includes(hint)));
 };
 
 const findHeaderIndex = (rows: HTMLTableRowElement[]): number => {
-  for (let i = 0; i < Math.min(rows.length, 20); i++) {
-    const values = Array.from(rows[i].querySelectorAll("td,th")).slice(1).map(textOf);
+  for (let i = 0; i < Math.min(rows.length, 30); i++) {
+    const values = cleanGridValues(Array.from(rows[i].querySelectorAll("td,th")));
+    if (isMostlyColumnLetters(values)) continue;
     if (rowLooksLikeHeader(values)) return i;
   }
   return 0;
@@ -97,23 +127,21 @@ const setInputValue = (input: HTMLInputElement | HTMLSelectElement, value: strin
 };
 
 const isLikelySpreadsheetTable = (table: HTMLTableElement): boolean => {
+  if (table.closest(".sheet-source-odoo-registration")) return false;
   if (table.closest(".sheet-mirror-odoo-registration")) return false;
   if (table.closest("div.fixed.inset-0")) return false;
 
-  const text = textOf(table);
   const rows = table.querySelectorAll("tbody tr");
   const cells = table.querySelectorAll("td");
   if (rows.length < 2 || cells.length < 6) return false;
 
-  return (
-    text.includes("رمز الحساب") ||
-    text.includes("رقم القيد") ||
-    text.includes("مدين") ||
-    text.includes("دائن") ||
-    text.toLowerCase().includes("account") ||
-    text.toLowerCase().includes("debit") ||
-    text.toLowerCase().includes("credit")
-  );
+  const firstRowsText = Array.from(rows)
+    .slice(0, 20)
+    .map((row) => cleanGridValues(Array.from(row.querySelectorAll("td,th"))).join(" "))
+    .join(" ")
+    .toLowerCase();
+
+  return HEADER_HINTS.some((hint) => firstRowsText.includes(hint));
 };
 
 const findSpreadsheetTable = (): HTMLTableElement | null => {
@@ -133,15 +161,15 @@ const getCurrentSheetSnapshot = (): SheetSnapshot | null => {
   if (!rows.length) return null;
 
   const headerIndex = findHeaderIndex(rows);
-  const headerCells = Array.from(rows[headerIndex]?.querySelectorAll("td,th") || []).slice(1);
-  const headers = headerCells.map((cell, index) => textOf(cell) || `Column ${index + 1}`);
+  const headers = cleanGridValues(Array.from(rows[headerIndex]?.querySelectorAll("td,th") || []));
   if (!headers.length) return null;
 
   const dataRows: string[][] = [];
   for (const row of rows.slice(headerIndex + 1)) {
-    const values = Array.from(row.querySelectorAll("td,th")).slice(1).map(textOf);
+    const values = cleanGridValues(Array.from(row.querySelectorAll("td,th")));
     const normalizedValues = values.slice(0, headers.length).map((value) => String(value || "").trim());
     if (!normalizedValues.some(Boolean)) continue;
+    if (isMostlyColumnLetters(normalizedValues)) continue;
     if (rowLooksLikeHeader(normalizedValues)) continue;
     dataRows.push(normalizedValues);
   }
@@ -181,7 +209,6 @@ const readSavedSnapshot = (): SheetSnapshot | null => {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as SheetSnapshot;
     if (!parsed.headers?.length) return null;
-    // Keep the most recent click snapshot only. It prevents stale values after long navigation.
     if (parsed.capturedAt && Date.now() - parsed.capturedAt > 5 * 60 * 1000) return null;
     return parsed;
   } catch {
@@ -230,8 +257,8 @@ const fillModalHeaderFields = (modal: HTMLElement, snapshot: SheetSnapshot): voi
   }
 };
 
-const renderSheetMirrorTable = (snapshot: SheetSnapshot): string => {
-  const rows = snapshot.rows.slice(0, 500);
+const renderWorksheetSourceSection = (snapshot: SheetSnapshot): string => {
+  const rows = snapshot.rows.slice(0, 1000);
   const headerHtml = snapshot.headers
     .map((header) => `<th class="px-3 py-2 border-b border-white/10 whitespace-nowrap">${escapeHtml(header)}</th>`)
     .join("");
@@ -242,25 +269,23 @@ const renderSheetMirrorTable = (snapshot: SheetSnapshot): string => {
           (row) => `
             <tr class="border-b border-white/5 hover:bg-white/5">
               ${snapshot.headers
-                .map((_, index) => `<td class="px-3 py-2 whitespace-nowrap text-white/80">${escapeHtml(row[index] || "")}</td>`)
+                .map((_, index) => `<td class="px-3 py-2 whitespace-nowrap text-white/85">${escapeHtml(row[index] || "")}</td>`)
                 .join("")}
             </tr>`
         )
         .join("")
-    : `<tr><td colspan="${Math.max(snapshot.headers.length, 1)}" class="px-3 py-4 text-center text-white/45">لا توجد صفوف مقروءة من الورقة الحالية. حدّد نطاق البيانات في الورقة ثم اضغط تسجيل في Odoo مرة أخرى.</td></tr>`;
+    : `<tr><td colspan="${Math.max(snapshot.headers.length, 1)}" class="px-3 py-5 text-center text-red-300">لم يتم التقاط أي صف من الورقة. أغلق هذه الشاشة واضغط تسجيل في Odoo مرة أخرى من الورقة نفسها.</td></tr>`;
 
   return `
-    <div class="sheet-mirror-odoo-registration rounded-xl border border-emerald-400/25 bg-emerald-500/5 p-3 text-right" dir="rtl">
-      <div class="mb-2 flex items-center justify-between gap-3">
-        <div>
-          <div class="text-[11px] font-extrabold text-emerald-300">نفس حقول الورقة الحالية</div>
-          <div class="text-[10px] text-white/45">تم التقاط هذه البيانات عند الضغط على زر تسجيل في Odoo، وتعرض نفس أعمدة وقيم الورقة قبل تحويلها إلى قيود Odoo.</div>
-        </div>
-        <div class="rounded-full border border-emerald-400/25 px-3 py-1 text-[10px] font-bold text-emerald-200">${rows.length} سطر</div>
+    <div class="sheet-source-odoo-registration flex flex-col gap-2" dir="rtl">
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-[10.5px] text-emerald-300 font-extrabold">حقول التسجيل من نفس الورقة الحالية:</span>
+        <span class="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[10px] font-bold text-emerald-200">${rows.length} سطر</span>
       </div>
-      <div class="max-h-64 overflow-auto rounded-lg border border-white/10 bg-black/25">
-        <table class="min-w-full border-collapse text-xs text-white/85">
-          <thead class="sticky top-0 bg-black/70 text-emerald-200">
+      <div class="text-[10px] text-white/45">هذه هي نفس الأعمدة والقيم الموجودة في الورقة عند الضغط على زر تسجيل في Odoo. لا يتم عرض حقول بديلة أو جدول فارغ.</div>
+      <div class="border border-emerald-400/25 rounded-xl overflow-auto bg-black/20 text-[11px] max-h-[52vh]">
+        <table class="w-full min-w-max text-right border-collapse">
+          <thead class="sticky top-0 bg-black/75 text-emerald-200">
             <tr>${headerHtml}</tr>
           </thead>
           <tbody>${rowsHtml}</tbody>
@@ -277,6 +302,26 @@ const getSnapshotForModal = (): SheetSnapshot | null => {
   return live || saved;
 };
 
+const replaceOldProposalSection = (modal: HTMLElement, snapshot: SheetSnapshot): void => {
+  const sectionHtml = renderWorksheetSourceSection(snapshot);
+
+  // Remove any older attempts so the screen has one source of truth only.
+  modal.querySelectorAll(".sheet-mirror-odoo-registration, .sheet-source-odoo-registration").forEach((node) => node.remove());
+
+  const proposalLabel = Array.from(modal.querySelectorAll("span,div")).find((el) =>
+    textOf(el).includes("قيود الحسابات المقترحة") || textOf(el).includes("Proposed Journal Items")
+  );
+  const proposalContainer = proposalLabel?.closest("div.flex.flex-col.gap-2") as HTMLElement | null;
+
+  if (proposalContainer) {
+    proposalContainer.outerHTML = sectionHtml;
+    return;
+  }
+
+  const body = modal.querySelector(".overflow-auto") || modal;
+  body.insertAdjacentHTML("afterbegin", sectionHtml);
+};
+
 const patchOdooRegistrationModal = (): void => {
   const modal = getOdooRegistrationModal();
   if (!modal) return;
@@ -285,27 +330,7 @@ const patchOdooRegistrationModal = (): void => {
   if (!snapshot) return;
 
   fillModalHeaderFields(modal, snapshot);
-
-  const allMirrors = Array.from(modal.querySelectorAll<HTMLElement>(".sheet-mirror-odoo-registration"));
-  const mirrorHtml = renderSheetMirrorTable(snapshot);
-
-  if (allMirrors.length) {
-    allMirrors[0].outerHTML = mirrorHtml;
-    allMirrors.slice(1).forEach((node) => node.remove());
-    return;
-  }
-
-  const proposalLabel = Array.from(modal.querySelectorAll("span,div")).find((el) =>
-    textOf(el).includes("قيود الحسابات المقترحة") || textOf(el).includes("Proposed Journal Items")
-  );
-  const proposalContainer = proposalLabel?.closest("div.flex.flex-col.gap-2") || proposalLabel?.parentElement;
-
-  if (proposalContainer) {
-    proposalContainer.insertAdjacentHTML("beforebegin", mirrorHtml);
-  } else {
-    const body = modal.querySelector(".overflow-auto") || modal;
-    body.insertAdjacentHTML("afterbegin", mirrorHtml);
-  }
+  replaceOldProposalSection(modal, snapshot);
 };
 
 const clickedOdooRegisterButton = (target: HTMLElement | null): boolean => {

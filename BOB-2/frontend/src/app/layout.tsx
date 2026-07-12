@@ -2,6 +2,7 @@ import "./globals.css";
 import { MainNavigation } from "@/components/layout/MainNavigation";
 import GlobalBackButton from "@/components/layout/GlobalBackButton";
 import JournalEntrySheetActions from "@/components/accounting/JournalEntrySheetActions";
+import OdooRegistrationSheetMirror from "@/components/accounting/OdooRegistrationSheetMirror";
 import { LanguageProvider } from "@/lib/LanguageContext";
 import { CompanyProvider } from "@/lib/CompanyContext";
 import { Cairo, Outfit } from "next/font/google";
@@ -35,6 +36,7 @@ export default function RootLayout({
                 {children}
               </section>
               <JournalEntrySheetActions />
+              <OdooRegistrationSheetMirror />
             </main>
           </body>
         </html>

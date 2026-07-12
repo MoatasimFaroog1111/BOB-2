@@ -9,7 +9,10 @@ type SheetSnapshot = {
   date?: string;
   ref?: string;
   journal?: string;
+  capturedAt?: number;
 };
+
+const SNAPSHOT_STORAGE_KEY = "guardianai_odoo_registration_sheet_snapshot";
 
 const HEADER_HINTS = [
   "رقم القيد",
@@ -54,7 +57,7 @@ const rowLooksLikeHeader = (values: string[]): boolean => {
 };
 
 const findHeaderIndex = (rows: HTMLTableRowElement[]): number => {
-  for (let i = 0; i < Math.min(rows.length, 15); i++) {
+  for (let i = 0; i < Math.min(rows.length, 20); i++) {
     const values = Array.from(rows[i].querySelectorAll("td,th")).slice(1).map(textOf);
     if (rowLooksLikeHeader(values)) return i;
   }
@@ -93,18 +96,39 @@ const setInputValue = (input: HTMLInputElement | HTMLSelectElement, value: strin
   input.dispatchEvent(new Event("change", { bubbles: true }));
 };
 
-const getCurrentSheetSnapshot = (): SheetSnapshot | null => {
-  const gridTables = Array.from(document.querySelectorAll("table")).filter((table) => {
-    if (table.closest(".sheet-mirror-odoo-registration")) return false;
-    if (table.closest("div.fixed.inset-0")) return false;
-    const rows = table.querySelectorAll("tbody tr");
-    const cells = table.querySelectorAll("td");
-    return rows.length >= 2 && cells.length >= 6;
-  }) as HTMLTableElement[];
+const isLikelySpreadsheetTable = (table: HTMLTableElement): boolean => {
+  if (table.closest(".sheet-mirror-odoo-registration")) return false;
+  if (table.closest("div.fixed.inset-0")) return false;
+
+  const text = textOf(table);
+  const rows = table.querySelectorAll("tbody tr");
+  const cells = table.querySelectorAll("td");
+  if (rows.length < 2 || cells.length < 6) return false;
+
+  return (
+    text.includes("رمز الحساب") ||
+    text.includes("رقم القيد") ||
+    text.includes("مدين") ||
+    text.includes("دائن") ||
+    text.toLowerCase().includes("account") ||
+    text.toLowerCase().includes("debit") ||
+    text.toLowerCase().includes("credit")
+  );
+};
+
+const findSpreadsheetTable = (): HTMLTableElement | null => {
+  const gridTables = Array.from(document.querySelectorAll("table"))
+    .filter((table) => isLikelySpreadsheetTable(table as HTMLTableElement)) as HTMLTableElement[];
 
   if (!gridTables.length) return null;
 
-  const table = gridTables.sort((a, b) => b.querySelectorAll("td").length - a.querySelectorAll("td").length)[0];
+  return gridTables.sort((a, b) => b.querySelectorAll("td").length - a.querySelectorAll("td").length)[0];
+};
+
+const getCurrentSheetSnapshot = (): SheetSnapshot | null => {
+  const table = findSpreadsheetTable();
+  if (!table) return null;
+
   const rows = Array.from(table.querySelectorAll("tbody tr")) as HTMLTableRowElement[];
   if (!rows.length) return null;
 
@@ -116,9 +140,10 @@ const getCurrentSheetSnapshot = (): SheetSnapshot | null => {
   const dataRows: string[][] = [];
   for (const row of rows.slice(headerIndex + 1)) {
     const values = Array.from(row.querySelectorAll("td,th")).slice(1).map(textOf);
-    if (!values.some(Boolean)) continue;
-    if (rowLooksLikeHeader(values)) continue;
-    dataRows.push(values.slice(0, headers.length));
+    const normalizedValues = values.slice(0, headers.length).map((value) => String(value || "").trim());
+    if (!normalizedValues.some(Boolean)) continue;
+    if (rowLooksLikeHeader(normalizedValues)) continue;
+    dataRows.push(normalizedValues);
   }
 
   const dateCol = findColumnIndex(headers, DATE_HEADERS);
@@ -137,7 +162,36 @@ const getCurrentSheetSnapshot = (): SheetSnapshot | null => {
     date: firstValueFor(dateCol),
     ref: firstValueFor(refCol),
     journal: firstValueFor(journalCol),
+    capturedAt: Date.now(),
   };
+};
+
+const saveSnapshot = (snapshot: SheetSnapshot | null): void => {
+  if (!snapshot) return;
+  try {
+    window.sessionStorage.setItem(SNAPSHOT_STORAGE_KEY, JSON.stringify(snapshot));
+  } catch {
+    // Ignore storage failures. The live DOM fallback can still be used.
+  }
+};
+
+const readSavedSnapshot = (): SheetSnapshot | null => {
+  try {
+    const raw = window.sessionStorage.getItem(SNAPSHOT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as SheetSnapshot;
+    if (!parsed.headers?.length) return null;
+    // Keep the most recent click snapshot only. It prevents stale values after long navigation.
+    if (parsed.capturedAt && Date.now() - parsed.capturedAt > 5 * 60 * 1000) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const captureCurrentSheetForOdooRegistration = (): void => {
+  const snapshot = getCurrentSheetSnapshot();
+  saveSnapshot(snapshot);
 };
 
 const getOdooRegistrationModal = (): HTMLElement | null => {
@@ -177,7 +231,7 @@ const fillModalHeaderFields = (modal: HTMLElement, snapshot: SheetSnapshot): voi
 };
 
 const renderSheetMirrorTable = (snapshot: SheetSnapshot): string => {
-  const rows = snapshot.rows.slice(0, 250);
+  const rows = snapshot.rows.slice(0, 500);
   const headerHtml = snapshot.headers
     .map((header) => `<th class="px-3 py-2 border-b border-white/10 whitespace-nowrap">${escapeHtml(header)}</th>`)
     .join("");
@@ -193,14 +247,14 @@ const renderSheetMirrorTable = (snapshot: SheetSnapshot): string => {
             </tr>`
         )
         .join("")
-    : `<tr><td colspan="${Math.max(snapshot.headers.length, 1)}" class="px-3 py-4 text-center text-white/45">لا توجد صفوف مقروءة من الورقة الحالية.</td></tr>`;
+    : `<tr><td colspan="${Math.max(snapshot.headers.length, 1)}" class="px-3 py-4 text-center text-white/45">لا توجد صفوف مقروءة من الورقة الحالية. حدّد نطاق البيانات في الورقة ثم اضغط تسجيل في Odoo مرة أخرى.</td></tr>`;
 
   return `
     <div class="sheet-mirror-odoo-registration rounded-xl border border-emerald-400/25 bg-emerald-500/5 p-3 text-right" dir="rtl">
       <div class="mb-2 flex items-center justify-between gap-3">
         <div>
           <div class="text-[11px] font-extrabold text-emerald-300">نفس حقول الورقة الحالية</div>
-          <div class="text-[10px] text-white/45">تمت تعبئة هذه الشاشة تلقائيًا بنفس أعمدة وقيم الورقة قبل تحويلها لقيود Odoo.</div>
+          <div class="text-[10px] text-white/45">تم التقاط هذه البيانات عند الضغط على زر تسجيل في Odoo، وتعرض نفس أعمدة وقيم الورقة قبل تحويلها إلى قيود Odoo.</div>
         </div>
         <div class="rounded-full border border-emerald-400/25 px-3 py-1 text-[10px] font-bold text-emerald-200">${rows.length} سطر</div>
       </div>
@@ -215,20 +269,29 @@ const renderSheetMirrorTable = (snapshot: SheetSnapshot): string => {
     </div>`;
 };
 
+const getSnapshotForModal = (): SheetSnapshot | null => {
+  const saved = readSavedSnapshot();
+  if (saved && saved.rows.length > 0) return saved;
+  const live = getCurrentSheetSnapshot();
+  if (live) saveSnapshot(live);
+  return live || saved;
+};
+
 const patchOdooRegistrationModal = (): void => {
   const modal = getOdooRegistrationModal();
   if (!modal) return;
 
-  const snapshot = getCurrentSheetSnapshot();
+  const snapshot = getSnapshotForModal();
   if (!snapshot) return;
 
   fillModalHeaderFields(modal, snapshot);
 
-  const mirror = modal.querySelector<HTMLElement>(".sheet-mirror-odoo-registration");
+  const allMirrors = Array.from(modal.querySelectorAll<HTMLElement>(".sheet-mirror-odoo-registration"));
   const mirrorHtml = renderSheetMirrorTable(snapshot);
 
-  if (mirror) {
-    mirror.outerHTML = mirrorHtml;
+  if (allMirrors.length) {
+    allMirrors[0].outerHTML = mirrorHtml;
+    allMirrors.slice(1).forEach((node) => node.remove());
     return;
   }
 
@@ -245,6 +308,18 @@ const patchOdooRegistrationModal = (): void => {
   }
 };
 
+const clickedOdooRegisterButton = (target: HTMLElement | null): boolean => {
+  const button = target?.closest("button");
+  if (!button) return false;
+  const text = textOf(button).toLowerCase();
+  return (
+    text.includes("تسجيل في odoo") ||
+    text.includes("تسجيل القيد في أودو") ||
+    text.includes("تأكيد وتسجيل القيد") ||
+    text.includes("register")
+  );
+};
+
 export default function OdooRegistrationSheetMirror() {
   const pathname = usePathname();
 
@@ -257,6 +332,16 @@ export default function OdooRegistrationSheetMirror() {
       scheduled = window.setTimeout(patchOdooRegistrationModal, 120);
     };
 
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!clickedOdooRegisterButton(target)) return;
+      captureCurrentSheetForOdooRegistration();
+      window.setTimeout(schedulePatch, 0);
+      window.setTimeout(schedulePatch, 180);
+      window.setTimeout(schedulePatch, 420);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown, true);
     schedulePatch();
     const observer = new MutationObserver(schedulePatch);
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
@@ -264,6 +349,7 @@ export default function OdooRegistrationSheetMirror() {
     return () => {
       window.clearTimeout(scheduled);
       observer.disconnect();
+      document.removeEventListener("pointerdown", onPointerDown, true);
     };
   }, [pathname]);
 

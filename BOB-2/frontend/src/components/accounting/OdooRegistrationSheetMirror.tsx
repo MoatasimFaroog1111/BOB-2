@@ -224,7 +224,7 @@ const patchOdooRegistrationModal = (): void => {
 
   fillModalHeaderFields(modal, snapshot);
 
-  let mirror = modal.querySelector<HTMLElement>(".sheet-mirror-odoo-registration");
+  const mirror = modal.querySelector<HTMLElement>(".sheet-mirror-odoo-registration");
   const mirrorHtml = renderSheetMirrorTable(snapshot);
 
   if (mirror) {

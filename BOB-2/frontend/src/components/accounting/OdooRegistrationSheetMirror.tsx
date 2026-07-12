@@ -56,7 +56,6 @@ const escapeHtml = (value: string): string =>
     .replace(/'/g, "&#039;");
 
 const looksLikeRowNumber = (value: string): boolean => /^\d{1,5}$/.test(String(value || "").trim());
-
 const looksLikeColumnLetter = (value: string): boolean => /^[A-Z]{1,3}$/.test(String(value || "").trim());
 
 const isMostlyColumnLetters = (values: string[]): boolean => {
@@ -69,7 +68,6 @@ const isMostlyColumnLetters = (values: string[]): boolean => {
 const cleanGridValues = (cells: Element[]): string[] => {
   let values = cells.map(textOf);
 
-  // Spreadsheet grids often have a row-number cell at one edge. Remove it without touching real data.
   if (values.length > 4 && looksLikeRowNumber(values[0])) {
     values = values.slice(1);
   }
@@ -119,7 +117,6 @@ const normalizeDateValue = (rawValue: string): string => {
 
 const setInputValue = (input: HTMLInputElement | HTMLSelectElement, value: string): void => {
   if (!value || input.value === value) return;
-
   const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value");
   descriptor?.set?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -136,7 +133,7 @@ const isLikelySpreadsheetTable = (table: HTMLTableElement): boolean => {
   if (rows.length < 2 || cells.length < 6) return false;
 
   const firstRowsText = Array.from(rows)
-    .slice(0, 20)
+    .slice(0, 25)
     .map((row) => cleanGridValues(Array.from(row.querySelectorAll("td,th"))).join(" "))
     .join(" ")
     .toLowerCase();
@@ -149,14 +146,10 @@ const findSpreadsheetTable = (): HTMLTableElement | null => {
     .filter((table) => isLikelySpreadsheetTable(table as HTMLTableElement)) as HTMLTableElement[];
 
   if (!gridTables.length) return null;
-
   return gridTables.sort((a, b) => b.querySelectorAll("td").length - a.querySelectorAll("td").length)[0];
 };
 
-const getCurrentSheetSnapshot = (): SheetSnapshot | null => {
-  const table = findSpreadsheetTable();
-  if (!table) return null;
-
+const snapshotFromTable = (table: HTMLTableElement): SheetSnapshot | null => {
   const rows = Array.from(table.querySelectorAll("tbody tr")) as HTMLTableRowElement[];
   if (!rows.length) return null;
 
@@ -192,6 +185,11 @@ const getCurrentSheetSnapshot = (): SheetSnapshot | null => {
     journal: firstValueFor(journalCol),
     capturedAt: Date.now(),
   };
+};
+
+const getCurrentSheetSnapshot = (): SheetSnapshot | null => {
+  const table = findSpreadsheetTable();
+  return table ? snapshotFromTable(table) : null;
 };
 
 const saveSnapshot = (snapshot: SheetSnapshot | null): void => {
@@ -230,7 +228,8 @@ const getOdooRegistrationModal = (): HTMLElement | null => {
         text.includes("تسجيل قيد يدوي") ||
         text.includes("تسجيل قيد") ||
         text.includes("Register Odoo Journal Entry") ||
-        text.includes("قيود الحسابات المقترحة")
+        text.includes("قيود الحسابات المقترحة") ||
+        text.includes("الحساب (أودو)")
       );
     }) || null
   );
@@ -255,6 +254,61 @@ const fillModalHeaderFields = (modal: HTMLElement, snapshot: SheetSnapshot): voi
     const option = Array.from(journalSelect.options).find((opt) => normalize(opt.textContent || "").includes(journal));
     if (option) setInputValue(journalSelect, option.value);
   }
+};
+
+const findProposalContainers = (modal: HTMLElement): HTMLElement[] => {
+  const containers = new Set<HTMLElement>();
+
+  Array.from(modal.querySelectorAll("span,div")).forEach((el) => {
+    const text = textOf(el);
+    if (text.includes("قيود الحسابات المقترحة") || text.includes("Proposed Journal Items")) {
+      const container = el.closest("div.flex.flex-col.gap-2") || el.parentElement;
+      if (container instanceof HTMLElement) containers.add(container);
+    }
+  });
+
+  Array.from(modal.querySelectorAll("table")).forEach((table) => {
+    if (table.closest(".sheet-source-odoo-registration")) return;
+    const tableText = textOf(table);
+    const normalized = normalize(tableText);
+    const looksLikeOldProposal =
+      tableText.includes("الحساب (أودو)") ||
+      normalized.includes("odoo account") ||
+      (tableText.includes("مدين") && tableText.includes("دائن") && tableText.includes("الشريك") && tableText.includes("البيان"));
+
+    if (looksLikeOldProposal) {
+      const container =
+        table.closest("div.flex.flex-col.gap-2") ||
+        table.closest("div.border")?.parentElement ||
+        table.parentElement;
+      if (container instanceof HTMLElement) containers.add(container);
+    }
+  });
+
+  return Array.from(containers);
+};
+
+const getProposalSnapshotFallback = (modal: HTMLElement): SheetSnapshot | null => {
+  const oldTable = Array.from(modal.querySelectorAll("table")).find((table) => {
+    if (table.closest(".sheet-source-odoo-registration")) return false;
+    const text = textOf(table);
+    return text.includes("الحساب (أودو)") || text.includes("Odoo Account") || text.includes("قيود الحسابات المقترحة");
+  }) as HTMLTableElement | undefined;
+
+  if (!oldTable) return null;
+  const headers = cleanGridValues(Array.from(oldTable.querySelectorAll("thead th")));
+  const bodyRows = Array.from(oldTable.querySelectorAll("tbody tr")) as HTMLTableRowElement[];
+  const rows = bodyRows
+    .map((row) => cleanGridValues(Array.from(row.querySelectorAll("td,th"))).slice(0, headers.length))
+    .filter((row) => row.some(Boolean));
+
+  if (!headers.length || !rows.length) return null;
+
+  return {
+    headers,
+    rows,
+    capturedAt: Date.now(),
+  };
 };
 
 const renderWorksheetSourceSection = (snapshot: SheetSnapshot): string => {
@@ -282,7 +336,7 @@ const renderWorksheetSourceSection = (snapshot: SheetSnapshot): string => {
         <span class="text-[10.5px] text-emerald-300 font-extrabold">حقول التسجيل من نفس الورقة الحالية:</span>
         <span class="rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1 text-[10px] font-bold text-emerald-200">${rows.length} سطر</span>
       </div>
-      <div class="text-[10px] text-white/45">هذه هي نفس الأعمدة والقيم الموجودة في الورقة عند الضغط على زر تسجيل في Odoo. لا يتم عرض حقول بديلة أو جدول فارغ.</div>
+      <div class="text-[10px] text-white/45">هذه الشاشة تعرض نفس الأعمدة والقيم التي تم التقاطها من الورقة/جدول التسجيل الحالي. لا توجد مرآة فارغة ولا جدول مقترحات منفصل.</div>
       <div class="border border-emerald-400/25 rounded-xl overflow-auto bg-black/20 text-[11px] max-h-[52vh]">
         <table class="w-full min-w-max text-right border-collapse">
           <thead class="sticky top-0 bg-black/75 text-emerald-200">
@@ -294,27 +348,31 @@ const renderWorksheetSourceSection = (snapshot: SheetSnapshot): string => {
     </div>`;
 };
 
-const getSnapshotForModal = (): SheetSnapshot | null => {
+const getSnapshotForModal = (modal: HTMLElement): SheetSnapshot | null => {
   const saved = readSavedSnapshot();
   if (saved && saved.rows.length > 0) return saved;
+
   const live = getCurrentSheetSnapshot();
-  if (live) saveSnapshot(live);
+  if (live && live.rows.length > 0) {
+    saveSnapshot(live);
+    return live;
+  }
+
+  const proposalFallback = getProposalSnapshotFallback(modal);
+  if (proposalFallback) return proposalFallback;
+
   return live || saved;
 };
 
 const replaceOldProposalSection = (modal: HTMLElement, snapshot: SheetSnapshot): void => {
   const sectionHtml = renderWorksheetSourceSection(snapshot);
 
-  // Remove any older attempts so the screen has one source of truth only.
   modal.querySelectorAll(".sheet-mirror-odoo-registration, .sheet-source-odoo-registration").forEach((node) => node.remove());
 
-  const proposalLabel = Array.from(modal.querySelectorAll("span,div")).find((el) =>
-    textOf(el).includes("قيود الحسابات المقترحة") || textOf(el).includes("Proposed Journal Items")
-  );
-  const proposalContainer = proposalLabel?.closest("div.flex.flex-col.gap-2") as HTMLElement | null;
-
-  if (proposalContainer) {
-    proposalContainer.outerHTML = sectionHtml;
+  const containers = findProposalContainers(modal);
+  if (containers.length > 0) {
+    containers[0].outerHTML = sectionHtml;
+    containers.slice(1).forEach((node) => node.remove());
     return;
   }
 
@@ -326,7 +384,7 @@ const patchOdooRegistrationModal = (): void => {
   const modal = getOdooRegistrationModal();
   if (!modal) return;
 
-  const snapshot = getSnapshotForModal();
+  const snapshot = getSnapshotForModal(modal);
   if (!snapshot) return;
 
   fillModalHeaderFields(modal, snapshot);
@@ -337,11 +395,12 @@ const clickedOdooRegisterButton = (target: HTMLElement | null): boolean => {
   const button = target?.closest("button");
   if (!button) return false;
   const text = textOf(button).toLowerCase();
+
+  // Only capture the worksheet when opening the modal. Do not recapture from inside the modal confirm button.
   return (
-    text.includes("تسجيل في odoo") ||
-    text.includes("تسجيل القيد في أودو") ||
-    text.includes("تأكيد وتسجيل القيد") ||
-    text.includes("register")
+    (text.includes("تسجيل في odoo") || text.includes("تسجيل في أودو") || text === "register") &&
+    !text.includes("تأكيد") &&
+    !text.includes("confirm")
   );
 };
 
@@ -352,23 +411,21 @@ export default function OdooRegistrationSheetMirror() {
     if (!pathname?.startsWith("/documents")) return;
 
     let scheduled = 0;
-    const schedulePatch = () => {
+    const schedulePatch = (delay = 120) => {
       window.clearTimeout(scheduled);
-      scheduled = window.setTimeout(patchOdooRegistrationModal, 120);
+      scheduled = window.setTimeout(patchOdooRegistrationModal, delay);
     };
 
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as HTMLElement | null;
       if (!clickedOdooRegisterButton(target)) return;
       captureCurrentSheetForOdooRegistration();
-      window.setTimeout(schedulePatch, 0);
-      window.setTimeout(schedulePatch, 180);
-      window.setTimeout(schedulePatch, 420);
+      [0, 180, 420, 900, 1400].forEach((delay) => window.setTimeout(() => schedulePatch(0), delay));
     };
 
     document.addEventListener("pointerdown", onPointerDown, true);
     schedulePatch();
-    const observer = new MutationObserver(schedulePatch);
+    const observer = new MutationObserver(() => schedulePatch());
     observer.observe(document.body, { childList: true, subtree: true, characterData: true });
 
     return () => {

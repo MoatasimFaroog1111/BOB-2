@@ -3,13 +3,10 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Project root, computed relative to this file so the app is portable across machines.
-# config.py -> core -> app -> backend -> <project root>
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def generate_secret_key() -> str:
-    """Generate a secure random secret key for local development."""
     return secrets.token_urlsafe(64)
 
 
@@ -23,30 +20,22 @@ class Settings(BaseSettings):
     FRONTEND_ORIGIN: str = "http://localhost:3000"
     CORS_ORIGINS: str = ""
     TRUSTED_HOSTS: str = ""
-    # Only direct peers in these IPs/CIDRs may supply X-Forwarded-For/X-Real-IP.
     TRUSTED_PROXY_IPS: str = ""
 
-    # Local development uses SQLite unless an explicit database URL is provided.
-    # Production validation rejects SQLite and known/default credentials.
     DATABASE_URL: str = "sqlite:///./guardianai.db"
     REDIS_URL: str = ""
 
-    # SECRET_KEY must be at least 32 characters in production.
     SECRET_KEY: str = ""
 
-    # Token configuration
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 3
 
-    # Security settings
     MAX_LOGIN_ATTEMPTS: int = 5
     LOGIN_LOCKOUT_MINUTES: int = 30
     REQUIRE_HTTPS: bool = False
 
-    # Optional development-only bootstrap. Production never auto-creates an owner.
     GUARDIAN_SEED_PASSWORD: str = ""
 
-    # File upload security
     MAX_UPLOAD_SIZE_MB: int = 10
     MAX_PDF_PAGES: int = 200
     MAX_IMAGE_PIXELS: int = 40_000_000
@@ -54,16 +43,16 @@ class Settings(BaseSettings):
     MAX_ARCHIVE_UNCOMPRESSED_MB: int = 100
     OCR_TIMEOUT_SECONDS: int = 60
     ALLOWED_UPLOAD_EXTENSIONS: str = (
-        ".pdf,.png,.jpg,.jpeg,.webp,.txt,.csv,.tsv,.xlsx,.xls,"
+        ".pdf,.png,.jpg,.jpeg,.webp,.txt,.csv,.tsv,.xlsx,"
         ".ofx,.qfx,.qif,.mt940,.sta"
     )
+    CLAMAV_HOST: str = ""
+    CLAMAV_PORT: int = 3310
+    REQUIRE_MALWARE_SCAN: bool = False
 
-    # Local storage directory (telegram config/uploads, etc).
     STORAGE_DIR: str = str(PROJECT_ROOT / "storage")
 
-    # LLM provider (DeepSeek) API key. Must be provided via environment / .env.
     DEEPSEEK_API_KEY: str = ""
-
     ACCOUNTING_LLM_PROVIDER: str = "deepseek"
     ACCOUNTING_LLM_MODEL: str = "deepseek-chat"
     ACCOUNTING_LLM_API_URL: str = "https://api.deepseek.com/chat/completions"
@@ -97,7 +86,6 @@ class Settings(BaseSettings):
 
     @property
     def cors_origin_list(self) -> list[str]:
-        """All allowed CORS origins, de-duplicated."""
         origins = {self.FRONTEND_ORIGIN}
         if not self.is_production:
             origins.update(["http://localhost:3000", "http://127.0.0.1:3000"])
@@ -130,12 +118,10 @@ class Settings(BaseSettings):
             )
 
     def validate_runtime_security(self) -> None:
-        """Fail closed when production security controls are missing."""
         if not self.is_production:
             return
 
         self.validate_secret_key()
-
         errors: list[str] = []
         if not self.TRUSTED_HOSTS.strip():
             errors.append("TRUSTED_HOSTS is required")
@@ -145,6 +131,10 @@ class Settings(BaseSettings):
             errors.append("REDIS_URL is required for shared authentication rate limiting")
         if self.FRONTEND_ORIGIN.lower().startswith("http://"):
             errors.append("FRONTEND_ORIGIN must use https")
+        if not self.REQUIRE_MALWARE_SCAN:
+            errors.append("REQUIRE_MALWARE_SCAN must be true")
+        if self.REQUIRE_MALWARE_SCAN and not self.CLAMAV_HOST.strip():
+            errors.append("CLAMAV_HOST is required when malware scanning is enabled")
 
         database_url_lower = self.DATABASE_URL.lower()
         if database_url_lower.startswith("sqlite"):

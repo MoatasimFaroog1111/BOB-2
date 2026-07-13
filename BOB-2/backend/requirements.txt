@@ -1,8 +1,8 @@
 # Runtime dependencies are intentionally pinned. Update through a reviewed dependency PR
 # and run pip-audit before merging.
-fastapi==0.115.14
-uvicorn==0.34.3
-starlette==0.46.2
+fastapi==0.139.0
+uvicorn==0.41.0
+starlette==1.3.1
 
 sqlalchemy==2.0.41
 psycopg2-binary==2.9.10
@@ -14,9 +14,8 @@ cryptography==45.0.4
 redis==6.2.0
 clamd==1.0.2
 
-pydantic==2.11.7
+pydantic[email]==2.12.5
 pydantic-settings==2.10.1
-pydantic[email]==2.11.7
 python-multipart==0.0.20
 
 PyMuPDF==1.26.1
@@ -28,4 +27,3 @@ pytest==8.4.1
 httpx==0.28.1
 
 sentence-transformers==4.1.0
-chromadb==1.0.12

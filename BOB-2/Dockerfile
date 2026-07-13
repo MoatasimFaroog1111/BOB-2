@@ -1,11 +1,13 @@
 # GuardianAI — multi-stage production image
 
-FROM node:20-alpine AS frontend-builder
+FROM node:24-alpine AS frontend-builder
 WORKDIR /build/frontend
+ARG NEXT_PUBLIC_API_BASE_URL
+ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY frontend/ ./
-RUN npm run build
+RUN test -n "$NEXT_PUBLIC_API_BASE_URL" && npm run build
 
 FROM python:3.12-slim AS runtime
 
@@ -25,8 +27,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -r guardian && useradd -r -g guardian -m guardian
 WORKDIR /app
 
-COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir --no-compile -r requirements.txt
+COPY backend/requirements.lock ./requirements.lock
+RUN pip install --no-cache-dir --no-compile --require-hashes -r requirements.lock
 
 COPY backend/ ./
 COPY --from=frontend-builder /build/frontend/.next /app/frontend/.next

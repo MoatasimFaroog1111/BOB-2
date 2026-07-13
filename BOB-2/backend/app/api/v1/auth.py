@@ -2,7 +2,7 @@ import hmac
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from jose import JWTError
+from jwt import PyJWTError
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
@@ -109,7 +109,6 @@ def login(
 
     if not user.is_active:
         _record_attempts(identifiers, success=False)
-        # Keep the external response generic to avoid account-status enumeration.
         raise _invalid_credentials()
 
     _record_attempts(identifiers, success=True)
@@ -162,7 +161,7 @@ def refresh_access_token(
 ):
     try:
         token_data = decode_refresh_token(payload.refresh_token)
-    except JWTError:
+    except PyJWTError:
         raise _invalid_refresh()
 
     email = token_data.get("sub")
@@ -195,8 +194,6 @@ def refresh_access_token(
         or auth_session.expires_at <= datetime.utcnow()
         or not token_matches
     ):
-        # A validly signed token that no longer matches the current token is a reuse
-        # signal. Revoke the complete token family so a stolen token cannot persist.
         _revoke_family(db, family_id)
         raise _invalid_refresh()
 
@@ -225,7 +222,6 @@ def refresh_access_token(
         jti=new_refresh_jti,
     )
 
-    # Rotation is atomic: the old refresh token ceases to be valid immediately.
     auth_session.access_jti = new_access_jti
     auth_session.refresh_jti = new_refresh_jti
     auth_session.refresh_token_hash = hash_token(new_refresh_token)

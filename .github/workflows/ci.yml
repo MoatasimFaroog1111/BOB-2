@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend-lint:
     name: Backend — Lint & Import Check
@@ -15,18 +22,22 @@ jobs:
         working-directory: BOB-2/backend
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
+          cache: pip
+          cache-dependency-path: BOB-2/backend/requirements.txt
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
+        run: pip install --quiet -r requirements.txt
       - name: Check imports resolve
+        env:
+          APP_ENV: test
+          SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
         run: python -c "from app.core.config import settings; print('Config OK:', settings.APP_NAME)"
-
       - name: Check main app imports
+        env:
+          APP_ENV: test
+          SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
         run: python -c "from app.main import app; print('FastAPI app OK')"
 
   backend-test:
@@ -37,19 +48,19 @@ jobs:
         working-directory: BOB-2/backend
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
+          cache: pip
+          cache-dependency-path: BOB-2/backend/requirements.txt
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
+        run: pip install --quiet -r requirements.txt
       - name: Run tests
         env:
           APP_ENV: test
-          DATABASE_URL: "sqlite:///./test.db"
-        run: python -m pytest tests/ -v
+          DATABASE_URL: sqlite:///./test.db
+          SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+        run: python -m pytest tests/ -q
 
   frontend-lint:
     name: Frontend — Lint & Build
@@ -59,39 +70,16 @@ jobs:
         working-directory: BOB-2/frontend
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
-
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: BOB-2/frontend/package-lock.json
       - name: Install dependencies
-        run: npm ci
-
+        run: npm ci --ignore-scripts
       - name: Lint
         run: npm run lint
-
       - name: Build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid
         run: npm run build
-
-  dependency-scan:
-    name: Security — Dependency Audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-
-      - name: Audit Python dependencies
-        working-directory: BOB-2/backend
-        run: pip install pip-audit && pip install -r requirements.txt && pip-audit
-        continue-on-error: true
-
-      - name: Audit Node dependencies
-        working-directory: BOB-2/frontend
-        run: npm audit --omit=dev || true

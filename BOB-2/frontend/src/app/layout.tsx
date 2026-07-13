@@ -1,5 +1,6 @@
 import "./globals.css";
 import { Cairo, Outfit } from "next/font/google";
+import { connection } from "next/server";
 
 import AuthGate from "@/components/auth/AuthGate";
 import JournalEntrySheetActions from "@/components/accounting/JournalEntrySheetActions";
@@ -21,11 +22,15 @@ const outfit = Outfit({
   variable: "--font-outfit",
 });
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  // A fresh CSP nonce is generated for every request by src/proxy.ts. Dynamic
+  // rendering ensures Next.js can apply that nonce to framework scripts and styles.
+  await connection();
+
   return (
     <html lang="ar" dir="rtl" className={`${cairo.variable} ${outfit.variable}`}>
       <body className="h-screen overflow-hidden">

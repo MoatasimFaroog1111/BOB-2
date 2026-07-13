@@ -9,8 +9,6 @@ from app.security.auth import hash_password, validate_password_strength
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_OWNER_EMAIL = "owner@guardian.local"
-
 
 def seed_db(db: Session) -> None:
     """Seed non-sensitive baseline data.
@@ -38,30 +36,31 @@ def seed_db(db: Session) -> None:
         logger.info("Automatic owner seeding is disabled in production.")
         return
 
-    # Development/test owner creation is opt-in and requires an explicitly supplied
-    # strong password. There is no fallback password in source code.
+    seed_email = settings.GUARDIAN_SEED_EMAIL.strip().lower()
     seed_password = settings.GUARDIAN_SEED_PASSWORD.strip()
-    if not seed_password:
-        logger.info(
-            "GUARDIAN_SEED_PASSWORD is not set; skipping development owner bootstrap."
-        )
+    if not seed_email and not seed_password:
+        logger.info("No development owner bootstrap was requested.")
         return
+    if not seed_email or not seed_password:
+        raise ValueError(
+            "GUARDIAN_SEED_EMAIL and GUARDIAN_SEED_PASSWORD must both be set "
+            "for development owner bootstrap"
+        )
 
     is_valid, error = validate_password_strength(seed_password)
     if not is_valid:
         raise ValueError(f"GUARDIAN_SEED_PASSWORD is not strong enough: {error}")
 
-    user = db.query(User).filter(User.email == DEFAULT_OWNER_EMAIL).first()
+    user = db.query(User).filter(User.email == seed_email).first()
     if user:
         logger.info("Development owner already exists; seed will not change its password.")
         return
 
-    logger.warning("Creating opt-in development owner account: %s", DEFAULT_OWNER_EMAIL)
+    logger.warning("Creating opt-in development owner account: %s", seed_email)
     user = User(
-        id=1,
-        organization_id=1,
-        email=DEFAULT_OWNER_EMAIL,
-        full_name="System Owner",
+        organization_id=org.id,
+        email=seed_email,
+        full_name="Development System Owner",
         role="owner",
         hashed_password=hash_password(seed_password),
         is_active=True,
@@ -77,8 +76,6 @@ def run_seed() -> None:
     except Exception:
         logger.exception("Error seeding database")
         db.rollback()
-        # A failed bootstrap must fail startup instead of leaving production in an
-        # unknown or partially initialized state.
         raise
     finally:
         db.close()

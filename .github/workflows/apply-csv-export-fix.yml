@@ -1,0 +1,92 @@
+name: Apply secure CSV export fix
+
+on:
+  push:
+    branches:
+      - agent/security-hardening-bob2
+    paths:
+      - .github/workflows/apply-csv-export-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/security-hardening-bob2
+      - name: Replace vulnerable browser XLSX export
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("BOB-2/frontend/src/app/bank-reconciliation/page.tsx")
+          text = path.read_text(encoding="utf-8")
+          start_marker = "  const exportExcel = async () => {"
+          end_marker = "\n\n  const exportPdf = () => {"
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+
+          replacement = '''  const exportCsv = () => {
+            if (!result) return;
+
+            const csvCell = (value: unknown) => {
+              let text = String(value ?? "");
+              // Prevent spreadsheet formula injection when the CSV is opened in Excel.
+              if (/^[=+\\-@\\t\\r]/.test(text)) text = `'${text}`;
+              return `"${text.replace(/"/g, '""')}"`;
+            };
+            const rows: unknown[][] = [];
+            const addSection = (title: string, headers: unknown[], data: unknown[][]) => {
+              if (rows.length) rows.push([]);
+              rows.push([title]);
+              rows.push(headers);
+              rows.push(...data);
+            };
+
+            const journal = result.selected_bank_journal || selectedJournal;
+            addSection("Summary", ["Field", "Value"], [
+              ["Bank Journal", journal ? `${journal.journal_name} (${journal.journal_code})` : "—"],
+              [t("bankRecon.dateRangeUsed"), `${result.date_range_used.from || "—"} → ${result.date_range_used.to || "—"}`],
+              [t("bankRecon.statementTotal"), result.statement_total],
+              [t("bankRecon.ledgerTotal"), result.ledger_total],
+              [t("bankRecon.difference"), result.difference],
+              [t("bankRecon.statementCount"), result.statement_count],
+              [t("bankRecon.ledgerCount"), result.ledger_count],
+              [t("bankRecon.matchedCount"), result.matched.length + result.smart_matched.length],
+              [t("bankRecon.bankOnlyCount"), result.statement_only.length],
+              [t("bankRecon.odooOnlyCount"), result.ledger_only.length],
+              ["Footer", "Reconciliation report generated before any manual posting action."],
+            ]);
+
+            addSection("Matched", ["Type", "Bank Date", "Bank Description", "Amount", "Odoo Date", "Odoo Description", "Confidence", "Reason"], [
+              ...result.matched.map(row => ["exact", row.statement_txn.date, row.statement_txn.description, row.statement_txn.amount, row.ledger_txn.date, row.ledger_txn.description, 1, "Exact match"]),
+              ...result.smart_matched.map(row => ["smart", row.statement_txn.date, row.statement_txn.description, row.statement_txn.amount, row.ledger_txn.date, row.ledger_txn.description, row.confidence, row.reason]),
+            ]);
+            addSection("Bank Only Suggestions", ["Date", "Description", "Amount", "Row", "Suggested Action", "Confidence"], result.statement_only.map(row => [row.date, row.description, row.amount, row.row_number, row.suggested_action || "needs_review", row.confidence || 0]));
+            addSection("Odoo Only", ["Date", "Description", "Amount", "Row"], result.ledger_only.map(row => [row.date, row.description, row.amount, row.row_number]));
+
+            const csv = rows.map(row => row.map(csvCell).join(",")).join("\\r\\n");
+            downloadBlob(
+              new Blob(["\\uFEFF", csv], { type: "text/csv;charset=utf-8" }),
+              "bank-reconciliation.csv",
+            );
+          };'''
+
+          text = text[:start] + replacement + text[end:]
+          old_button = '<button onClick={exportExcel} className="px-4 py-2 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 text-sm font-medium hover:bg-emerald-600/30 transition-colors">{t("bankRecon.exportExcel")}</button>'
+          new_button = '<button onClick={exportCsv} className="px-4 py-2 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 text-sm font-medium hover:bg-emerald-600/30 transition-colors">{msg("تصدير CSV آمن", "Export secure CSV")}</button>'
+          if old_button not in text:
+              raise SystemExit("Export button marker not found")
+          text = text.replace(old_button, new_button, 1)
+          path.write_text(text, encoding="utf-8")
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add BOB-2/frontend/src/app/bank-reconciliation/page.tsx
+          git commit -m "replace vulnerable XLSX export with safe CSV"
+          git push origin HEAD:agent/security-hardening-bob2

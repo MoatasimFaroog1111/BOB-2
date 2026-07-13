@@ -40,8 +40,6 @@ def get_current_token_payload(
     session_id = payload.get("sid")
     access_jti = payload.get("jti")
 
-    # Tokens issued by the hardened login flow always contain a server-side session.
-    # Local/test utilities may still create standalone tokens, but production rejects them.
     if not session_id:
         if settings.is_production:
             raise _unauthorized()
@@ -85,12 +83,7 @@ def require_permission(permission: str):
 
 
 def _required_financial_permission(request: Request) -> str:
-    """Map every finance route to a minimum permission.
-
-    This is a deny-by-default backstop for legacy endpoints. Individual endpoints can
-    still declare a stricter dependency, but a newly added mutation can no longer
-    inherit read-only access accidentally.
-    """
+    """Map every finance route to a minimum permission."""
     method = request.method.upper()
     path = request.url.path.lower().rstrip("/")
 
@@ -131,8 +124,6 @@ def _required_financial_permission(request: Request) -> str:
     if any(marker in path for marker in upload_markers):
         return "upload_documents"
 
-    # Every remaining POST/PUT/PATCH/DELETE on a financial router is considered a
-    # financial mutation or an expensive AI operation and requires entry creation.
     return "create_entries"
 
 
@@ -140,6 +131,18 @@ def enforce_financial_route_permission(
     request: Request,
     payload: dict = Depends(get_current_token_payload),
 ) -> dict:
+    # Several legacy ERP modules still address organization 1 internally. Until
+    # those modules are fully parameterized, users from another tenant are denied
+    # instead of being allowed to read or mutate organization 1 data.
+    if payload.get("organization_id") != 1:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "This legacy financial integration is not enabled for the authenticated "
+                "organization. Tenant-isolated journal APIs remain available."
+            ),
+        )
+
     permission = _required_financial_permission(request)
     if not role_has_permission(payload.get("role"), permission):
         raise HTTPException(

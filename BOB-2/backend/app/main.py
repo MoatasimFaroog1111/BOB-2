@@ -14,6 +14,7 @@ from app.core.logging import configure_logging
 from app.db.seed import run_seed
 from app.middleware.audit import AuditLogMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.security.document_processing_guard import install_document_processing_guard
 from app.security.ocr_guard import install_ocr_guard
 
 configure_logging()
@@ -44,6 +45,7 @@ def _run_migrations() -> None:
 async def lifespan(app: FastAPI):
     settings.validate_runtime_security()
     install_ocr_guard()
+    install_document_processing_guard()
     _run_migrations()
     run_seed()
     try:

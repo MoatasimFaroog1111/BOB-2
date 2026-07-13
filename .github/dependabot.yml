@@ -1,0 +1,100 @@
+version: 2
+
+updates:
+  - package-ecosystem: pip
+    directory: /BOB-2/backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Asia/Riyadh
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security
+    groups:
+      python-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      python-runtime-updates:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
+        patterns:
+          - "*"
+    commit-message:
+      prefix: deps(python)
+
+  - package-ecosystem: npm
+    directory: /BOB-2/frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:15"
+      timezone: Asia/Riyadh
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security
+    groups:
+      npm-security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      npm-runtime-updates:
+        applies-to: version-updates
+        update-types:
+          - patch
+          - minor
+        patterns:
+          - "*"
+    commit-message:
+      prefix: deps(npm)
+
+  - package-ecosystem: docker
+    directory: /BOB-2
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:30"
+      timezone: Asia/Riyadh
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security
+    commit-message:
+      prefix: deps(docker)
+
+  - package-ecosystem: docker
+    directory: /BOB-2/frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:45"
+      timezone: Asia/Riyadh
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security
+    commit-message:
+      prefix: deps(frontend-image)
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Asia/Riyadh
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - security
+    groups:
+      actions-updates:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: deps(actions)

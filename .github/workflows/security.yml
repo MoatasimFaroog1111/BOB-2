@@ -48,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "24"
           cache: npm
           cache-dependency-path: BOB-2/frontend/package-lock.json
       - name: Install locked dependencies
@@ -60,14 +60,6 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid
         run: npm run build
 
-  dependency-review:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: high
+# GitHub's dependency-review action requires repository dependency-graph support.
+# Portable, blocking audits are performed above with pip-audit and npm audit so this
+# workflow works consistently without weakening the severity threshold.

@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     GUARDIAN_SEED_PASSWORD: str = ""
 
     MAX_UPLOAD_SIZE_MB: int = 10
+    MAX_REQUEST_SIZE_MB: int = 50
+    MAX_UPLOAD_FILES: int = 20
     MAX_PDF_PAGES: int = 200
     MAX_IMAGE_PIXELS: int = 40_000_000
     MAX_ARCHIVE_FILES: int = 500
@@ -131,6 +133,10 @@ class Settings(BaseSettings):
             errors.append("REQUIRE_MALWARE_SCAN must be true")
         if self.REQUIRE_MALWARE_SCAN and not self.CLAMAV_HOST.strip():
             errors.append("CLAMAV_HOST is required when malware scanning is enabled")
+        if self.MAX_UPLOAD_SIZE_MB <= 0 or self.MAX_REQUEST_SIZE_MB < self.MAX_UPLOAD_SIZE_MB:
+            errors.append("MAX_REQUEST_SIZE_MB must be at least MAX_UPLOAD_SIZE_MB and both must be positive")
+        if self.MAX_UPLOAD_FILES <= 0 or self.MAX_UPLOAD_FILES > 100:
+            errors.append("MAX_UPLOAD_FILES must be between 1 and 100")
 
         database_url_lower = self.DATABASE_URL.lower()
         if database_url_lower.startswith("sqlite"):

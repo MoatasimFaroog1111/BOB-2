@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.logging import configure_logging
 from app.db.seed import run_seed
 from app.middleware.audit import AuditLogMiddleware
+from app.middleware.request_size import RequestSizeLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.security.document_processing_guard import install_document_processing_guard
 from app.security.ocr_guard import install_ocr_guard
@@ -73,6 +74,12 @@ app = FastAPI(
     openapi_url="/openapi.json" if not settings.is_production else None,
 )
 
+# This middleware is intentionally installed first so the subsequently installed
+# audit/security/CORS middleware still wraps and annotates 413 responses.
+app.add_middleware(
+    RequestSizeLimitMiddleware,
+    max_body_bytes=settings.MAX_REQUEST_SIZE_MB * 1024 * 1024,
+)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(AuditLogMiddleware)
 

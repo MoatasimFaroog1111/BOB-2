@@ -34,8 +34,6 @@ class Settings(BaseSettings):
     LOGIN_LOCKOUT_MINUTES: int = 30
     REQUIRE_HTTPS: bool = False
 
-    # Development/test bootstrap is opt-in and requires both values. Production
-    # never creates an owner automatically.
     GUARDIAN_SEED_EMAIL: str = ""
     GUARDIAN_SEED_PASSWORD: str = ""
 
@@ -121,6 +119,8 @@ class Settings(BaseSettings):
         errors: list[str] = []
         if not self.TRUSTED_HOSTS.strip():
             errors.append("TRUSTED_HOSTS is required")
+        if not self.TRUSTED_PROXY_IPS.strip():
+            errors.append("TRUSTED_PROXY_IPS is required")
         if not self.REQUIRE_HTTPS:
             errors.append("REQUIRE_HTTPS must be true")
         if not self.REDIS_URL.strip():

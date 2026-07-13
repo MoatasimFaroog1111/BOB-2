@@ -286,36 +286,51 @@ export default function BankReconciliationPage() {
     }
   };
 
-  const exportExcel = async () => {
-    if (!result) return;
-    try {
-      const XLSX = await import("xlsx");
-      const wb = XLSX.utils.book_new();
-      const journal = result.selected_bank_journal || selectedJournal;
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([
-        ["Bank Journal", journal ? `${journal.journal_name} (${journal.journal_code})` : "—"],
-        [t("bankRecon.dateRangeUsed"), `${result.date_range_used.from || "—"} → ${result.date_range_used.to || "—"}`],
-        [t("bankRecon.statementTotal"), result.statement_total],
-        [t("bankRecon.ledgerTotal"), result.ledger_total],
-        [t("bankRecon.difference"), result.difference],
-        [t("bankRecon.statementCount"), result.statement_count],
-        [t("bankRecon.ledgerCount"), result.ledger_count],
-        [t("bankRecon.matchedCount"), result.matched.length + result.smart_matched.length],
-        [t("bankRecon.bankOnlyCount"), result.statement_only.length],
-        [t("bankRecon.odooOnlyCount"), result.ledger_only.length],
-        ["Footer", "Reconciliation report generated before any manual posting action."],
-      ]), "Summary");
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([
-        ...result.matched.map(row => ({ type: "exact", ...row.statement_txn, odoo_date: row.ledger_txn.date, odoo_description: row.ledger_txn.description })),
-        ...result.smart_matched.map(row => ({ type: "smart", ...row.statement_txn, confidence: row.confidence, reason: row.reason, odoo_date: row.ledger_txn.date, odoo_description: row.ledger_txn.description })),
-      ]), "Matched");
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(result.statement_only), "Bank Only Suggestions");
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(result.ledger_only), "Odoo Only");
-      XLSX.writeFile(wb, "bank-reconciliation.xlsx");
-    } catch {
-      setError(msg("فشل تصدير Excel.", "Excel export failed."));
-    }
+  const exportCsv = () => {
+  if (!result) return;
+
+  const csvCell = (value: unknown) => {
+    let text = String(value ?? "");
+    // Prevent spreadsheet formula injection when the CSV is opened in Excel.
+    if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+    return `"${text.replace(/"/g, '""')}"`;
   };
+  const rows: unknown[][] = [];
+  const addSection = (title: string, headers: unknown[], data: unknown[][]) => {
+    if (rows.length) rows.push([]);
+    rows.push([title]);
+    rows.push(headers);
+    rows.push(...data);
+  };
+
+  const journal = result.selected_bank_journal || selectedJournal;
+  addSection("Summary", ["Field", "Value"], [
+    ["Bank Journal", journal ? `${journal.journal_name} (${journal.journal_code})` : "—"],
+    [t("bankRecon.dateRangeUsed"), `${result.date_range_used.from || "—"} → ${result.date_range_used.to || "—"}`],
+    [t("bankRecon.statementTotal"), result.statement_total],
+    [t("bankRecon.ledgerTotal"), result.ledger_total],
+    [t("bankRecon.difference"), result.difference],
+    [t("bankRecon.statementCount"), result.statement_count],
+    [t("bankRecon.ledgerCount"), result.ledger_count],
+    [t("bankRecon.matchedCount"), result.matched.length + result.smart_matched.length],
+    [t("bankRecon.bankOnlyCount"), result.statement_only.length],
+    [t("bankRecon.odooOnlyCount"), result.ledger_only.length],
+    ["Footer", "Reconciliation report generated before any manual posting action."],
+  ]);
+
+  addSection("Matched", ["Type", "Bank Date", "Bank Description", "Amount", "Odoo Date", "Odoo Description", "Confidence", "Reason"], [
+    ...result.matched.map(row => ["exact", row.statement_txn.date, row.statement_txn.description, row.statement_txn.amount, row.ledger_txn.date, row.ledger_txn.description, 1, "Exact match"]),
+    ...result.smart_matched.map(row => ["smart", row.statement_txn.date, row.statement_txn.description, row.statement_txn.amount, row.ledger_txn.date, row.ledger_txn.description, row.confidence, row.reason]),
+  ]);
+  addSection("Bank Only Suggestions", ["Date", "Description", "Amount", "Row", "Suggested Action", "Confidence"], result.statement_only.map(row => [row.date, row.description, row.amount, row.row_number, row.suggested_action || "needs_review", row.confidence || 0]));
+  addSection("Odoo Only", ["Date", "Description", "Amount", "Row"], result.ledger_only.map(row => [row.date, row.description, row.amount, row.row_number]));
+
+  const csv = rows.map(row => row.map(csvCell).join(",")).join("\r\n");
+  downloadBlob(
+    new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" }),
+    "bank-reconciliation.csv",
+  );
+};
 
   const exportPdf = () => {
     if (!result) return;
@@ -477,7 +492,7 @@ export default function BankReconciliationPage() {
           </div>
 
           <div className="flex flex-wrap gap-3">
-            <button onClick={exportExcel} className="px-4 py-2 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 text-sm font-medium hover:bg-emerald-600/30 transition-colors">{t("bankRecon.exportExcel")}</button>
+            <button onClick={exportCsv} className="px-4 py-2 rounded-lg bg-emerald-600/20 border border-emerald-500/30 text-emerald-400 text-sm font-medium hover:bg-emerald-600/30 transition-colors">{msg("تصدير CSV آمن", "Export secure CSV")}</button>
             <button onClick={exportPdf} className="px-4 py-2 rounded-lg bg-sky-600/20 border border-sky-500/30 text-sky-400 text-sm font-medium hover:bg-sky-600/30 transition-colors">{t("bankRecon.exportPdf")}</button>
             <button disabled={saving || result.report_status === "saved"} onClick={saveReport} className="px-4 py-2 rounded-lg bg-amber-600/20 border border-amber-500/30 text-amber-300 text-sm font-medium hover:bg-amber-600/30 disabled:opacity-40 transition-colors">{saving ? msg("جاري الحفظ...", "Saving...") : msg("حفظ تقرير التسوية", "Save Reconciliation Report")}</button>
           </div>

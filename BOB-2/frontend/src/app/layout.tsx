@@ -1,11 +1,13 @@
 import "./globals.css";
-import { MainNavigation } from "@/components/layout/MainNavigation";
-import GlobalBackButton from "@/components/layout/GlobalBackButton";
+import { Cairo, Outfit } from "next/font/google";
+
+import AuthGate from "@/components/auth/AuthGate";
 import JournalEntrySheetActions from "@/components/accounting/JournalEntrySheetActions";
 import OdooRegistrationSheetMirror from "@/components/accounting/OdooRegistrationSheetMirror";
-import { LanguageProvider } from "@/lib/LanguageContext";
+import GlobalBackButton from "@/components/layout/GlobalBackButton";
+import { MainNavigation } from "@/components/layout/MainNavigation";
 import { CompanyProvider } from "@/lib/CompanyContext";
-import { Cairo, Outfit } from "next/font/google";
+import { LanguageProvider } from "@/lib/LanguageContext";
 
 const cairo = Cairo({
   subsets: ["arabic"],
@@ -21,26 +23,28 @@ const outfit = Outfit({
 
 export default function RootLayout({
   children,
-}: {
+}: Readonly<{
   children: React.ReactNode;
-}) {
+}>) {
   return (
-    <LanguageProvider>
-      <CompanyProvider>
-        <html lang="ar" dir="rtl" className={`${cairo.variable} ${outfit.variable}`}>
-          <body className="h-screen overflow-hidden">
-            <main className="guardian-shell flex h-screen w-screen overflow-hidden text-white">
-              <MainNavigation />
-              <section className="flex-1 h-screen overflow-hidden flex flex-col">
-                <GlobalBackButton />
-                {children}
-              </section>
-              <JournalEntrySheetActions />
-              <OdooRegistrationSheetMirror />
-            </main>
-          </body>
-        </html>
-      </CompanyProvider>
-    </LanguageProvider>
+    <html lang="ar" dir="rtl" className={`${cairo.variable} ${outfit.variable}`}>
+      <body className="h-screen overflow-hidden">
+        <LanguageProvider>
+          <AuthGate>
+            <CompanyProvider>
+              <main className="guardian-shell flex h-screen w-screen overflow-hidden text-white">
+                <MainNavigation />
+                <section className="flex-1 h-screen overflow-hidden flex flex-col">
+                  <GlobalBackButton />
+                  {children}
+                </section>
+                <JournalEntrySheetActions />
+                <OdooRegistrationSheetMirror />
+              </main>
+            </CompanyProvider>
+          </AuthGate>
+        </LanguageProvider>
+      </body>
+    </html>
   );
 }

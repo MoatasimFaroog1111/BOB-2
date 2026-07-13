@@ -6,9 +6,15 @@ class TestSecurityHeaders:
         resp = client.get("/health")
         assert resp.headers["X-Frame-Options"] == "DENY"
         assert resp.headers["X-Content-Type-Options"] == "nosniff"
-        assert resp.headers["X-XSS-Protection"] == "1; mode=block"
-        assert resp.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
-        assert "Content-Security-Policy" in resp.headers
+        # Modern browsers ignore the legacy XSS auditor; disabling it avoids
+        # auditor-induced vulnerabilities while CSP remains authoritative.
+        assert resp.headers["X-XSS-Protection"] == "0"
+        assert resp.headers["Referrer-Policy"] == "no-referrer"
+        csp = resp.headers["Content-Security-Policy"]
+        assert "unsafe-inline" not in csp
+        assert "unsafe-eval" not in csp
+        assert "object-src 'none'" in csp
+        assert "frame-ancestors 'none'" in csp
         assert "Permissions-Policy" in resp.headers
         assert resp.headers["Server"] == "GuardianAI"
 

@@ -79,13 +79,30 @@ jobs:
           SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
           FRONTEND_ORIGIN: https://app.example.invalid
           TRUSTED_HOSTS: app.example.invalid,api.example.invalid
+          TRUSTED_PROXY_IPS: 127.0.0.1/32
           NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid
         run: |
           docker compose config --quiet
-          rendered="$(docker compose config)"
-          if grep -Eq '(^|[[:space:]])5432:5432|0\.0\.0\.0:5432' <<<"$rendered"; then
-            echo "PostgreSQL must not be published to the host"
-            exit 1
-          fi
-          grep -q '127.0.0.1:8000' <<<"$rendered"
-          grep -q '127.0.0.1:3000' <<<"$rendered"
+          docker compose config --format json > compose.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          config = json.loads(Path("compose.json").read_text())
+          services = config["services"]
+
+          assert not services["db"].get("ports"), "PostgreSQL must not publish a host port"
+          assert not services["redis"].get("ports"), "Redis must not publish a host port"
+          assert not services["clamav"].get("ports"), "ClamAV must not publish a host port"
+          assert config["networks"]["backend_private"].get("internal") is True
+
+          def assert_loopback(service_name: str, published: str) -> None:
+              ports = services[service_name].get("ports", [])
+              assert len(ports) == 1, f"{service_name} must publish exactly one local port"
+              port = ports[0]
+              assert port.get("host_ip") == "127.0.0.1", f"{service_name} must bind to loopback"
+              assert str(port.get("published")) == published
+
+          assert_loopback("backend", "8000")
+          assert_loopback("frontend", "3000")
+          PY

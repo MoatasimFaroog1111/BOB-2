@@ -1,0 +1,56 @@
+name: Update authenticated bank API tests
+
+on:
+  push:
+    branches:
+      - agent/security-hardening-bob2
+    paths:
+      - .github/workflows/update-authenticated-bank-tests.yml
+
+permissions:
+  contents: write
+
+jobs:
+  update-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/security-hardening-bob2
+      - name: Require real bearer tokens in protected endpoint tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("BOB-2/backend/tests/test_bank_reconciliation_full.py")
+          text = path.read_text(encoding="utf-8")
+
+          replacements = {
+              "def test_empty_upload_via_api(self, client):":
+                  "def test_empty_upload_via_api(self, client, auth_headers):",
+              "def test_bank_reconciliation_no_erp_connection(self, client, tmp_path):":
+                  "def test_bank_reconciliation_no_erp_connection(self, client, tmp_path, auth_headers):",
+              "def test_parse_only_works_without_erp(self, client, tmp_path):":
+                  "def test_parse_only_works_without_erp(self, client, tmp_path, auth_headers):",
+              'files={"statement": ("empty.csv", empty, "text/csv")},\n        )':
+                  'files={"statement": ("empty.csv", empty, "text/csv")},\n            headers=auth_headers,\n        )',
+              'files={"statement": ("stmt.csv", f, "text/csv")},\n            )\n        assert res.status_code == 400':
+                  'files={"statement": ("stmt.csv", f, "text/csv")},\n                headers=auth_headers,\n            )\n        assert res.status_code == 400',
+              'files={"statement": ("stmt.csv", f, "text/csv")},\n            )\n        assert res.status_code == 200':
+                  'files={"statement": ("stmt.csv", f, "text/csv")},\n                headers=auth_headers,\n            )\n        assert res.status_code == 200',
+          }
+
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"Expected test marker not found: {old[:80]!r}")
+              text = text.replace(old, new, 1)
+
+          path.write_text(text, encoding="utf-8")
+          PY
+      - name: Commit test update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add BOB-2/backend/tests/test_bank_reconciliation_full.py
+          git commit -m "authenticate protected bank reconciliation tests"
+          git push origin HEAD:agent/security-hardening-bob2

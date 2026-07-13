@@ -81,9 +81,11 @@ services:
       CLAMAV_PORT: "3310"
       REQUIRE_MALWARE_SCAN: "true"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      GUARDIAN_SEED_EMAIL: ""
       GUARDIAN_SEED_PASSWORD: ""
+    # Only a local reverse proxy/application gateway should reach these ports.
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "${BACKEND_BIND_IP:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     volumes:
       - storage:/app/storage
     networks:
@@ -107,7 +109,7 @@ services:
     depends_on:
       - backend
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "${FRONTEND_BIND_IP:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
     networks:
       - public
     cap_drop:

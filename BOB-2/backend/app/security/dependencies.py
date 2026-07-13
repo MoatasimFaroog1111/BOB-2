@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -82,3 +82,66 @@ def require_permission(permission: str):
         return payload
 
     return checker
+
+
+def _required_financial_permission(request: Request) -> str:
+    """Map every finance route to a minimum permission.
+
+    This is a deny-by-default backstop for legacy endpoints. Individual endpoints can
+    still declare a stricter dependency, but a newly added mutation can no longer
+    inherit read-only access accidentally.
+    """
+    method = request.method.upper()
+    path = request.url.path.lower().rstrip("/")
+
+    if method in {"GET", "HEAD", "OPTIONS"}:
+        return "view_financials"
+
+    if path.startswith("/api/v1/communication-tools"):
+        return "approve_actions"
+
+    erp_settings_paths = {
+        "/api/v1/erp/connection",
+        "/api/v1/erp/test-connection",
+        "/api/v1/erp/test-saved",
+        "/api/v1/erp/discover",
+    }
+    if path in erp_settings_paths or method == "DELETE" and path.startswith("/api/v1/erp/connection"):
+        return "manage_settings"
+
+    posting_markers = (
+        "/journal-entry/",
+        "/bank-posting",
+        "/post-entry",
+        "/post-selected",
+        "/post-all",
+        "/reverse-and-replace",
+        "/reset-to-draft",
+    )
+    if any(marker in path for marker in posting_markers):
+        return "post_odoo_entries"
+
+    upload_markers = (
+        "/upload",
+        "/match-documents",
+        "/bank-statement-parse",
+    )
+    if any(marker in path for marker in upload_markers):
+        return "upload_documents"
+
+    # Every remaining POST/PUT/PATCH/DELETE on a financial router is considered a
+    # financial mutation or an expensive AI operation and requires entry creation.
+    return "create_entries"
+
+
+def enforce_financial_route_permission(
+    request: Request,
+    payload: dict = Depends(get_current_token_payload),
+) -> dict:
+    permission = _required_financial_permission(request)
+    if not role_has_permission(payload.get("role"), permission):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Insufficient role permissions for this financial operation ({permission}).",
+        )
+    return payload

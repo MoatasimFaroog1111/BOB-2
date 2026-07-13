@@ -238,10 +238,13 @@ def refresh_access_token(
 
 
 @router.get("/roles")
-def list_roles():
+def list_roles(
+    current_user: dict = Depends(require_permission("manage_users")),
+):
     return {
         "roles": [role.value for role in UserRole],
         "note": "Enterprise RBAC foundation is active.",
+        "requested_by": current_user.get("sub"),
     }
 
 

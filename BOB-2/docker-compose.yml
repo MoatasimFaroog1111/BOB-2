@@ -1,25 +1,25 @@
 version: "3.9"
 
 services:
-  # ── PostgreSQL ─────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: guardian
-      POSTGRES_PASSWORD: guardian
-      POSTGRES_DB: guardianai
+      POSTGRES_USER: ${POSTGRES_USER:-guardian}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-guardianai}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    expose:
+      - "5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U guardian -d guardianai"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-guardian} -d ${POSTGRES_DB:-guardianai}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - internal
 
-  # ── Backend (FastAPI) ──────────────────────────────────────
   backend:
     build:
       context: .
@@ -31,33 +31,41 @@ services:
         condition: service_healthy
     environment:
       APP_ENV: production
-      DATABASE_URL: postgresql+psycopg2://guardian:guardian@db:5432/guardianai
-      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env — generate with: openssl rand -hex 64}
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
-      CORS_ORIGINS: ${CORS_ORIGINS:-}
-      TRUSTED_HOSTS: ${TRUSTED_HOSTS:-}
-      REQUIRE_HTTPS: ${REQUIRE_HTTPS:-false}
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-guardian}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-guardianai}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required; generate with openssl rand -hex 64}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?FRONTEND_ORIGIN is required}
+      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:?TRUSTED_HOSTS is required}
+      REQUIRE_HTTPS: "true"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-      GUARDIAN_SEED_PASSWORD: ${GUARDIAN_SEED_PASSWORD:-}
+      GUARDIAN_SEED_EMAIL: ""
+      GUARDIAN_SEED_PASSWORD: ""
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
     volumes:
       - storage:/app/storage
+    networks:
+      - internal
+      - edge
 
-  # ── Frontend (Next.js) ─────────────────────────────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # NEXT_PUBLIC_* vars are baked in at build time, so they must be passed
-        # as build args. Must be the externally-accessible backend URL.
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?NEXT_PUBLIC_API_BASE_URL is required}
     restart: unless-stopped
     depends_on:
       - backend
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    networks:
+      - edge
+
+networks:
+  internal:
+    internal: true
+  edge:
 
 volumes:
   pgdata:

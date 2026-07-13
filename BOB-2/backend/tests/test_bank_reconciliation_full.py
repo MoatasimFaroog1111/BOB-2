@@ -165,11 +165,12 @@ class TestEmptyFile:
         txns = parse_csv_file(str(p))
         assert txns == []
 
-    def test_empty_upload_via_api(self, client):
+    def test_empty_upload_via_api(self, client, auth_headers):
         empty = io.BytesIO(b"")
         res = client.post(
             "/api/v1/erp/bank-statement-parse",
             files={"statement": ("empty.csv", empty, "text/csv")},
+            headers=auth_headers,
         )
         assert res.status_code in (400, 422)
 
@@ -240,7 +241,7 @@ class TestDateWindowMatch:
 
 
 class TestOdooUnavailable:
-    def test_bank_reconciliation_no_erp_connection(self, client, tmp_path):
+    def test_bank_reconciliation_no_erp_connection(self, client, tmp_path, auth_headers):
         p = tmp_path / "stmt.csv"
         _write_csv(
             [["Date", "Description", "Amount"], ["2026-01-05", "ATM", "-500"]],
@@ -250,12 +251,13 @@ class TestOdooUnavailable:
             res = client.post(
                 "/api/v1/erp/bank-reconciliation",
                 files={"statement": ("stmt.csv", f, "text/csv")},
+                headers=auth_headers,
             )
         assert res.status_code == 400
         body = res.json()
         assert "detail" in body
 
-    def test_parse_only_works_without_erp(self, client, tmp_path):
+    def test_parse_only_works_without_erp(self, client, tmp_path, auth_headers):
         p = tmp_path / "stmt.csv"
         _write_csv(
             [["Date", "Description", "Amount"], ["2026-01-05", "Salary", "5000"]],
@@ -265,6 +267,7 @@ class TestOdooUnavailable:
             res = client.post(
                 "/api/v1/erp/bank-statement-parse",
                 files={"statement": ("stmt.csv", f, "text/csv")},
+                headers=auth_headers,
             )
         assert res.status_code == 200
         data = res.json()

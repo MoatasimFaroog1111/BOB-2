@@ -1,14 +1,29 @@
+from datetime import datetime
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.db.database import get_db
+from app.models.core import AuthSession, User
 from app.security.auth import decode_access_token
 from app.security.roles import role_has_permission
 
 security = HTTPBearer(auto_error=False)
 
 
+def _unauthorized() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired authentication token.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 def get_current_token_payload(
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
+    db: Session = Depends(get_db),
 ) -> dict:
     if credentials is None or not credentials.credentials:
         raise HTTPException(
@@ -18,13 +33,42 @@ def get_current_token_payload(
         )
 
     try:
-        return decode_access_token(credentials.credentials)
+        payload = decode_access_token(credentials.credentials)
     except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired authentication token.",
-            headers={"WWW-Authenticate": "Bearer"},
+        raise _unauthorized()
+
+    session_id = payload.get("sid")
+    access_jti = payload.get("jti")
+
+    # Tokens issued by the hardened login flow always contain a server-side session.
+    # Local/test utilities may still create standalone tokens, but production rejects them.
+    if not session_id:
+        if settings.is_production:
+            raise _unauthorized()
+        return payload
+
+    auth_session = (
+        db.query(AuthSession)
+        .filter(
+            AuthSession.id == session_id,
+            AuthSession.access_jti == access_jti,
         )
+        .first()
+    )
+    if (
+        not auth_session
+        or auth_session.revoked_at is not None
+        or auth_session.expires_at <= datetime.utcnow()
+    ):
+        raise _unauthorized()
+
+    user = db.query(User).filter(User.id == auth_session.user_id).first()
+    if not user or not user.is_active or user.email != payload.get("sub"):
+        raise _unauthorized()
+
+    payload["user_id"] = user.id
+    payload["organization_id"] = user.organization_id
+    return payload
 
 
 def require_permission(permission: str):

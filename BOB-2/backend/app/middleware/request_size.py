@@ -1,7 +1,7 @@
-"""ASGI request body limits that work with Content-Length and chunked uploads."""
+"""ASGI request limits for Content-Length, chunked bodies, and multipart files."""
 
 import json
-from typing import Awaitable, Callable
+import re
 
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -10,10 +10,18 @@ class RequestBodyTooLarge(Exception):
     pass
 
 
+class TooManyUploadFiles(Exception):
+    pass
+
+
+_FILENAME_PARAMETER = re.compile(br"filename\*?\s*=", re.IGNORECASE)
+
+
 class RequestSizeLimitMiddleware:
-    def __init__(self, app: ASGIApp, max_body_bytes: int):
+    def __init__(self, app: ASGIApp, max_body_bytes: int, max_upload_files: int):
         self.app = app
         self.max_body_bytes = max_body_bytes
+        self.max_upload_files = max_upload_files
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope.get("method", "GET").upper() in {
@@ -24,10 +32,7 @@ class RequestSizeLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        headers = {
-            key.lower(): value
-            for key, value in scope.get("headers", [])
-        }
+        headers = {key.lower(): value for key, value in scope.get("headers", [])}
         content_length = headers.get(b"content-length")
         if content_length:
             try:
@@ -38,16 +43,35 @@ class RequestSizeLimitMiddleware:
                 await self._send_json(send, 400, "Invalid Content-Length header")
                 return
 
+        content_type = headers.get(b"content-type", b"").lower()
+        is_multipart = b"multipart/form-data" in content_type
         received_bytes = 0
+        file_count = 0
+        scan_tail = b""
         response_started = False
 
         async def limited_receive() -> Message:
-            nonlocal received_bytes
+            nonlocal received_bytes, file_count, scan_tail
             message = await receive()
-            if message["type"] == "http.request":
-                received_bytes += len(message.get("body", b""))
-                if received_bytes > self.max_body_bytes:
-                    raise RequestBodyTooLarge
+            if message["type"] != "http.request":
+                return message
+
+            body = message.get("body", b"")
+            received_bytes += len(body)
+            if received_bytes > self.max_body_bytes:
+                raise RequestBodyTooLarge
+
+            if is_multipart and body:
+                combined = scan_tail + body
+                # Keep enough trailing bytes to detect a filename parameter split
+                # across ASGI chunks; process the complete tail on the final chunk.
+                keep = 0 if not message.get("more_body", False) else 64
+                cutoff = max(0, len(combined) - keep)
+                file_count += len(_FILENAME_PARAMETER.findall(combined[:cutoff]))
+                scan_tail = combined[cutoff:]
+                if file_count > self.max_upload_files:
+                    raise TooManyUploadFiles
+
             return message
 
         async def tracked_send(message: Message) -> None:
@@ -61,6 +85,13 @@ class RequestSizeLimitMiddleware:
         except RequestBodyTooLarge:
             if not response_started:
                 await self._send_too_large(send)
+        except TooManyUploadFiles:
+            if not response_started:
+                await self._send_json(
+                    send,
+                    413,
+                    f"Multipart request exceeds the maximum of {self.max_upload_files} files",
+                )
 
     async def _send_too_large(self, send: Send) -> None:
         await self._send_json(

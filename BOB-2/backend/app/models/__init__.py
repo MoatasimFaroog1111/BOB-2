@@ -15,6 +15,7 @@ from app.models.core import (
     JournalEntryRecord,
     Organization,
     User,
+    VectorRecord,
 )
 
 __all__ = [
@@ -32,4 +33,5 @@ __all__ = [
     "JournalEntryRecord",
     "Organization",
     "User",
+    "VectorRecord",
 ]

@@ -4,7 +4,7 @@ import axios from "axios";
 const API_BASE_URL = (process.env.REACT_APP_API_URL || "").replace(/\/$/, "");
 
 function getAccessToken() {
-  return sessionStorage.getItem("access_token") || localStorage.getItem("access_token");
+  return sessionStorage.getItem("access_token");
 }
 
 function JournalView() {

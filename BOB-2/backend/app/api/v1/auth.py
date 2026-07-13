@@ -1,13 +1,29 @@
+import hmac
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from jose import JWTError
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.database import get_db
-from app.models.core import User
-from app.security.auth import create_access_token, create_refresh_token, verify_password, validate_password_strength
-from app.security.dependencies import require_permission, get_current_token_payload
+from app.models.core import AuthSession, User
+from app.security.auth import (
+    create_access_token,
+    create_refresh_token,
+    decode_refresh_token,
+    hash_token,
+    new_token_id,
+    verify_password,
+)
+from app.security.dependencies import get_current_token_payload, require_permission
+from app.security.rate_limiter import (
+    get_client_identifier,
+    get_device_identifier,
+    login_rate_limiter,
+)
 from app.security.roles import UserRole, role_has_permission
-from app.security.rate_limiter import login_rate_limiter, get_client_identifier
 
 router = APIRouter()
 
@@ -26,120 +42,203 @@ class LoginResponse(BaseModel):
 
 
 class RefreshTokenRequest(BaseModel):
-    refresh_token: str
+    refresh_token: str = Field(..., min_length=32, max_length=4096)
 
 
 class RefreshTokenResponse(BaseModel):
     access_token: str
+    refresh_token: str
     token_type: str = "bearer"
     expires_in: int
+
+
+def _invalid_credentials() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid email or password.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _invalid_refresh() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid or expired refresh token.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _auth_limit_identifiers(request: Request, email: str) -> list[str]:
+    ip = get_client_identifier(request)
+    device = get_device_identifier(request)
+    normalized_email = email.lower()
+    return [
+        f"ip:{ip}",
+        f"account:{normalized_email}",
+        f"account-device:{normalized_email}:{device}",
+    ]
+
+
+def _record_attempts(identifiers: list[str], success: bool) -> None:
+    for identifier in identifiers:
+        login_rate_limiter.record_attempt(identifier, success=success)
+
+
+def _revoke_family(db: Session, family_id: str) -> None:
+    db.query(AuthSession).filter(
+        AuthSession.family_id == family_id,
+        AuthSession.revoked_at.is_(None),
+    ).update({"revoked_at": datetime.utcnow()}, synchronize_session=False)
+    db.commit()
 
 
 @router.post("/login", response_model=LoginResponse)
 def login(
     request: Request,
     payload: LoginRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    # Get client identifier for rate limiting (IP + email combination)
-    ip_identifier = get_client_identifier(request)
-    email_identifier = payload.email.lower()
-    combined_identifier = f"{ip_identifier}:{email_identifier}"
+    identifiers = _auth_limit_identifiers(request, payload.email)
+    for identifier in identifiers:
+        login_rate_limiter.check_rate_limit(identifier)
 
-    # Check rate limit
-    login_rate_limiter.check_rate_limit(combined_identifier)
-    login_rate_limiter.check_rate_limit(ip_identifier)  # Also check by IP alone
+    user = db.query(User).filter(User.email == payload.email.lower()).first()
+    if not user or not verify_password(payload.password, user.hashed_password):
+        _record_attempts(identifiers, success=False)
+        raise _invalid_credentials()
 
-    # Generic error message to prevent user enumeration
-    invalid_credentials = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid email or password.",
-        headers={"WWW-Authenticate": "Bearer"},
+    if not user.is_active:
+        _record_attempts(identifiers, success=False)
+        # Keep the external response generic to avoid account-status enumeration.
+        raise _invalid_credentials()
+
+    _record_attempts(identifiers, success=True)
+
+    session_id = new_token_id()
+    family_id = new_token_id()
+    access_jti = new_token_id()
+    refresh_jti = new_token_id()
+
+    access_token = create_access_token(
+        subject=user.email,
+        role=user.role,
+        session_id=session_id,
+        jti=access_jti,
+    )
+    refresh_token = create_refresh_token(
+        subject=user.email,
+        session_id=session_id,
+        family_id=family_id,
+        jti=refresh_jti,
     )
 
-    user = db.query(User).filter(User.email == payload.email).first()
-
-    # Record failed attempt if user not found
-    if not user:
-        login_rate_limiter.record_attempt(combined_identifier, success=False)
-        login_rate_limiter.record_attempt(ip_identifier, success=False)
-        raise invalid_credentials
-
-    # Verify password
-    if not verify_password(payload.password, user.hashed_password):
-        login_rate_limiter.record_attempt(combined_identifier, success=False)
-        login_rate_limiter.record_attempt(ip_identifier, success=False)
-        raise invalid_credentials
-
-    # Check if account is active
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account has been disabled. Please contact your administrator.",
-        )
-
-    # Record successful login
-    login_rate_limiter.record_attempt(combined_identifier, success=True)
-    login_rate_limiter.record_attempt(ip_identifier, success=True)
-
-    # Generate tokens
-    access_token = create_access_token(subject=user.email, role=user.role)
-    refresh_token = create_refresh_token(subject=user.email)
-
-    from app.core.config import settings
+    auth_session = AuthSession(
+        id=session_id,
+        family_id=family_id,
+        user_id=user.id,
+        access_jti=access_jti,
+        refresh_jti=refresh_jti,
+        refresh_token_hash=hash_token(refresh_token),
+        expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        ip_address=get_client_identifier(request),
+        user_agent=request.headers.get("User-Agent", "")[:512] or None,
+    )
+    db.add(auth_session)
+    db.commit()
 
     return LoginResponse(
         access_token=access_token,
         refresh_token=refresh_token,
         role=user.role,
-        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
 
 
 @router.post("/refresh", response_model=RefreshTokenResponse)
 def refresh_access_token(
+    request: Request,
     payload: RefreshTokenRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Refresh access token using a valid refresh token."""
-    from app.security.auth import decode_refresh_token
-    from jose import JWTError
-    from app.core.config import settings
-
     try:
-        # Decode and validate refresh token
         token_data = decode_refresh_token(payload.refresh_token)
-        email = token_data.get("sub")
-
-        if not email:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid refresh token.",
-            )
-
-        # Get user from database
-        user = db.query(User).filter(User.email == email).first()
-
-        if not user or not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found or inactive.",
-            )
-
-        # Generate new access token
-        new_access_token = create_access_token(subject=user.email, role=user.role)
-
-        return RefreshTokenResponse(
-            access_token=new_access_token,
-            token_type="bearer",
-            expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60
-        )
-
     except JWTError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired refresh token.",
+        raise _invalid_refresh()
+
+    email = token_data.get("sub")
+    session_id = token_data.get("sid")
+    family_id = token_data.get("fid")
+    presented_jti = token_data.get("jti")
+    if not all([email, session_id, family_id, presented_jti]):
+        raise _invalid_refresh()
+
+    auth_session = (
+        db.query(AuthSession)
+        .filter(
+            AuthSession.id == session_id,
+            AuthSession.family_id == family_id,
         )
+        .first()
+    )
+    if not auth_session:
+        raise _invalid_refresh()
+
+    stored_hash = auth_session.refresh_token_hash
+    presented_hash = hash_token(payload.refresh_token)
+    token_matches = (
+        auth_session.refresh_jti == presented_jti
+        and hmac.compare_digest(stored_hash, presented_hash)
+    )
+
+    if (
+        auth_session.revoked_at is not None
+        or auth_session.expires_at <= datetime.utcnow()
+        or not token_matches
+    ):
+        # A validly signed token that no longer matches the current token is a reuse
+        # signal. Revoke the complete token family so a stolen token cannot persist.
+        _revoke_family(db, family_id)
+        raise _invalid_refresh()
+
+    current_user_agent = request.headers.get("User-Agent", "")[:512] or None
+    if auth_session.user_agent and current_user_agent != auth_session.user_agent:
+        _revoke_family(db, family_id)
+        raise _invalid_refresh()
+
+    user = db.query(User).filter(User.id == auth_session.user_id).first()
+    if not user or not user.is_active or user.email != email:
+        _revoke_family(db, family_id)
+        raise _invalid_refresh()
+
+    new_access_jti = new_token_id()
+    new_refresh_jti = new_token_id()
+    new_access_token = create_access_token(
+        subject=user.email,
+        role=user.role,
+        session_id=auth_session.id,
+        jti=new_access_jti,
+    )
+    new_refresh_token = create_refresh_token(
+        subject=user.email,
+        session_id=auth_session.id,
+        family_id=auth_session.family_id,
+        jti=new_refresh_jti,
+    )
+
+    # Rotation is atomic: the old refresh token ceases to be valid immediately.
+    auth_session.access_jti = new_access_jti
+    auth_session.refresh_jti = new_refresh_jti
+    auth_session.refresh_token_hash = hash_token(new_refresh_token)
+    auth_session.last_used_at = datetime.utcnow()
+    auth_session.ip_address = get_client_identifier(request)
+    auth_session.user_agent = current_user_agent
+    db.commit()
+
+    return RefreshTokenResponse(
+        access_token=new_access_token,
+        refresh_token=new_refresh_token,
+        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
 
 
 @router.get("/roles")
@@ -153,9 +252,8 @@ def list_roles():
 @router.get("/check-permission/{permission}")
 def check_permission(
     permission: str,
-    current_user: dict = Depends(require_permission("manage_users"))
+    current_user: dict = Depends(require_permission("manage_users")),
 ):
-    """Check if current user has a specific permission."""
     return {
         "requested_permission": permission,
         "current_role": current_user.get("role"),
@@ -164,12 +262,15 @@ def check_permission(
 
 
 @router.post("/logout")
-def logout(current_user: dict = Depends(get_current_token_payload)):
-    """
-    Logout endpoint - in a stateless JWT system, this is mainly for client-side cleanup.
-    In a full implementation, you might want to maintain a token blacklist.
-    """
-    return {
-        "message": "Logout successful. Please clear your tokens on the client side.",
-        "user": current_user.get("sub"),
-    }
+def logout(
+    current_user: dict = Depends(get_current_token_payload),
+    db: Session = Depends(get_db),
+):
+    session_id = current_user.get("sid")
+    if session_id:
+        auth_session = db.query(AuthSession).filter(AuthSession.id == session_id).first()
+        if auth_session and auth_session.revoked_at is None:
+            auth_session.revoked_at = datetime.utcnow()
+            db.commit()
+
+    return {"message": "Logout successful."}

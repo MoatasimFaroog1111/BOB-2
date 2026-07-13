@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     LOGIN_LOCKOUT_MINUTES: int = 30
     REQUIRE_HTTPS: bool = False
 
+    # Development/test bootstrap is opt-in and requires both values. Production
+    # never creates an owner automatically.
+    GUARDIAN_SEED_EMAIL: str = ""
     GUARDIAN_SEED_PASSWORD: str = ""
 
     MAX_UPLOAD_SIZE_MB: int = 10
@@ -60,17 +63,10 @@ class Settings(BaseSettings):
     ACCOUNTING_LLM_TIMEOUT_SECONDS: int = 45
 
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-m3"
-    CHROMA_PERSIST_DIR: str = ""
 
     @property
     def storage_path(self) -> Path:
         return Path(self.STORAGE_DIR)
-
-    @property
-    def chroma_persist_path(self) -> str:
-        if self.CHROMA_PERSIST_DIR:
-            return self.CHROMA_PERSIST_DIR
-        return str(self.storage_path / "chroma_db")
 
     @property
     def is_production(self) -> bool:
@@ -142,6 +138,8 @@ class Settings(BaseSettings):
         if "guardian:guardian@" in database_url_lower:
             errors.append("default database credentials are forbidden")
 
+        if self.GUARDIAN_SEED_EMAIL or self.GUARDIAN_SEED_PASSWORD:
+            errors.append("automatic owner seeding is forbidden in production")
         if self.GUARDIAN_SEED_PASSWORD in {"Owner@Seed#2026!", "guardian", "password"}:
             errors.append("known/default seed passwords are forbidden")
 

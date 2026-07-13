@@ -4,7 +4,8 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWTError
 
 from app.core.config import settings
 
@@ -73,7 +74,7 @@ def create_access_token(
 ) -> str:
     now = datetime.now(timezone.utc)
     expire = now + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
-    payload = {
+    payload: dict[str, object] = {
         "sub": subject,
         "role": role,
         "exp": expire,
@@ -96,7 +97,7 @@ def create_refresh_token(
 ) -> str:
     now = datetime.now(timezone.utc)
     expire = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    payload = {
+    payload: dict[str, object] = {
         "sub": subject,
         "exp": expire,
         "iat": now,
@@ -117,17 +118,25 @@ def _decode_token(token: str, expected_type: str) -> dict:
             token,
             settings.SECRET_KEY,
             algorithms=[ALGORITHM],
-            options={"require_sub": True, "require_exp": True, "require_iat": True},
+            options={
+                "require": ["sub", "exp", "iat", "nbf", "jti", "type"],
+                "verify_signature": True,
+                "verify_exp": True,
+                "verify_iat": True,
+                "verify_nbf": True,
+            },
         )
         if payload.get("type") != expected_type:
-            raise JWTError("Invalid token type")
-        if not payload.get("jti"):
-            raise JWTError("Missing token identifier")
+            raise PyJWTError("Invalid token type")
+        if not isinstance(payload.get("sub"), str) or not payload["sub"]:
+            raise PyJWTError("Invalid token subject")
+        if not isinstance(payload.get("jti"), str) or not payload["jti"]:
+            raise PyJWTError("Invalid token identifier")
         return payload
-    except JWTError:
+    except PyJWTError:
         raise
     except Exception as exc:
-        raise JWTError("Token validation failed") from exc
+        raise PyJWTError("Token validation failed") from exc
 
 
 def decode_access_token(token: str) -> dict:

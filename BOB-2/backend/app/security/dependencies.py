@@ -94,20 +94,22 @@ def _required_financial_permission(request: Request) -> str:
     method = request.method.upper()
     path = request.url.path.lower().rstrip("/")
 
-    if method in {"GET", "HEAD", "OPTIONS"}:
-        return "view_financials"
-
-    if path.startswith("/api/v1/communication-tools"):
-        return "approve_actions"
-
     erp_settings_paths = {
         "/api/v1/erp/connection",
         "/api/v1/erp/test-connection",
         "/api/v1/erp/test-saved",
         "/api/v1/erp/discover",
     }
-    if path in erp_settings_paths or method == "DELETE" and path.startswith("/api/v1/erp/connection"):
+    if path in erp_settings_paths or (
+        method == "DELETE" and path.startswith("/api/v1/erp/connection")
+    ):
         return "manage_settings"
+
+    if method in {"GET", "HEAD", "OPTIONS"}:
+        return "view_financials"
+
+    if path.startswith("/api/v1/communication-tools"):
+        return "approve_actions"
 
     posting_markers = (
         "/journal-entry/",

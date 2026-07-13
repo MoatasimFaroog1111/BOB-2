@@ -79,6 +79,7 @@ app = FastAPI(
 app.add_middleware(
     RequestSizeLimitMiddleware,
     max_body_bytes=settings.MAX_REQUEST_SIZE_MB * 1024 * 1024,
+    max_upload_files=settings.MAX_UPLOAD_FILES,
 )
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(AuditLogMiddleware)

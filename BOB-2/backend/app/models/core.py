@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -126,3 +126,25 @@ class JournalEntryRecord(Base, TimestampMixin):
     lines: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
     total_debit: Mapped[float] = mapped_column(Float, nullable=False)
     total_credit: Mapped[float] = mapped_column(Float, nullable=False)
+
+
+class VectorRecord(Base, TimestampMixin):
+    """Tenant-isolated embedding storage without an exposed vector database server."""
+
+    __tablename__ = "vector_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "collection_name",
+            "document_key",
+            name="uq_vector_records_tenant_collection_key",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
+    collection_name: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
+    document_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    document: Mapped[str] = mapped_column(Text, nullable=False)
+    record_metadata: Mapped[dict] = mapped_column(JSON, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(JSON, nullable=False)

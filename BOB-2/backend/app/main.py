@@ -14,6 +14,7 @@ from app.core.logging import configure_logging
 from app.db.seed import run_seed
 from app.middleware.audit import AuditLogMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
+from app.security.ocr_guard import install_ocr_guard
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -41,9 +42,8 @@ def _run_migrations() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Production must never start with optional or unsafe security controls.
     settings.validate_runtime_security()
-
+    install_ocr_guard()
     _run_migrations()
     run_seed()
     try:
@@ -91,7 +91,6 @@ app.add_middleware(
 )
 
 if settings.is_production:
-    # TRUSTED_HOSTS is mandatory in production and validated before serving traffic.
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=settings.trusted_host_list,

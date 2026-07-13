@@ -8,22 +8,23 @@ sqlalchemy==2.0.41
 psycopg2-binary==2.9.10
 alembic==1.16.2
 
-python-jose[cryptography]==3.5.0
+PyJWT[crypto]==2.13.0
 bcrypt==4.3.0
-cryptography==45.0.4
+cryptography==49.0.0
 redis==6.2.0
 clamd==1.0.2
 
 pydantic[email]==2.12.5
 pydantic-settings==2.10.1
-python-multipart==0.0.20
+python-multipart==0.0.32
 
 PyMuPDF==1.26.1
-Pillow==11.2.1
+Pillow==12.3.0
 pytesseract==0.3.13
 openpyxl==3.1.5
 
-pytest==8.4.1
+pytest==9.1.1
 httpx==0.28.1
 
-sentence-transformers==4.1.0
+sentence-transformers==5.6.0
+transformers==5.13.1

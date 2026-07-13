@@ -17,17 +17,18 @@ from app.api.v1.erp_partners import router as erp_partners_router
 from app.api.v1.journal import router as journal_router
 from app.api.v1.journal_entry_actions import router as journal_entry_actions_router
 from app.api.v1.system import router as system_router
-from app.security.dependencies import require_permission
+from app.security.dependencies import enforce_financial_route_permission
 
 api_router = APIRouter()
-financial_access = [Depends(require_permission("view_financials"))]
+financial_access = [Depends(enforce_financial_route_permission)]
 
 api_router.include_router(system_router, prefix="/system", tags=["System"])
 api_router.include_router(auth_router, prefix="/auth", tags=["Security"])
 api_router.include_router(journal_router, prefix="/journal", tags=["Journal Entries"])
 
-# Every finance/ERP/agent route has an authenticated baseline. Individual routes may
-# add stricter permissions such as approve_actions or post_odoo_entries.
+# The centralized dependency is method-aware: reads require view_financials,
+# mutations require create_entries by default, settings require manage_settings,
+# uploads require upload_documents, and ERP posting requires post_odoo_entries.
 api_router.include_router(erp_partners_router, prefix="/erp", tags=["ERP Partners"], dependencies=financial_access)
 api_router.include_router(bank_reconciliation_compat_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
 api_router.include_router(bank_reconciliation_hardening_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)

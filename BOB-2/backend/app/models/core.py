@@ -1,4 +1,6 @@
-﻿from sqlalchemy import Boolean, ForeignKey, Integer, JSON, String, Text
+from datetime import date, datetime
+
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -25,6 +27,24 @@ class User(Base, TimestampMixin):
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="viewer")
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class AuthSession(Base, TimestampMixin):
+    """Server-side session state for access/refresh token revocation and rotation."""
+
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    family_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    access_jti: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    refresh_jti: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
+    refresh_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
 
 class ERPConnection(Base, TimestampMixin):
@@ -89,3 +109,20 @@ class ExtractedFinancialObject(Base, TimestampMixin):
     confidence_score: Mapped[str | None] = mapped_column(String(50), nullable=True)
     extracted_data: Mapped[dict] = mapped_column(JSON, nullable=False)
     validation_status: Mapped[str] = mapped_column(String(100), default="pending_validation", nullable=False)
+
+
+class JournalEntryRecord(Base, TimestampMixin):
+    """Tenant-isolated, durable journal entry snapshot."""
+
+    __tablename__ = "journal_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    entry_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+    reference: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    memo: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="draft", index=True, nullable=False)
+    lines: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
+    total_debit: Mapped[float] = mapped_column(Float, nullable=False)
+    total_credit: Mapped[float] = mapped_column(Float, nullable=False)

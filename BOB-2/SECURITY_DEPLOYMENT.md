@@ -31,8 +31,10 @@ Set all of the following through the deployment platform's secret manager, not i
 - `REQUIRE_HTTPS=true`
 - `CLAMAV_HOST`
 - `REQUIRE_MALWARE_SCAN=true`
+- `TELEGRAM_BOT_ENABLED=false`
+- `TELEGRAM_BOT_PRODUCTION_READY=false`
 
-The backend deliberately refuses to start when mandatory production controls are missing.
+The backend deliberately refuses to start when mandatory production controls are missing. Telegram is separately fail-closed: even a legacy endpoint cannot start the bot unless the centralized runtime policy allows it.
 
 ## 3. Network controls
 
@@ -69,7 +71,7 @@ Run and require success for:
 cd BOB-2/backend
 python -m compileall -q app tests
 pytest -q
-pip-audit -r requirements.txt --strict
+pip-audit -r requirements.lock --strict
 
 cd ../frontend
 npm ci --ignore-scripts
@@ -97,6 +99,31 @@ Alert on:
 - malware detections and failed scanner connections;
 - database authentication failures;
 - changes to production secrets or trusted hosts/proxies;
-- unusual journal reads/exports and failed authorization checks.
+- unusual journal reads/exports and failed authorization checks;
+- attempts to start Telegram while the policy blocks it;
+- Telegram emergency-disable events and cleared pending operations.
 
 Retain audit and security logs in append-only or centrally controlled storage with access restricted to authorized administrators and auditors.
+
+## 8. Telegram production shutdown control
+
+Until every later Telegram hardening stage is completed, production must keep:
+
+```env
+TELEGRAM_BOT_ENABLED=false
+TELEGRAM_BOT_PRODUCTION_READY=false
+```
+
+The central runtime guard patches the legacy start and stop functions, so the historical `/api/v1/erp/telegram-config` endpoint cannot bypass this policy. A blocked start also synchronizes the legacy UI state to inactive, stops polling, and clears in-memory pending entries.
+
+Authorized administrators can review secret-free runtime status at:
+
+- UI: `/admin/telegram`
+- API: `GET /api/v1/telegram/runtime-status`
+
+The emergency control is:
+
+- UI button on `/admin/telegram`
+- API: `POST /api/v1/telegram/emergency-disable`
+
+The emergency action requires `manage_settings`, immediately stops polling, clears pending entries, and creates a centralized audit record. No application endpoint is provided to reverse an emergency stop in production.

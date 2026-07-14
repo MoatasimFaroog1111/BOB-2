@@ -1,6 +1,19 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -27,6 +40,40 @@ class User(Base, TimestampMixin):
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="viewer")
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class TelegramAuthorization(Base, TimestampMixin):
+    """Explicit Telegram identity-to-tenant and identity-to-user binding.
+
+    No role or permission is copied into this table. Authorization always reads the
+    linked system user's current role from the users table so a role reduction takes
+    effect on the next Telegram operation.
+    """
+
+    __tablename__ = "telegram_authorizations"
+    __table_args__ = (
+        UniqueConstraint(
+            "telegram_user_id",
+            "telegram_chat_id",
+            name="uq_telegram_authorizations_actor_chat",
+        ),
+        CheckConstraint("telegram_user_id > 0", name="ck_telegram_authorizations_user_positive"),
+        CheckConstraint("telegram_chat_id <> 0", name="ck_telegram_authorizations_chat_nonzero"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id"), index=True, nullable=False
+    )
+    system_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    created_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), index=True, nullable=False
+    )
+    allow_group_chats: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AuthSession(Base, TimestampMixin):

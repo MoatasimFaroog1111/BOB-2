@@ -40,8 +40,52 @@ jobs:
           SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
         run: python -c "from app.main import app; print('FastAPI app OK')"
 
+  backend-telegram-approval-test:
+    name: Backend — Telegram One-Time Approval Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: BOB-2/backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: BOB-2/backend/requirements.lock
+      - name: Install hash-locked dependencies
+        run: pip install --quiet --require-hashes -r requirements.lock
+      - name: Run one-time approval regression tests
+        env:
+          APP_ENV: test
+          DATABASE_URL: sqlite:///./test-approval.db
+          SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+        run: python -m pytest tests/test_telegram_accounting_approvals.py -q
+
+  backend-telegram-authorization-test:
+    name: Backend — Telegram Identity Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: BOB-2/backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: BOB-2/backend/requirements.lock
+      - name: Install hash-locked dependencies
+        run: pip install --quiet --require-hashes -r requirements.lock
+      - name: Run Telegram identity regression tests
+        env:
+          APP_ENV: test
+          DATABASE_URL: sqlite:///./test-authorization.db
+          SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+        run: python -m pytest tests/test_telegram_authorization.py -q
+
   backend-test:
-    name: Backend — Tests
+    name: Backend — Full Tests
     runs-on: ubuntu-latest
     defaults:
       run:

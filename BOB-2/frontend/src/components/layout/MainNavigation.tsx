@@ -16,6 +16,7 @@ export function MainNavigation() {
     ["/erp", t("sidebar.erp")],
     ["/team", t("sidebar.home")],
     ["/settings", language === "ar" ? "الإعدادات" : "Settings"],
+    ["/admin/llm", language === "ar" ? "أمان الذكاء الخارجي" : "External AI Security"],
   ];
 
   return (

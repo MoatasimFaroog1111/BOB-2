@@ -1,9 +1,9 @@
 """Tenant-aware, fail-closed gateway for external LLM disclosures.
 
-No caller may treat an API key as organizational consent. Every request needs an active
-organization policy, a current system user, an approved purpose/provider/model, a current
-DPA acknowledgement, deterministic redaction, and an audit event committed before bytes
-leave the application.
+An API key is only a technical credential. It never represents organizational consent.
+Every external request requires an active organization and user, a current tenant policy,
+an approved purpose/provider/model, a recorded DPA acknowledgement, deterministic data
+minimization, and an audit event committed before any bytes leave the application.
 """
 
 from __future__ import annotations
@@ -16,7 +16,6 @@ import re
 import socket
 import ssl
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
@@ -97,6 +96,13 @@ _FINANCIAL_KEY_MARKERS = (
 
 _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
+        "labeled_party_or_address",
+        re.compile(
+            r"(?im)^(?:\s*(?:supplier|vendor|customer|employee|partner|contact|name|address|"
+            r"المورد|العميل|الموظف|الشريك|الاسم|العنوان)\s*[:\-]).*$"
+        ),
+    ),
+    (
         "email",
         re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b"),
     ),
@@ -117,9 +123,18 @@ _TEXT_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         re.compile(r"(?<!\w)(?:\+?\d[\d\s().-]{7,}\d)(?!\w)"),
     ),
     (
+        "accounting_reference",
+        re.compile(r"(?i)\b(?:INV|PO|JE|BILL|PV|RV|SO|RFQ)[-/A-Z0-9]*\d+\b"),
+    ),
+    (
         "long_identifier",
         re.compile(r"(?<!\d)\d(?:[\s-]?\d){11,23}(?!\d)"),
     ),
+)
+_FINANCIAL_TEXT_PATTERN = re.compile(
+    r"(?i)(?:\b(?:SAR|SR)\b|ر\.?\s?س|ريال)\s*[-+]?\d[\d,]*(?:\.\d+)?|"
+    r"(?<![\w.])[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?(?![\w.])|"
+    r"(?<![\w.])[-+]?\d+\.\d{2}(?![\w.])"
 )
 
 
@@ -135,7 +150,11 @@ class ExternalLLMPolicyDenied(RuntimeError):
 
 
 class ExternalLLMProviderError(RuntimeError):
-    def __init__(self, reason: str, public_message: str = "The external AI provider request failed.") -> None:
+    def __init__(
+        self,
+        reason: str,
+        public_message: str = "The external AI provider request failed.",
+    ) -> None:
         super().__init__(public_message)
         self.reason = reason
         self.public_message = public_message
@@ -208,16 +227,32 @@ def record_external_llm_event(
         db.refresh(event)
     except Exception as exc:
         db.rollback()
-        raise ExternalLLMAuditError("Failed to persist the external LLM audit event.") from exc
+        raise ExternalLLMAuditError(
+            "Failed to persist the external LLM audit event."
+        ) from exc
     return event
 
 
-def _redact_text(value: str, counts: dict[str, int]) -> str:
+def _redact_text(
+    value: str,
+    counts: dict[str, int],
+    *,
+    allow_financial_values: bool,
+) -> str:
     redacted = value
     for label, pattern in _TEXT_PATTERNS:
         redacted, substitutions = pattern.subn(f"[REDACTED:{label}]", redacted)
         if substitutions:
             counts[label] = counts.get(label, 0) + substitutions
+    if not allow_financial_values:
+        redacted, substitutions = _FINANCIAL_TEXT_PATTERN.subn(
+            "[REDACTED:financial_value]",
+            redacted,
+        )
+        if substitutions:
+            counts["financial_value_text"] = (
+                counts.get("financial_value_text", 0) + substitutions
+            )
     return redacted
 
 
@@ -238,7 +273,10 @@ def _redact_structure(
     if any(marker in lowered_key for marker in _IDENTIFIER_KEY_MARKERS):
         counts["identifier_field"] = counts.get("identifier_field", 0) + 1
         return "[REDACTED:identifier]"
-    if any(marker in lowered_key for marker in _FINANCIAL_KEY_MARKERS) and not allow_financial_values:
+    if (
+        any(marker in lowered_key for marker in _FINANCIAL_KEY_MARKERS)
+        and not allow_financial_values
+    ):
         counts["financial_value"] = counts.get("financial_value", 0) + 1
         return "[REDACTED:financial_value]"
 
@@ -252,17 +290,7 @@ def _redact_structure(
             )
             for key, child in value.items()
         }
-    if isinstance(value, list):
-        return [
-            _redact_structure(
-                child,
-                allow_financial_values=allow_financial_values,
-                counts=counts,
-                key_hint=key_hint,
-            )
-            for child in value
-        ]
-    if isinstance(value, tuple):
+    if isinstance(value, (list, tuple)):
         return [
             _redact_structure(
                 child,
@@ -273,12 +301,11 @@ def _redact_structure(
             for child in value
         ]
     if isinstance(value, str):
-        return _redact_text(value, counts)
-    if isinstance(value, (int, float)) and not allow_financial_values and any(
-        marker in lowered_key for marker in _FINANCIAL_KEY_MARKERS
-    ):
-        counts["financial_value"] = counts.get("financial_value", 0) + 1
-        return "[REDACTED:financial_value]"
+        return _redact_text(
+            value,
+            counts,
+            allow_financial_values=allow_financial_values,
+        )
     return value
 
 
@@ -296,17 +323,28 @@ def sanitize_external_payload(
     )
     included_chars = 0
     if policy.allow_redacted_document_text and policy.max_redacted_text_chars > 0:
-        global_limit = max(0, int(settings.EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS))
-        effective_limit = min(policy.max_redacted_text_chars, global_limit)
-        redacted_text = _redact_text((raw_document_text or "")[:effective_limit], counts)
+        effective_limit = min(
+            policy.max_redacted_text_chars,
+            max(0, int(settings.EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS)),
+        )
+        redacted_text = _redact_text(
+            (raw_document_text or "")[:effective_limit],
+            counts,
+            allow_financial_values=policy.allow_financial_values,
+        )
         included_chars = len(redacted_text)
         sanitized["redacted_document_text"] = redacted_text
     else:
-        counts["raw_document_text_omitted"] = counts.get("raw_document_text_omitted", 0) + 1
+        counts["raw_document_text_omitted"] = (
+            counts.get("raw_document_text_omitted", 0) + 1
+        )
 
-    encoded = json.dumps(sanitized, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
-        "utf-8"
-    )
+    encoded = json.dumps(
+        sanitized,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
     if len(encoded) > settings.EXTERNAL_LLM_MAX_REQUEST_BYTES:
         raise ExternalLLMPolicyDenied("external_llm_sanitized_payload_too_large")
     return SanitizedExternalPayload(
@@ -337,7 +375,12 @@ def _validate_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) ->
 
 def _resolve_validated_ips(hostname: str, port: int) -> tuple[str, ...]:
     try:
-        records = socket.getaddrinfo(hostname, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        records = socket.getaddrinfo(
+            hostname,
+            port,
+            socket.AF_UNSPEC,
+            socket.SOCK_STREAM,
+        )
     except OSError as exc:
         raise ExternalLLMProviderError("external_llm_dns_resolution_failed") from exc
     addresses: dict[str, ipaddress.IPv4Address | ipaddress.IPv6Address] = {}
@@ -388,7 +431,13 @@ def _validate_external_endpoint(raw_url: str) -> _ExternalEndpoint:
     if port != 443:
         raise ExternalLLMProviderError("external_llm_endpoint_port_forbidden")
     path = parsed.path or "/"
-    if not path.endswith("/chat/completions") or ".." in path or "\\" in path:
+    if (
+        not path.endswith("/chat/completions")
+        or ".." in path
+        or "\\" in path
+        or "%" in path
+        or "//" in path
+    ):
         raise ExternalLLMProviderError("external_llm_endpoint_path_forbidden")
     return _ExternalEndpoint(
         hostname=hostname,
@@ -449,10 +498,16 @@ def _bounded_response_json(response: http.client.HTTPResponse) -> dict[str, Any]
             declared_size = int(declared)
         except ValueError as exc:
             response.close()
-            raise ExternalLLMProviderError("external_llm_response_length_invalid") from exc
-        if declared_size < 0 or declared_size > settings.EXTERNAL_LLM_MAX_RESPONSE_BYTES:
+            raise ExternalLLMProviderError(
+                "external_llm_response_length_invalid"
+            ) from exc
+        if (
+            declared_size < 0
+            or declared_size > settings.EXTERNAL_LLM_MAX_RESPONSE_BYTES
+        ):
             response.close()
             raise ExternalLLMProviderError("external_llm_response_too_large")
+
     chunks: list[bytes] = []
     total = 0
     try:
@@ -503,35 +558,47 @@ class ExternalLLMGateway:
             return settings.ACCOUNTING_LLM_API_KEY or settings.DEEPSEEK_API_KEY
         return settings.ACCOUNTING_LLM_API_KEY
 
-    def _deny(self, reason: str, *, policy: ExternalLLMPolicy | None = None) -> None:
-        try:
-            record_external_llm_event(
-                self.db,
-                context=self.context,
-                action="external_llm_disclosure_blocked",
-                details={
-                    "reason": reason,
-                    "provider": self.provider,
-                    "model": self.model,
-                    "policy_id": policy.id if policy else None,
-                    "policy_version": policy.policy_version if policy else None,
-                },
-            )
-        except ExternalLLMAuditError:
-            raise
+    def _deny(
+        self,
+        reason: str,
+        *,
+        policy: ExternalLLMPolicy | None = None,
+    ) -> None:
+        record_external_llm_event(
+            self.db,
+            context=self.context,
+            action="external_llm_disclosure_blocked",
+            details={
+                "reason": reason,
+                "provider": self.provider,
+                "model": self.model,
+                "policy_id": policy.id if policy else None,
+                "policy_version": policy.policy_version if policy else None,
+            },
+        )
         raise ExternalLLMPolicyDenied(reason)
 
     def authorize(self) -> ExternalLLMPolicy:
-        organization = self.db.query(Organization).filter(Organization.id == self.context.organization_id).first()
+        organization = (
+            self.db.query(Organization)
+            .filter(Organization.id == self.context.organization_id)
+            .first()
+        )
         user = self.db.query(User).filter(User.id == self.context.user_id).first()
         policy = (
             self.db.query(ExternalLLMPolicy)
-            .filter(ExternalLLMPolicy.organization_id == self.context.organization_id)
+            .filter(
+                ExternalLLMPolicy.organization_id == self.context.organization_id
+            )
             .first()
         )
         if organization is None or not organization.is_active:
             self._deny("external_llm_organization_inactive", policy=policy)
-        if user is None or not user.is_active or user.organization_id != self.context.organization_id:
+        if (
+            user is None
+            or not user.is_active
+            or user.organization_id != self.context.organization_id
+        ):
             self._deny("external_llm_user_invalid", policy=policy)
         if not settings.EXTERNAL_LLM_ENABLED:
             self._deny("external_llm_global_kill_switch", policy=policy)
@@ -595,9 +662,11 @@ class ExternalLLMGateway:
         }
         if response_format:
             request_payload["response_format"] = response_format
-        request_bytes = json.dumps(request_payload, ensure_ascii=False, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        request_bytes = json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
         if len(request_bytes) > settings.EXTERNAL_LLM_MAX_REQUEST_BYTES:
             self._deny("external_llm_request_too_large", policy=policy)
 
@@ -620,7 +689,11 @@ class ExternalLLMGateway:
             },
         )
         try:
-            response_payload = self.transport(self.api_url, request_payload, self.api_key)
+            response_payload = self.transport(
+                self.api_url,
+                request_payload,
+                self.api_key,
+            )
         except Exception as exc:
             reason = getattr(exc, "reason", "external_llm_provider_failed")
             record_external_llm_event(
@@ -640,7 +713,6 @@ class ExternalLLMGateway:
                 raise
             raise ExternalLLMProviderError("external_llm_provider_failed") from exc
 
-        output_chars = len(json.dumps(response_payload, ensure_ascii=False))
         record_external_llm_event(
             self.db,
             context=self.context,
@@ -651,15 +723,25 @@ class ExternalLLMGateway:
                 "policy_id": policy.id,
                 "policy_version": policy.policy_version,
                 "payload_hash": sanitized.payload_hash,
-                "output_chars": output_chars,
+                "output_chars": len(
+                    json.dumps(response_payload, ensure_ascii=False)
+                ),
             },
         )
         return response_payload
 
     @staticmethod
-    def _post_json(api_url: str, payload: dict[str, Any], api_key: str) -> dict[str, Any]:
+    def _post_json(
+        api_url: str,
+        payload: dict[str, Any],
+        api_key: str,
+    ) -> dict[str, Any]:
         endpoint = _validate_external_endpoint(api_url)
-        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        body = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
         if len(body) > settings.EXTERNAL_LLM_MAX_REQUEST_BYTES:
             raise ExternalLLMProviderError("external_llm_request_too_large")
         connection = _PinnedHTTPSConnection(endpoint)
@@ -688,9 +770,17 @@ class ExternalLLMGateway:
 def current_policy_effective_enabled(policy: ExternalLLMPolicy | None) -> bool:
     if policy is None:
         return False
+    provider = (policy.approved_provider or "").strip().lower()
+    model = (policy.approved_model or "").strip()
     return bool(
         settings.EXTERNAL_LLM_ENABLED
+        and (settings.ACCOUNTING_LLM_API_KEY or settings.DEEPSEEK_API_KEY)
         and policy.external_llm_enabled
+        and provider in set(_csv_items(settings.EXTERNAL_LLM_ALLOWED_PROVIDERS))
+        and f"{provider}:{model}".lower()
+        in set(_csv_items(settings.EXTERNAL_LLM_ALLOWED_MODELS))
+        and set(policy.allowed_purposes or []).issubset(ALLOWED_EXTERNAL_LLM_PURPOSES)
+        and bool(policy.allowed_purposes)
         and policy.dpa_version == settings.EXTERNAL_LLM_REQUIRED_DPA_VERSION
         and policy.dpa_reference
         and policy.data_residency_region
@@ -698,8 +788,6 @@ def current_policy_effective_enabled(policy: ExternalLLMPolicy | None) -> bool:
         and policy.accepted_at
         and policy.accepted_by_user_id
         and policy.revoked_at is None
+        and policy.max_redacted_text_chars
+        <= settings.EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS
     )
-
-
-def utcnow() -> datetime:
-    return datetime.utcnow()

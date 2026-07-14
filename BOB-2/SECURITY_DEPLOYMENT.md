@@ -8,8 +8,8 @@ This checklist is mandatory before exposing the application to the Internet or u
 2. Remove any firewall/security-group rule that permits inbound TCP/5432 from outside the private application network.
 3. Rotate the PostgreSQL password and update the URL-encoded value in `DATABASE_URL`.
 4. Rotate `SECRET_KEY`. This invalidates all JWTs issued with the previous key.
-5. Apply the latest Alembic migrations. Migration `7f1a2b3c4d5e` disables the previously seeded `owner@guardian.local` account.
-6. Do not reactivate that account until a new, unique password has been set through a controlled administrative procedure.
+5. Apply the latest Alembic migrations.
+6. Do not reactivate a legacy bootstrap account until a new, unique password has been set through a controlled administrative procedure.
 7. Rotate any ERP, email, Telegram, or LLM credentials that may have been stored in or exposed through a prior deployment.
 
 Changing source code does not rotate a password that already exists in a live database. The operational rotations above are required.
@@ -34,6 +34,7 @@ Set all of the following through the deployment platform's secret manager, not i
 - `TELEGRAM_BOT_ENABLED=false`
 - `TELEGRAM_BOT_PRODUCTION_READY=false`
 - `TELEGRAM_ALLOW_GROUP_CHATS=false`
+- `TELEGRAM_APPROVAL_TTL_SECONDS=600`
 
 The backend deliberately refuses to start when mandatory production controls are missing. Telegram is separately fail-closed: even a legacy endpoint cannot start the bot unless the centralized runtime policy allows it.
 
@@ -62,7 +63,7 @@ Production no longer creates an owner automatically. Provision the first adminis
 - records the action in the audit log;
 - removes or disables the bootstrap mechanism immediately afterward.
 
-Never restore the published password `Owner@Seed#2026!`.
+Never reuse any credential that appeared in source code, documentation, logs, issues, or prior deployment files.
 
 ## 6. Validation before release
 
@@ -87,7 +88,7 @@ Also perform dynamic validation in an isolated staging environment:
 - verify refresh-token rotation and reuse detection;
 - verify logout immediately rejects the old access token;
 - upload malformed, macro-enabled, oversized, and malware test files;
-- verify tenant A cannot read tenant B journals/documents;
+- verify tenant A cannot read tenant B journals/documents or Telegram approvals;
 - test reverse-proxy Host and forwarded-IP handling;
 - run an authenticated DAST scan and review application/container logs.
 
@@ -103,7 +104,8 @@ Alert on:
 - unusual journal reads/exports and failed authorization checks;
 - attempts to start Telegram while the policy blocks it;
 - Telegram emergency-disable events and cleared pending operations;
-- Telegram access denials, inactive identity bindings, tenant mismatches, and permission failures.
+- Telegram access denials, inactive identity bindings, tenant mismatches, and permission failures;
+- approval-token replays, content-hash failures, expiry spikes, and failed Odoo postings.
 
 Retain audit and security logs in append-only or centrally controlled storage with access restricted to authorized administrators and auditors.
 
@@ -115,9 +117,10 @@ Until every later Telegram hardening stage is completed, production must keep:
 TELEGRAM_BOT_ENABLED=false
 TELEGRAM_BOT_PRODUCTION_READY=false
 TELEGRAM_ALLOW_GROUP_CHATS=false
+TELEGRAM_APPROVAL_TTL_SECONDS=600
 ```
 
-The central runtime guard patches the legacy start and stop functions, so the historical `/api/v1/erp/telegram-config` endpoint cannot bypass this policy. A blocked start also synchronizes the legacy UI state to inactive, stops polling, and clears in-memory pending entries.
+The central runtime guard patches the legacy start and stop functions, so the historical `/api/v1/erp/telegram-config` endpoint cannot bypass this policy. A blocked start also synchronizes the legacy UI state to inactive, stops polling, and revokes database-backed pending approvals.
 
 Authorized administrators can review secret-free runtime status at:
 
@@ -129,7 +132,7 @@ The emergency control is:
 - UI button on `/admin/telegram`
 - API: `POST /api/v1/telegram/emergency-disable`
 
-The emergency action requires `manage_settings`, immediately stops polling, clears pending entries, and creates a centralized audit record. No application endpoint is provided to reverse an emergency stop in production.
+The emergency action requires `manage_settings`, immediately stops polling, revokes all pending approvals, clears process-local markers, and creates a centralized audit record. No application endpoint is provided to reverse an emergency stop in production.
 
 ## 9. Telegram identity allowlist
 
@@ -142,7 +145,7 @@ Apply migration `4c9d7e2a1b60` before configuring identities. Each allowlist row
 - the administrator who created the binding;
 - optional per-row group-chat permission.
 
-Manage bindings only through the authenticated administration page `/admin/telegram` or the `manage_settings` endpoints under `/api/v1/telegram/authorizations`. Do not insert rows manually except during a controlled recovery procedure.
+Manage bindings only through the authenticated administration page `/admin/telegram` or the `manage_settings` endpoints under `/api/v1/telegram/authorizations`.
 
 Security behavior:
 
@@ -151,8 +154,44 @@ Security behavior:
 - inactive bindings, users, and organizations fail closed;
 - channels are rejected;
 - groups and supergroups require both `TELEGRAM_ALLOW_GROUP_CHATS=true` and `allow_group_chats=true` on the exact row;
-- pending work is keyed by both chat ID and Telegram user ID, so another group member cannot approve it;
-- deactivating a binding clears that actor's pending work;
+- deactivating a binding revokes that actor's pending approvals;
 - every grant and denial is written to the central audit table without tokens or passwords.
 
-The legacy posting implementation still supports only organization 1 and is explicitly blocked for other organizations. Do not set `TELEGRAM_BOT_PRODUCTION_READY=true` until the independent tenant-aware posting and approval service is completed.
+## 10. Independent one-time accounting approvals
+
+Apply migration `5d2e8f1c3a70`. Telegram accounting logic is implemented in `app/services/telegram_accounting_service.py`; the bot must never import or call FastAPI ERP route functions.
+
+Each `telegram_approval_operations` row binds:
+
+- organization and Telegram authorization record;
+- exact Telegram user and chat;
+- linked system user;
+- source (`telegram`);
+- canonical accounting payload;
+- SHA-256 content hash;
+- SHA-256 approval-token hash;
+- optional uploaded-file SHA-256;
+- expiry, consumption, revocation, failure, move, and attachment state.
+
+The plaintext token is placed only in Telegram's callback payload and is never written to the database, logs, API responses, or administration page. `TELEGRAM_APPROVAL_TTL_SECONDS` must remain between 60 and 3600 seconds.
+
+Approval lifecycle:
+
+1. The independent service rechecks the active organization, authorization binding, system user, and current permissions.
+2. A balanced tenant-scoped proposal is created without importing an API route.
+3. A random one-time token and canonical content hash are generated.
+4. On approval, a conditional database update changes exactly one row from `pending` to `processing`.
+5. Double-click, replay, wrong token, expired token, actor mismatch, tenant mismatch, or content/file tampering fails closed.
+6. Current `post_odoo_entries` permission is checked again immediately before posting.
+7. Odoo posting uses the ERP connection belonging to the approval's organization.
+8. The terminal state becomes `posted`, `cancelled`, `expired`, `failed`, or `revoked`; no terminal state can be reused.
+
+Administration:
+
+- `GET /api/v1/telegram/approval-operations` lists only the authenticated organization's records and never returns token hashes or full content hashes.
+- `POST /api/v1/telegram/approval-operations/{id}/revoke` atomically revokes a pending approval.
+- `/admin/telegram` displays lifecycle status, expiry, content-hash prefix, Odoo identifiers, and allows revocation of pending approvals.
+
+CI must fail if `telegram_bot.py` contains imports or calls to `app.api.v1.erp`, `propose_transaction`, or `register_document`.
+
+Even after this approval stage, keep Telegram disabled in production until the bounded download queue, centralized secret-store, SSRF/egress, and remaining production controls are completed.

@@ -289,9 +289,11 @@ def test_queue_enforces_actor_and_organization_pending_limits():
 
 
 def test_queue_enforces_fixed_capacity_and_rate_limit():
+    started = threading.Event()
     release = threading.Event()
 
     def processor(_job):
+        started.set()
         release.wait(timeout=3)
 
     manager = BoundedTelegramIngestionQueue(
@@ -309,6 +311,7 @@ def test_queue_enforces_fixed_capacity_and_rate_limit():
     )
     try:
         manager.enqueue(_job(submitted=10.0, suffix="a"))
+        assert started.wait(timeout=2), "first job must be owned by the fixed worker"
         second_context = _context(
             telegram_user_id=2002,
             telegram_chat_id=2002,

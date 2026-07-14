@@ -17,6 +17,11 @@ from app.middleware.request_size import RequestSizeLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.security.document_processing_guard import install_document_processing_guard
 from app.security.ocr_guard import install_ocr_guard
+from app.services.telegram_runtime import (
+    install_runtime_guard,
+    start_telegram_bot,
+    stop_telegram_bot,
+)
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -49,19 +54,23 @@ async def lifespan(app: FastAPI):
     install_document_processing_guard()
     _run_migrations()
     run_seed()
-    try:
-        from app.services.telegram_bot import start_telegram_bot
 
+    # Install the compatibility patch before any legacy ERP endpoint can import
+    # the Telegram start/stop functions. All runtime entry points are therefore
+    # governed by the same fail-closed policy.
+    install_runtime_guard()
+    try:
         start_telegram_bot()
-    except Exception as start_err:
-        logger.warning("Failed to start Telegram bot: %s", start_err)
-    yield
-    try:
-        from app.services.telegram_bot import stop_telegram_bot
+    except Exception:
+        logger.exception("Telegram bot startup failed safely")
 
-        stop_telegram_bot()
-    except Exception as stop_err:
-        logger.warning("Failed to stop Telegram bot: %s", stop_err)
+    try:
+        yield
+    finally:
+        try:
+            stop_telegram_bot(reason="application_shutdown")
+        except Exception:
+            logger.exception("Telegram bot shutdown failed")
 
 
 app = FastAPI(

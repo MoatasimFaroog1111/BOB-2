@@ -14,6 +14,7 @@ type TelegramRuntimeStatus = {
   running: boolean;
   token_configured: boolean;
   pending_entries: number;
+  approval_ttl_seconds: number;
   policy_reason: string;
   last_runtime_reason: string;
   group_chats_globally_enabled: boolean;
@@ -46,6 +47,29 @@ type TelegramAuthorization = {
   updated_at: string;
 };
 
+type TelegramApprovalOperation = {
+  id: number;
+  organization_id: number;
+  authorization_id: number;
+  telegram_user_id: number;
+  telegram_chat_id: number;
+  system_user_id: number;
+  source: string;
+  status: "pending" | "processing" | "posted" | "cancelled" | "expired" | "failed" | "revoked";
+  content_hash_prefix: string;
+  filename: string;
+  document_class: string;
+  amount: number;
+  expires_at: string;
+  consumed_at: string | null;
+  revoked_at: string | null;
+  failure_code: string | null;
+  posted_move_id: number | null;
+  attachment_id: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
 async function readJson(response: Response) {
   return response.json().catch(() => null);
 }
@@ -53,10 +77,12 @@ async function readJson(response: Response) {
 export default function TelegramAdministrationPage() {
   const [runtime, setRuntime] = useState<TelegramRuntimeStatus | null>(null);
   const [authorizations, setAuthorizations] = useState<TelegramAuthorization[]>([]);
+  const [approvals, setApprovals] = useState<TelegramApprovalOperation[]>([]);
   const [systemUsers, setSystemUsers] = useState<TelegramSystemUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [disabling, setDisabling] = useState(false);
+  const [revokingApprovalId, setRevokingApprovalId] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [telegramUserId, setTelegramUserId] = useState("");
@@ -67,15 +93,17 @@ export default function TelegramAdministrationPage() {
   const loadAll = useCallback(async () => {
     setError("");
     try {
-      const [runtimeResponse, authorizationsResponse, usersResponse] = await Promise.all([
+      const [runtimeResponse, authorizationsResponse, usersResponse, approvalsResponse] = await Promise.all([
         fetch(`${API_BASE_URL}/api/v1/telegram/runtime-status`, { cache: "no-store" }),
         fetch(`${API_BASE_URL}/api/v1/telegram/authorizations`, { cache: "no-store" }),
         fetch(`${API_BASE_URL}/api/v1/telegram/system-users`, { cache: "no-store" }),
+        fetch(`${API_BASE_URL}/api/v1/telegram/approval-operations?limit=100`, { cache: "no-store" }),
       ]);
-      const [runtimeBody, authorizationsBody, usersBody] = await Promise.all([
+      const [runtimeBody, authorizationsBody, usersBody, approvalsBody] = await Promise.all([
         readJson(runtimeResponse),
         readJson(authorizationsResponse),
         readJson(usersResponse),
+        readJson(approvalsResponse),
       ]);
       if (!runtimeResponse.ok) {
         throw new Error(runtimeBody?.detail || "تعذر قراءة حالة Telegram Bot.");
@@ -86,9 +114,13 @@ export default function TelegramAdministrationPage() {
       if (!usersResponse.ok) {
         throw new Error(usersBody?.detail || "تعذر قراءة مستخدمي النظام.");
       }
+      if (!approvalsResponse.ok) {
+        throw new Error(approvalsBody?.detail || "تعذر قراءة عمليات الموافقة.");
+      }
       setRuntime(runtimeBody as TelegramRuntimeStatus);
       setAuthorizations(authorizationsBody as TelegramAuthorization[]);
       setSystemUsers(usersBody as TelegramSystemUser[]);
+      setApprovals(approvalsBody as TelegramApprovalOperation[]);
       setSystemUserId((current) => current || String((usersBody as TelegramSystemUser[])[0]?.id || ""));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "تعذر تحميل إعدادات Telegram.");
@@ -154,19 +186,16 @@ export default function TelegramAdministrationPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/telegram/authorizations/${record.id}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ is_active: isActive }),
-        },
-      );
+      const response = await fetch(`${API_BASE_URL}/api/v1/telegram/authorizations/${record.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: isActive }),
+      });
       const body = await readJson(response);
       if (!response.ok) {
         throw new Error(body?.detail || "تعذر تحديث حالة الهوية.");
       }
-      setMessage(isActive ? "تم تفعيل الهوية." : "تم تعطيل الهوية ومسح عملياتها المعلقة.");
+      setMessage(isActive ? "تم تفعيل الهوية." : "تم تعطيل الهوية وإلغاء موافقاتها المعلقة.");
       await loadAll();
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "تعذر تحديث الهوية.");
@@ -177,10 +206,9 @@ export default function TelegramAdministrationPage() {
     setError("");
     setMessage("");
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/v1/telegram/authorizations/${record.id}`,
-        { method: "DELETE" },
-      );
+      const response = await fetch(`${API_BASE_URL}/api/v1/telegram/authorizations/${record.id}`, {
+        method: "DELETE",
+      });
       const body = await readJson(response);
       if (!response.ok) {
         throw new Error(body?.detail || "تعذر إلغاء التصريح.");
@@ -189,6 +217,28 @@ export default function TelegramAdministrationPage() {
       await loadAll();
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : "تعذر إلغاء التصريح.");
+    }
+  };
+
+  const revokeApproval = async (record: TelegramApprovalOperation) => {
+    setRevokingApprovalId(record.id);
+    setError("");
+    setMessage("");
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/v1/telegram/approval-operations/${record.id}/revoke`,
+        { method: "POST" },
+      );
+      const body = await readJson(response);
+      if (!response.ok) {
+        throw new Error(body?.detail || "تعذر إلغاء الموافقة المعلقة.");
+      }
+      setMessage(`تم إلغاء الموافقة الآمنة رقم ${record.id} ومنع إعادة استخدامها.`);
+      await loadAll();
+    } catch (revokeError) {
+      setError(revokeError instanceof Error ? revokeError.message : "تعذر إلغاء الموافقة.");
+    } finally {
+      setRevokingApprovalId(null);
     }
   };
 
@@ -206,7 +256,8 @@ export default function TelegramAdministrationPage() {
         throw new Error(body?.detail || "تعذر تنفيذ الإيقاف الطارئ.");
       }
       setRuntime(body as TelegramRuntimeStatus);
-      setMessage("تم إيقاف Telegram Bot ومسح جميع العمليات المعلقة فورًا.");
+      setMessage("تم إيقاف Telegram Bot وإلغاء جميع الموافقات المعلقة فورًا.");
+      await loadAll();
     } catch (disableError) {
       setError(disableError instanceof Error ? disableError.message : "تعذر تنفيذ الإيقاف الطارئ.");
     } finally {
@@ -226,7 +277,7 @@ export default function TelegramAdministrationPage() {
             </Link>
             <h1 className="mt-2 text-3xl font-bold">إدارة Telegram Bot الأمنية</h1>
             <p className="mt-2 max-w-3xl text-sm text-white/60">
-              لا تُقبل أي رسالة أو موافقة إلا بعد مطابقة Telegram user ID وChat ID مع المؤسسة ومستخدم نظام نشط، ثم قراءة صلاحياته الحالية من قاعدة البيانات.
+              كل موافقة مرتبطة بهوية Telegram والمحادثة والمؤسسة ومستخدم النظام وبصمة المحتوى، ومحددة المدة وقابلة للاستخدام مرة واحدة فقط.
             </p>
           </div>
           <button
@@ -274,7 +325,8 @@ export default function TelegramAdministrationPage() {
                 <StatusRow label="سياسة التشغيل تسمح" value={yesNo(runtime.runtime_allowed)} />
                 <StatusRow label="رمز البوت محفوظ" value={yesNo(runtime.token_configured)} />
                 <StatusRow label="المجموعات مفعلة عالميًا" value={yesNo(runtime.group_chats_globally_enabled)} />
-                <StatusRow label="العمليات المعلقة" value={String(runtime.pending_entries)} />
+                <StatusRow label="الموافقات المعلقة" value={String(runtime.pending_entries)} />
+                <StatusRow label="مدة الموافقة" value={`${runtime.approval_ttl_seconds} ثانية`} />
                 <StatusRow label="سبب السياسة" value={runtime.policy_reason} />
                 <StatusRow label="آخر سبب تشغيل" value={runtime.last_runtime_reason} />
               </dl>
@@ -282,7 +334,7 @@ export default function TelegramAdministrationPage() {
               <div className="rounded-xl border border-red-500/25 bg-red-950/20 p-4">
                 <h2 className="font-semibold text-red-200">الإيقاف الطارئ</h2>
                 <p className="mt-1 text-sm text-white/55">
-                  يوقف الـPolling فورًا ويمنع التشغيل الجديد ويمسح جميع العمليات المعلقة.
+                  يوقف الـPolling فورًا ويمنع التشغيل الجديد ويحوّل جميع الموافقات المعلقة في قاعدة البيانات إلى ملغاة.
                 </p>
                 <button
                   type="button"
@@ -295,6 +347,63 @@ export default function TelegramAdministrationPage() {
               </div>
             </div>
           ) : null}
+        </section>
+
+        <section className="rounded-2xl border border-white/10 bg-black/30 p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-xl font-semibold">عمليات الموافقة الدائمة</h2>
+              <p className="mt-1 text-sm text-white/50">
+                لا تُعرض التوكنات. المعروض هو بادئة بصمة المحتوى وحالة دورة الحياة فقط.
+              </p>
+            </div>
+            <span className="rounded-full bg-white/5 px-3 py-1 text-xs text-white/65">
+              {approvals.length} عملية
+            </span>
+          </div>
+          <div className="mt-5 grid gap-3 lg:grid-cols-2">
+            {approvals.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-white/15 p-6 text-center text-sm text-white/45 lg:col-span-2">
+                لا توجد عمليات موافقة مسجلة لهذه المؤسسة.
+              </p>
+            ) : (
+              approvals.map((record) => (
+                <article key={record.id} className="rounded-xl border border-white/10 bg-white/[0.03] p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="font-semibold">#{record.id} — {record.filename || "مستند"}</p>
+                      <p className="mt-1 text-xs text-white/50">
+                        {record.document_class || "general"} — {record.amount.toLocaleString("ar-SA", { minimumFractionDigits: 2 })} ر.س
+                      </p>
+                    </div>
+                    <ApprovalStatus status={record.status} />
+                  </div>
+                  <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+                    <MiniRow label="Telegram user ID" value={String(record.telegram_user_id)} />
+                    <MiniRow label="Chat ID" value={String(record.telegram_chat_id)} />
+                    <MiniRow label="System user ID" value={String(record.system_user_id)} />
+                    <MiniRow label="Authorization ID" value={String(record.authorization_id)} />
+                    <MiniRow label="بصمة المحتوى" value={record.content_hash_prefix} />
+                    <MiniRow label="تاريخ الانتهاء" value={new Date(record.expires_at).toLocaleString("ar-SA")} />
+                    <MiniRow label="وقت الاستهلاك" value={record.consumed_at ? new Date(record.consumed_at).toLocaleString("ar-SA") : "لم تُستهلك"} />
+                    <MiniRow label="Odoo move ID" value={record.posted_move_id ? String(record.posted_move_id) : "-"} />
+                    <MiniRow label="Attachment ID" value={record.attachment_id ? String(record.attachment_id) : "-"} />
+                    <MiniRow label="رمز الفشل" value={record.failure_code || "-"} />
+                  </dl>
+                  {record.status === "pending" && (
+                    <button
+                      type="button"
+                      onClick={() => void revokeApproval(record)}
+                      disabled={revokingApprovalId === record.id}
+                      className="mt-4 rounded-lg border border-red-500/30 px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/10 disabled:opacity-40"
+                    >
+                      {revokingApprovalId === record.id ? "جاري الإلغاء…" : "إلغاء الموافقة ومنع استخدامها"}
+                    </button>
+                  )}
+                </article>
+              ))
+            )}
+          </div>
         </section>
 
         <section className="grid gap-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.4fr)]">
@@ -426,6 +535,28 @@ export default function TelegramAdministrationPage() {
       </div>
     </main>
   );
+}
+
+function ApprovalStatus({ status }: { status: TelegramApprovalOperation["status"] }) {
+  const labels: Record<TelegramApprovalOperation["status"], string> = {
+    pending: "معلقة",
+    processing: "قيد التنفيذ",
+    posted: "مُرحّلة",
+    cancelled: "ملغاة",
+    expired: "منتهية",
+    failed: "فشلت",
+    revoked: "مسحوبة",
+  };
+  const styles: Record<TelegramApprovalOperation["status"], string> = {
+    pending: "bg-amber-500/15 text-amber-300",
+    processing: "bg-blue-500/15 text-blue-300",
+    posted: "bg-green-500/15 text-green-300",
+    cancelled: "bg-slate-500/15 text-slate-300",
+    expired: "bg-orange-500/15 text-orange-300",
+    failed: "bg-red-500/15 text-red-300",
+    revoked: "bg-purple-500/15 text-purple-300",
+  };
+  return <span className={`rounded-full px-2.5 py-1 text-xs ${styles[status]}`}>{labels[status]}</span>;
 }
 
 function StatusRow({ label, value }: { label: string; value: string }) {

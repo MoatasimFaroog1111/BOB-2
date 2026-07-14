@@ -199,7 +199,7 @@ def test_inactive_authorization_user_and_organization_fail_closed(db):
     assert inactive_org.value.reason == "organization_inactive_or_missing"
 
 
-def test_pending_entries_are_bound_to_individual_actor():
+def test_pending_runtime_markers_are_bound_to_individual_actor():
     first = TelegramSecurityContext(
         authorization_id=1,
         telegram_user_id=10,
@@ -221,18 +221,12 @@ def test_pending_entries_are_bound_to_individual_actor():
         system_user_role="owner",
     )
     telegram_bot.PENDING_ENTRIES.clear()
-    telegram_bot.PENDING_ENTRIES[first.pending_key] = {
-        "telegram_user_id": first.telegram_user_id,
-        "telegram_chat_id": first.telegram_chat_id,
-        "organization_id": first.organization_id,
-        "system_user_id": first.system_user_id,
-        "authorization_id": first.authorization_id,
-    }
+    telegram_bot.PENDING_ENTRIES[first.pending_key] = {"operation_id": 101}
 
     assert first.pending_key != second.pending_key
-    assert telegram_bot.clear_pending_for_actor(second.telegram_chat_id, second.telegram_user_id) == 0
+    telegram_bot._forget_pending(second)
     assert first.pending_key in telegram_bot.PENDING_ENTRIES
-    assert telegram_bot.clear_pending_for_actor(first.telegram_chat_id, first.telegram_user_id) == 1
+    telegram_bot._forget_pending(first)
     assert first.pending_key not in telegram_bot.PENDING_ENTRIES
 
 

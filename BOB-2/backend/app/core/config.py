@@ -41,6 +41,17 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_PRODUCTION_READY: bool = False
     TELEGRAM_ALLOW_GROUP_CHATS: bool = False
     TELEGRAM_APPROVAL_TTL_SECONDS: int = 600
+    TELEGRAM_INGESTION_WORKERS: int = 2
+    TELEGRAM_INGESTION_QUEUE_SIZE: int = 20
+    TELEGRAM_MAX_PENDING_PER_ACTOR: int = 1
+    TELEGRAM_MAX_PENDING_PER_ORGANIZATION: int = 5
+    TELEGRAM_UPLOAD_RATE_LIMIT: int = 5
+    TELEGRAM_UPLOAD_RATE_WINDOW_SECONDS: int = 60
+    TELEGRAM_INGESTION_JOB_TTL_SECONDS: int = 300
+    TELEGRAM_DOWNLOAD_TIMEOUT_SECONDS: int = 30
+    TELEGRAM_DOWNLOAD_CHUNK_SIZE_BYTES: int = 65_536
+    TELEGRAM_MESSAGE_MAX_AGE_SECONDS: int = 120
+    TELEGRAM_API_RESPONSE_MAX_BYTES: int = 1_048_576
 
     MAX_UPLOAD_SIZE_MB: int = 10
     MAX_REQUEST_SIZE_MB: int = 50
@@ -148,6 +159,30 @@ class Settings(BaseSettings):
             )
         if not 60 <= self.TELEGRAM_APPROVAL_TTL_SECONDS <= 3600:
             errors.append("TELEGRAM_APPROVAL_TTL_SECONDS must be between 60 and 3600")
+        if not 1 <= self.TELEGRAM_INGESTION_WORKERS <= 8:
+            errors.append("TELEGRAM_INGESTION_WORKERS must be between 1 and 8")
+        if not 1 <= self.TELEGRAM_INGESTION_QUEUE_SIZE <= 200:
+            errors.append("TELEGRAM_INGESTION_QUEUE_SIZE must be between 1 and 200")
+        if not 1 <= self.TELEGRAM_MAX_PENDING_PER_ACTOR <= 5:
+            errors.append("TELEGRAM_MAX_PENDING_PER_ACTOR must be between 1 and 5")
+        if not self.TELEGRAM_MAX_PENDING_PER_ACTOR <= self.TELEGRAM_MAX_PENDING_PER_ORGANIZATION <= self.TELEGRAM_INGESTION_QUEUE_SIZE:
+            errors.append(
+                "Telegram organization pending limit must be between the actor limit and queue size"
+            )
+        if not 1 <= self.TELEGRAM_UPLOAD_RATE_LIMIT <= 60:
+            errors.append("TELEGRAM_UPLOAD_RATE_LIMIT must be between 1 and 60")
+        if not 10 <= self.TELEGRAM_UPLOAD_RATE_WINDOW_SECONDS <= 3600:
+            errors.append("TELEGRAM_UPLOAD_RATE_WINDOW_SECONDS must be between 10 and 3600")
+        if not 30 <= self.TELEGRAM_INGESTION_JOB_TTL_SECONDS <= 1800:
+            errors.append("TELEGRAM_INGESTION_JOB_TTL_SECONDS must be between 30 and 1800")
+        if not 5 <= self.TELEGRAM_DOWNLOAD_TIMEOUT_SECONDS <= 120:
+            errors.append("TELEGRAM_DOWNLOAD_TIMEOUT_SECONDS must be between 5 and 120")
+        if not 16_384 <= self.TELEGRAM_DOWNLOAD_CHUNK_SIZE_BYTES <= 1_048_576:
+            errors.append("TELEGRAM_DOWNLOAD_CHUNK_SIZE_BYTES must be between 16384 and 1048576")
+        if not 30 <= self.TELEGRAM_MESSAGE_MAX_AGE_SECONDS <= 600:
+            errors.append("TELEGRAM_MESSAGE_MAX_AGE_SECONDS must be between 30 and 600")
+        if not 65_536 <= self.TELEGRAM_API_RESPONSE_MAX_BYTES <= 4_194_304:
+            errors.append("TELEGRAM_API_RESPONSE_MAX_BYTES must be between 65536 and 4194304")
 
         database_url_lower = self.DATABASE_URL.lower()
         if database_url_lower.startswith("sqlite"):

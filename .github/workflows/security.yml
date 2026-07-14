@@ -37,6 +37,26 @@ jobs:
         run: pip-audit -r requirements.lock --strict
       - name: Compile Python sources
         run: python -m compileall -q app tests
+      - name: Enforce Telegram accounting route isolation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path("app/services/telegram_bot.py").read_text(encoding="utf-8")
+          forbidden = (
+              "app.api.v1.erp",
+              "propose_transaction",
+              "register_document",
+              "ProposeTransactionRequest",
+              "RegisterDocumentRequest",
+          )
+          violations = [item for item in forbidden if item in source]
+          assert not violations, f"Telegram bot depends on FastAPI ERP routes: {violations}"
+          approval_source = Path("app/services/telegram_accounting_service.py").read_text(encoding="utf-8")
+          assert "approval_token_hash" in approval_source
+          assert "status == \"pending\"" in approval_source
+          assert "post_odoo_entries" in approval_source
+          PY
       - name: Run backend tests
         env:
           APP_ENV: test
@@ -106,6 +126,8 @@ jobs:
           assert str(backend_environment.get("TELEGRAM_ALLOW_GROUP_CHATS", "")).lower() == "false", (
               "Production Compose must deny Telegram group chats by default"
           )
+          approval_ttl = int(backend_environment.get("TELEGRAM_APPROVAL_TTL_SECONDS", 0))
+          assert 60 <= approval_ttl <= 3600, "Telegram approval TTL must be bounded"
 
           def assert_loopback(service_name: str, published: str) -> None:
               ports = services[service_name].get("ports", [])

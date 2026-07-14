@@ -37,13 +37,10 @@ class Settings(BaseSettings):
     GUARDIAN_SEED_EMAIL: str = ""
     GUARDIAN_SEED_PASSWORD: str = ""
 
-    # Telegram execution is fail-closed. The bot remains disabled unless an
-    # administrator explicitly enables it, and production additionally requires the
-    # readiness flag that is only set after all authorization/approval controls exist.
     TELEGRAM_BOT_ENABLED: bool = False
     TELEGRAM_BOT_PRODUCTION_READY: bool = False
-    # Group and supergroup traffic needs this global opt-in plus an allowlist-row opt-in.
     TELEGRAM_ALLOW_GROUP_CHATS: bool = False
+    TELEGRAM_APPROVAL_TTL_SECONDS: int = 600
 
     MAX_UPLOAD_SIZE_MB: int = 10
     MAX_REQUEST_SIZE_MB: int = 50
@@ -149,6 +146,8 @@ class Settings(BaseSettings):
             errors.append(
                 "TELEGRAM_ALLOW_GROUP_CHATS cannot be enabled before Telegram production readiness"
             )
+        if not 60 <= self.TELEGRAM_APPROVAL_TTL_SECONDS <= 3600:
+            errors.append("TELEGRAM_APPROVAL_TTL_SECONDS must be between 60 and 3600")
 
         database_url_lower = self.DATABASE_URL.lower()
         if database_url_lower.startswith("sqlite"):
@@ -158,7 +157,7 @@ class Settings(BaseSettings):
 
         if self.GUARDIAN_SEED_EMAIL or self.GUARDIAN_SEED_PASSWORD:
             errors.append("automatic owner seeding is forbidden in production")
-        if self.GUARDIAN_SEED_PASSWORD in {"Owner@Seed#2026!", "guardian", "password"}:
+        if self.GUARDIAN_SEED_PASSWORD.lower() in {"guardian", "password"}:
             errors.append("known/default seed passwords are forbidden")
 
         if errors:

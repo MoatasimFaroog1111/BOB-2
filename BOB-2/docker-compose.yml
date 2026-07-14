@@ -83,18 +83,11 @@ services:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       GUARDIAN_SEED_EMAIL: ""
       GUARDIAN_SEED_PASSWORD: ""
-<<<<<<< HEAD
-      # Telegram remains hard-disabled until the remaining identity, approval,
-      # queue, organization-isolation, and secret-store stages are complete.
-      TELEGRAM_BOT_ENABLED: "false"
-      TELEGRAM_BOT_PRODUCTION_READY: "false"
-=======
       # Telegram remains hard-disabled until approval, queue, organization-isolated
       # posting, and secret-store stages are complete. Group traffic is separately denied.
       TELEGRAM_BOT_ENABLED: "false"
       TELEGRAM_BOT_PRODUCTION_READY: "false"
       TELEGRAM_ALLOW_GROUP_CHATS: "false"
->>>>>>> origin/main
     ports:
       - "${BACKEND_BIND_IP:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     volumes:

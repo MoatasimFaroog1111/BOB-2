@@ -33,10 +33,7 @@ Set all of the following through the deployment platform's secret manager, not i
 - `REQUIRE_MALWARE_SCAN=true`
 - `TELEGRAM_BOT_ENABLED=false`
 - `TELEGRAM_BOT_PRODUCTION_READY=false`
-<<<<<<< HEAD
-=======
 - `TELEGRAM_ALLOW_GROUP_CHATS=false`
->>>>>>> origin/main
 
 The backend deliberately refuses to start when mandatory production controls are missing. Telegram is separately fail-closed: even a legacy endpoint cannot start the bot unless the centralized runtime policy allows it.
 
@@ -105,12 +102,8 @@ Alert on:
 - changes to production secrets or trusted hosts/proxies;
 - unusual journal reads/exports and failed authorization checks;
 - attempts to start Telegram while the policy blocks it;
-<<<<<<< HEAD
-- Telegram emergency-disable events and cleared pending operations.
-=======
 - Telegram emergency-disable events and cleared pending operations;
 - Telegram access denials, inactive identity bindings, tenant mismatches, and permission failures.
->>>>>>> origin/main
 
 Retain audit and security logs in append-only or centrally controlled storage with access restricted to authorized administrators and auditors.
 
@@ -121,10 +114,7 @@ Until every later Telegram hardening stage is completed, production must keep:
 ```env
 TELEGRAM_BOT_ENABLED=false
 TELEGRAM_BOT_PRODUCTION_READY=false
-<<<<<<< HEAD
-=======
 TELEGRAM_ALLOW_GROUP_CHATS=false
->>>>>>> origin/main
 ```
 
 The central runtime guard patches the legacy start and stop functions, so the historical `/api/v1/erp/telegram-config` endpoint cannot bypass this policy. A blocked start also synchronizes the legacy UI state to inactive, stops polling, and clears in-memory pending entries.
@@ -140,8 +130,6 @@ The emergency control is:
 - API: `POST /api/v1/telegram/emergency-disable`
 
 The emergency action requires `manage_settings`, immediately stops polling, clears pending entries, and creates a centralized audit record. No application endpoint is provided to reverse an emergency stop in production.
-<<<<<<< HEAD
-=======
 
 ## 9. Telegram identity allowlist
 
@@ -168,4 +156,3 @@ Security behavior:
 - every grant and denial is written to the central audit table without tokens or passwords.
 
 The legacy posting implementation still supports only organization 1 and is explicitly blocked for other organizations. Do not set `TELEGRAM_BOT_PRODUCTION_READY=true` until the independent tenant-aware posting and approval service is completed.
->>>>>>> origin/main

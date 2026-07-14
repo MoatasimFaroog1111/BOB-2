@@ -1,11 +1,7 @@
 "use client";
 
 import Link from "next/link";
-<<<<<<< HEAD
-import { useCallback, useEffect, useState } from "react";
-=======
 import { FormEvent, useCallback, useEffect, useState } from "react";
->>>>>>> origin/main
 
 import { API_BASE_URL } from "@/lib/api";
 
@@ -20,35 +16,6 @@ type TelegramRuntimeStatus = {
   pending_entries: number;
   policy_reason: string;
   last_runtime_reason: string;
-<<<<<<< HEAD
-  requested_by?: string;
-};
-
-export default function TelegramAdministrationPage() {
-  const [status, setStatus] = useState<TelegramRuntimeStatus | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [disabling, setDisabling] = useState(false);
-  const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
-
-  const loadStatus = useCallback(async () => {
-    setError("");
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/v1/telegram/runtime-status`, {
-        cache: "no-store",
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(body?.detail || "تعذر قراءة حالة Telegram Bot.");
-      }
-      setStatus(body as TelegramRuntimeStatus);
-    } catch (statusError) {
-      setError(
-        statusError instanceof Error
-          ? statusError.message
-          : "تعذر قراءة حالة Telegram Bot.",
-      );
-=======
   group_chats_globally_enabled: boolean;
   requested_by?: string;
 };
@@ -125,19 +92,12 @@ export default function TelegramAdministrationPage() {
       setSystemUserId((current) => current || String((usersBody as TelegramSystemUser[])[0]?.id || ""));
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "تعذر تحميل إعدادات Telegram.");
->>>>>>> origin/main
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-<<<<<<< HEAD
-    void loadStatus();
-    const timer = window.setInterval(() => void loadStatus(), 10_000);
-    return () => window.clearInterval(timer);
-  }, [loadStatus]);
-=======
     void loadAll();
     const timer = window.setInterval(() => void loadAll(), 15_000);
     return () => window.clearInterval(timer);
@@ -231,7 +191,6 @@ export default function TelegramAdministrationPage() {
       setError(deleteError instanceof Error ? deleteError.message : "تعذر إلغاء التصريح.");
     }
   };
->>>>>>> origin/main
 
   const emergencyDisable = async () => {
     setDisabling(true);
@@ -242,20 +201,6 @@ export default function TelegramAdministrationPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       });
-<<<<<<< HEAD
-      const body = await response.json().catch(() => null);
-      if (!response.ok) {
-        throw new Error(body?.detail || "تعذر تنفيذ الإيقاف الطارئ.");
-      }
-      setStatus(body as TelegramRuntimeStatus);
-      setMessage("تم إيقاف Telegram Bot ومسح جميع العمليات المعلقة فورًا.");
-    } catch (disableError) {
-      setError(
-        disableError instanceof Error
-          ? disableError.message
-          : "تعذر تنفيذ الإيقاف الطارئ.",
-      );
-=======
       const body = await readJson(response);
       if (!response.ok) {
         throw new Error(body?.detail || "تعذر تنفيذ الإيقاف الطارئ.");
@@ -264,7 +209,6 @@ export default function TelegramAdministrationPage() {
       setMessage("تم إيقاف Telegram Bot ومسح جميع العمليات المعلقة فورًا.");
     } catch (disableError) {
       setError(disableError instanceof Error ? disableError.message : "تعذر تنفيذ الإيقاف الطارئ.");
->>>>>>> origin/main
     } finally {
       setDisabling(false);
     }
@@ -274,41 +218,24 @@ export default function TelegramAdministrationPage() {
 
   return (
     <main className="min-h-screen bg-slate-950 px-5 py-8 text-white">
-<<<<<<< HEAD
-      <div className="mx-auto max-w-4xl space-y-6">
-=======
       <div className="mx-auto max-w-6xl space-y-6">
->>>>>>> origin/main
         <header className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <Link href="/erp" className="text-sm text-amber-300 hover:underline">
               العودة إلى إعدادات ERP
             </Link>
             <h1 className="mt-2 text-3xl font-bold">إدارة Telegram Bot الأمنية</h1>
-<<<<<<< HEAD
-            <p className="mt-2 text-sm text-white/60">
-              تعرض هذه الصفحة حالة التشغيل فقط، ولا تعرض رمز البوت أو أي سر مشفّر.
-=======
             <p className="mt-2 max-w-3xl text-sm text-white/60">
               لا تُقبل أي رسالة أو موافقة إلا بعد مطابقة Telegram user ID وChat ID مع المؤسسة ومستخدم نظام نشط، ثم قراءة صلاحياته الحالية من قاعدة البيانات.
->>>>>>> origin/main
             </p>
           </div>
           <button
             type="button"
-<<<<<<< HEAD
-            onClick={() => void loadStatus()}
-            disabled={loading}
-            className="rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
-          >
-            تحديث الحالة
-=======
             onClick={() => void loadAll()}
             disabled={loading}
             className="rounded-lg border border-white/15 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 disabled:opacity-50"
           >
             تحديث البيانات
->>>>>>> origin/main
           </button>
         </header>
 
@@ -324,39 +251,13 @@ export default function TelegramAdministrationPage() {
         )}
 
         <section className="rounded-2xl border border-white/10 bg-black/30 p-6 shadow-2xl">
-<<<<<<< HEAD
-          {loading && !status ? (
-            <p className="text-white/60">جاري تحميل الحالة…</p>
-          ) : status ? (
-=======
           {loading && !runtime ? (
             <p className="text-white/60">جاري تحميل الحالة…</p>
           ) : runtime ? (
->>>>>>> origin/main
             <div className="space-y-5">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-xs uppercase tracking-widest text-white/45">الحالة الفعلية</p>
-<<<<<<< HEAD
-                  <p className={`mt-1 text-2xl font-bold ${status.running ? "text-green-400" : "text-red-300"}`}>
-                    {status.running ? "يعمل" : "متوقف"}
-                  </p>
-                </div>
-                <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-white/70">
-                  البيئة: {status.environment}
-                </span>
-              </div>
-
-              <dl className="grid gap-3 sm:grid-cols-2">
-                <StatusRow label="مفعّل في الإعدادات" value={yesNo(status.enabled_by_configuration)} />
-                <StatusRow label="جاهز أمنيًا للإنتاج" value={yesNo(status.production_ready)} />
-                <StatusRow label="الإيقاف الطارئ مفعّل" value={yesNo(status.emergency_disabled)} />
-                <StatusRow label="سياسة التشغيل تسمح" value={yesNo(status.runtime_allowed)} />
-                <StatusRow label="رمز البوت محفوظ" value={yesNo(status.token_configured)} />
-                <StatusRow label="العمليات المعلقة" value={String(status.pending_entries)} />
-                <StatusRow label="سبب السياسة" value={status.policy_reason} />
-                <StatusRow label="آخر سبب تشغيل" value={status.last_runtime_reason} />
-=======
                   <p className={`mt-1 text-2xl font-bold ${runtime.running ? "text-green-400" : "text-red-300"}`}>
                     {runtime.running ? "يعمل" : "متوقف"}
                   </p>
@@ -376,39 +277,25 @@ export default function TelegramAdministrationPage() {
                 <StatusRow label="العمليات المعلقة" value={String(runtime.pending_entries)} />
                 <StatusRow label="سبب السياسة" value={runtime.policy_reason} />
                 <StatusRow label="آخر سبب تشغيل" value={runtime.last_runtime_reason} />
->>>>>>> origin/main
               </dl>
 
               <div className="rounded-xl border border-red-500/25 bg-red-950/20 p-4">
                 <h2 className="font-semibold text-red-200">الإيقاف الطارئ</h2>
                 <p className="mt-1 text-sm text-white/55">
-<<<<<<< HEAD
-                  يوقف الـPolling فورًا، ويمنع أي تشغيل جديد داخل العملية الحالية، ويمسح جميع الموافقات والعمليات المعلقة في الذاكرة.
-=======
                   يوقف الـPolling فورًا ويمنع التشغيل الجديد ويمسح جميع العمليات المعلقة.
->>>>>>> origin/main
                 </p>
                 <button
                   type="button"
                   onClick={emergencyDisable}
-<<<<<<< HEAD
-                  disabled={disabling || status.emergency_disabled}
-                  className="mt-4 rounded-lg bg-red-500 px-4 py-2 font-semibold text-white hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  {disabling ? "جاري الإيقاف…" : status.emergency_disabled ? "تم الإيقاف الطارئ" : "إيقاف Telegram Bot فورًا"}
-=======
                   disabled={disabling || runtime.emergency_disabled}
                   className="mt-4 rounded-lg bg-red-500 px-4 py-2 font-semibold text-white hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   {disabling ? "جاري الإيقاف…" : runtime.emergency_disabled ? "تم الإيقاف الطارئ" : "إيقاف Telegram Bot فورًا"}
->>>>>>> origin/main
                 </button>
               </div>
             </div>
           ) : null}
         </section>
-<<<<<<< HEAD
-=======
 
         <section className="grid gap-6 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.4fr)]">
           <form onSubmit={createAuthorization} className="h-fit rounded-2xl border border-white/10 bg-black/30 p-6">
@@ -536,7 +423,6 @@ export default function TelegramAdministrationPage() {
             </div>
           </div>
         </section>
->>>>>>> origin/main
       </div>
     </main>
   );
@@ -550,8 +436,6 @@ function StatusRow({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-<<<<<<< HEAD
-=======
 
 function MiniRow({ label, value }: { label: string; value: string }) {
   return (
@@ -570,4 +454,3 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     </label>
   );
 }
->>>>>>> origin/main

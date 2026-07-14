@@ -1,6 +1,7 @@
 import ipaddress
 import secrets
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -81,6 +82,23 @@ class Settings(BaseSettings):
     REQUIRE_MALWARE_SCAN: bool = False
 
     STORAGE_DIR: str = str(PROJECT_ROOT / "storage")
+
+    # Legacy LLM callers are local-only and never fall back to an Internet provider.
+    LOCAL_LLM_ENABLED: bool = False
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
+    OLLAMA_MODEL: str = "gemma2:9b"
+    LOCAL_LLM_TIMEOUT_SECONDS: int = 120
+    LOCAL_LLM_MAX_RESPONSE_BYTES: int = 1_048_576
+
+    # External LLM is protected by both this global kill switch and a tenant policy row.
+    EXTERNAL_LLM_ENABLED: bool = False
+    EXTERNAL_LLM_REQUIRED_DPA_VERSION: str = "2026-07-v1"
+    EXTERNAL_LLM_ALLOWED_PROVIDERS: str = "deepseek"
+    EXTERNAL_LLM_ALLOWED_MODELS: str = "deepseek:deepseek-chat"
+    EXTERNAL_LLM_ALLOWED_HOSTS: str = "api.deepseek.com"
+    EXTERNAL_LLM_MAX_REQUEST_BYTES: int = 262_144
+    EXTERNAL_LLM_MAX_RESPONSE_BYTES: int = 1_048_576
+    EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS: int = 4_000
 
     DEEPSEEK_API_KEY: str = ""
     ACCOUNTING_LLM_PROVIDER: str = "deepseek"
@@ -191,6 +209,67 @@ class Settings(BaseSettings):
         if not 65_536 <= self.ERP_OUTBOUND_MAX_RESPONSE_BYTES <= 52_428_800:
             errors.append("ERP_OUTBOUND_MAX_RESPONSE_BYTES must be between 65536 and 52428800")
 
+    def _validate_llm_configuration(self, errors: list[str]) -> None:
+        if not 5 <= self.LOCAL_LLM_TIMEOUT_SECONDS <= 300:
+            errors.append("LOCAL_LLM_TIMEOUT_SECONDS must be between 5 and 300")
+        if not 65_536 <= self.LOCAL_LLM_MAX_RESPONSE_BYTES <= 4_194_304:
+            errors.append("LOCAL_LLM_MAX_RESPONSE_BYTES must be between 65536 and 4194304")
+        if self.LOCAL_LLM_ENABLED:
+            try:
+                local_url = urlsplit(self.OLLAMA_BASE_URL)
+            except ValueError:
+                local_url = None
+            if (
+                local_url is None
+                or local_url.scheme not in {"http", "https"}
+                or (local_url.hostname or "").lower() not in {"localhost", "127.0.0.1", "::1"}
+                or local_url.username is not None
+                or local_url.password is not None
+                or local_url.query
+                or local_url.fragment
+            ):
+                errors.append("OLLAMA_BASE_URL must be a loopback-only URL")
+
+        if not 5 <= self.ACCOUNTING_LLM_TIMEOUT_SECONDS <= 120:
+            errors.append("ACCOUNTING_LLM_TIMEOUT_SECONDS must be between 5 and 120")
+        if not 16_384 <= self.EXTERNAL_LLM_MAX_REQUEST_BYTES <= 1_048_576:
+            errors.append("EXTERNAL_LLM_MAX_REQUEST_BYTES must be between 16384 and 1048576")
+        if not 65_536 <= self.EXTERNAL_LLM_MAX_RESPONSE_BYTES <= 4_194_304:
+            errors.append("EXTERNAL_LLM_MAX_RESPONSE_BYTES must be between 65536 and 4194304")
+        if not 0 <= self.EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS <= 8_000:
+            errors.append("EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS must be between 0 and 8000")
+
+        if self.EXTERNAL_LLM_ENABLED:
+            providers = [item.strip().lower() for item in self.EXTERNAL_LLM_ALLOWED_PROVIDERS.split(",") if item.strip()]
+            models = [item.strip().lower() for item in self.EXTERNAL_LLM_ALLOWED_MODELS.split(",") if item.strip()]
+            hosts = [item.strip().lower() for item in self.EXTERNAL_LLM_ALLOWED_HOSTS.split(",") if item.strip()]
+            if not providers or "*" in providers:
+                errors.append("EXTERNAL_LLM_ALLOWED_PROVIDERS requires an explicit allowlist")
+            if not models or "*" in models:
+                errors.append("EXTERNAL_LLM_ALLOWED_MODELS requires explicit provider:model pairs")
+            if not hosts or "*" in hosts:
+                errors.append("EXTERNAL_LLM_ALLOWED_HOSTS requires exact hosts")
+            if not self.EXTERNAL_LLM_REQUIRED_DPA_VERSION.strip():
+                errors.append("EXTERNAL_LLM_REQUIRED_DPA_VERSION is required")
+            if not (self.ACCOUNTING_LLM_API_KEY or self.DEEPSEEK_API_KEY):
+                errors.append("An external LLM API key is required when EXTERNAL_LLM_ENABLED is true")
+            try:
+                endpoint = urlsplit(self.ACCOUNTING_LLM_API_URL)
+            except ValueError:
+                endpoint = None
+            if (
+                endpoint is None
+                or endpoint.scheme.lower() != "https"
+                or (endpoint.hostname or "").lower() not in set(hosts)
+                or (endpoint.port not in {None, 443})
+                or endpoint.username is not None
+                or endpoint.password is not None
+                or endpoint.query
+                or endpoint.fragment
+                or not endpoint.path.endswith("/chat/completions")
+            ):
+                errors.append("ACCOUNTING_LLM_API_URL must be an approved HTTPS chat-completions endpoint")
+
     def validate_runtime_security(self) -> None:
         if not self.is_production:
             return
@@ -247,6 +326,7 @@ class Settings(BaseSettings):
             errors.append("TELEGRAM_API_RESPONSE_MAX_BYTES must be between 65536 and 4194304")
 
         self._validate_erp_outbound_configuration(errors)
+        self._validate_llm_configuration(errors)
 
         database_url_lower = self.DATABASE_URL.lower()
         if database_url_lower.startswith("sqlite"):

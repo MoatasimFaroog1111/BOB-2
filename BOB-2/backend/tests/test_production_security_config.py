@@ -24,6 +24,15 @@ def _production_settings(**overrides) -> Settings:
         "ERP_OUTBOUND_ALLOWED_CIDRS": "",
         "ERP_OUTBOUND_ALLOWED_PORTS": "443",
         "ERP_OUTBOUND_ALLOW_HTTP": False,
+        "LOCAL_LLM_ENABLED": False,
+        "EXTERNAL_LLM_ENABLED": False,
+        "EXTERNAL_LLM_REQUIRED_DPA_VERSION": "2026-07-v1",
+        "EXTERNAL_LLM_ALLOWED_PROVIDERS": "deepseek",
+        "EXTERNAL_LLM_ALLOWED_MODELS": "deepseek:deepseek-chat",
+        "EXTERNAL_LLM_ALLOWED_HOSTS": "api.deepseek.com",
+        "ACCOUNTING_LLM_API_URL": "https://api.deepseek.com/chat/completions",
+        "ACCOUNTING_LLM_API_KEY": "",
+        "DEEPSEEK_API_KEY": "",
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)
@@ -52,12 +61,64 @@ def test_complete_production_security_configuration_is_accepted():
         ("ERP_OUTBOUND_ALLOWED_HOSTS", "*", "global wildcard"),
         ("ERP_OUTBOUND_ALLOW_HTTP", True, "ERP_OUTBOUND_ALLOW_HTTP"),
         ("ERP_OUTBOUND_ALLOWED_CIDRS", "0.0.0.0/0", "private network"),
+        ("LOCAL_LLM_TIMEOUT_SECONDS", 0, "LOCAL_LLM_TIMEOUT_SECONDS"),
+        ("LOCAL_LLM_MAX_RESPONSE_BYTES", 1, "LOCAL_LLM_MAX_RESPONSE_BYTES"),
+        ("EXTERNAL_LLM_MAX_REQUEST_BYTES", 1, "EXTERNAL_LLM_MAX_REQUEST_BYTES"),
+        ("EXTERNAL_LLM_MAX_RESPONSE_BYTES", 1, "EXTERNAL_LLM_MAX_RESPONSE_BYTES"),
+        ("EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS", 9000, "EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS"),
     ],
 )
 def test_production_rejects_missing_security_control(field, value, expected):
     settings = _production_settings(**{field: value})
     with pytest.raises(ValueError, match=expected):
         settings.validate_runtime_security()
+
+
+def test_production_rejects_non_loopback_local_llm():
+    settings = _production_settings(
+        LOCAL_LLM_ENABLED=True,
+        OLLAMA_BASE_URL="http://ollama.internal:11434",
+    )
+    with pytest.raises(ValueError, match="loopback-only"):
+        settings.validate_runtime_security()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        ({"ACCOUNTING_LLM_API_KEY": ""}, "API key"),
+        ({"ACCOUNTING_LLM_API_KEY": "key", "EXTERNAL_LLM_ALLOWED_PROVIDERS": "*"}, "explicit allowlist"),
+        ({"ACCOUNTING_LLM_API_KEY": "key", "EXTERNAL_LLM_ALLOWED_MODELS": "*"}, "explicit provider:model"),
+        ({"ACCOUNTING_LLM_API_KEY": "key", "EXTERNAL_LLM_ALLOWED_HOSTS": "*"}, "exact hosts"),
+        ({"ACCOUNTING_LLM_API_KEY": "key", "EXTERNAL_LLM_REQUIRED_DPA_VERSION": ""}, "DPA_VERSION"),
+        (
+            {
+                "ACCOUNTING_LLM_API_KEY": "key",
+                "ACCOUNTING_LLM_API_URL": "http://api.deepseek.com/chat/completions",
+            },
+            "approved HTTPS",
+        ),
+        (
+            {
+                "ACCOUNTING_LLM_API_KEY": "key",
+                "ACCOUNTING_LLM_API_URL": "https://evil.example/chat/completions",
+            },
+            "approved HTTPS",
+        ),
+    ],
+)
+def test_production_external_llm_enablement_is_fail_closed(overrides, expected):
+    settings = _production_settings(EXTERNAL_LLM_ENABLED=True, **overrides)
+    with pytest.raises(ValueError, match=expected):
+        settings.validate_runtime_security()
+
+
+def test_production_accepts_explicit_external_llm_technical_configuration():
+    settings = _production_settings(
+        EXTERNAL_LLM_ENABLED=True,
+        ACCOUNTING_LLM_API_KEY="technical-key-present",
+    )
+    settings.validate_runtime_security()
 
 
 def test_production_rejects_published_database_credentials():

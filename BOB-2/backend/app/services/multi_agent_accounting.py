@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
+from sqlalchemy.orm import Session
+
 SOURCE_TYPES = {
     "invoice",
     "receipt",
@@ -40,12 +42,11 @@ class AgentFinding:
 
 
 class AccountingMultiAgentOrchestrator:
-    """GMAWS-style workflow adapted for BOB accounting flows.
+    """GMAWS-style accounting workflow with optional policy-gated LLM reasoning.
 
-    The rule-based agents always run first. If an accounting LLM API key is
-    configured, the workflow then calls a real LLM reasoner for deeper accounting,
-    audit, VAT, and ERP review. Without a key, the response explicitly says the
-    LLM layer is disabled; it does not fake LLM output.
+    Rule-based agents always run. External reasoning is only attempted when an authenticated
+    database/user/organization/request context is supplied; the reasoner then applies the
+    separate tenant consent, DPA, minimization, and audit gateway.
     """
 
     def run(
@@ -53,7 +54,10 @@ class AccountingMultiAgentOrchestrator:
         *,
         text: str,
         source_type: str = "manual_text",
-        organization_id: int = 1,
+        organization_id: int | None = None,
+        user_id: int | None = None,
+        db_session: Session | None = None,
+        request_id: str | None = None,
         language: Literal["auto", "ar", "en"] = "auto",
     ) -> dict[str, Any]:
         clean_text = text.strip()
@@ -90,6 +94,10 @@ class AccountingMultiAgentOrchestrator:
             agent_findings=agent_findings,
             conflicts=conflicts,
             final_recommendation=final_recommendation,
+            db_session=db_session,
+            organization_id=organization_id,
+            user_id=user_id,
+            request_id=request_id,
         ).to_dict()
 
         return {

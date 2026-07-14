@@ -19,6 +19,7 @@ from app.models.core import (
     User,
     VectorRecord,
 )
+from app.models.external_llm import ExternalLLMPolicy
 
 __all__ = [
     "AIAccountingSuggestion",
@@ -31,6 +32,7 @@ __all__ = [
     "AuthSession",
     "Document",
     "ERPConnection",
+    "ExternalLLMPolicy",
     "ExtractedFinancialObject",
     "JournalEntryRecord",
     "Organization",

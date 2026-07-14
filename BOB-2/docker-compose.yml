@@ -82,7 +82,6 @@ services:
       CLAMAV_PORT: "3310"
       REQUIRE_MALWARE_SCAN: "true"
       MAX_UPLOAD_SIZE_MB: "10"
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       GUARDIAN_SEED_EMAIL: ""
       GUARDIAN_SEED_PASSWORD: ""
       # Telegram remains hard-disabled until secret-store and remaining
@@ -112,6 +111,28 @@ services:
       ERP_OUTBOUND_CONNECT_TIMEOUT_SECONDS: "10"
       ERP_OUTBOUND_READ_TIMEOUT_SECONDS: "30"
       ERP_OUTBOUND_MAX_RESPONSE_BYTES: "10485760"
+      # LLM execution remains hard-disabled in the production compose profile.
+      # A key alone must never enable disclosure. External enablement requires a
+      # separately reviewed deployment change plus a tenant DPA/consent policy.
+      LOCAL_LLM_ENABLED: "false"
+      EXTERNAL_LLM_ENABLED: "false"
+      OLLAMA_BASE_URL: "http://127.0.0.1:11434"
+      OLLAMA_MODEL: "gemma2:9b"
+      LOCAL_LLM_TIMEOUT_SECONDS: "120"
+      LOCAL_LLM_MAX_RESPONSE_BYTES: "1048576"
+      EXTERNAL_LLM_REQUIRED_DPA_VERSION: "2026-07-v1"
+      EXTERNAL_LLM_ALLOWED_PROVIDERS: "deepseek"
+      EXTERNAL_LLM_ALLOWED_MODELS: "deepseek:deepseek-chat"
+      EXTERNAL_LLM_ALLOWED_HOSTS: "api.deepseek.com"
+      EXTERNAL_LLM_MAX_REQUEST_BYTES: "262144"
+      EXTERNAL_LLM_MAX_RESPONSE_BYTES: "1048576"
+      EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS: "4000"
+      ACCOUNTING_LLM_PROVIDER: "deepseek"
+      ACCOUNTING_LLM_MODEL: "deepseek-chat"
+      ACCOUNTING_LLM_API_URL: "https://api.deepseek.com/chat/completions"
+      ACCOUNTING_LLM_TIMEOUT_SECONDS: "45"
+      ACCOUNTING_LLM_API_KEY: ""
+      DEEPSEEK_API_KEY: ""
     ports:
       - "${BACKEND_BIND_IP:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     volumes:

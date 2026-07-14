@@ -76,6 +76,47 @@ class TelegramAuthorization(Base, TimestampMixin):
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class TelegramApprovalOperation(Base, TimestampMixin):
+    """Durable, actor-bound, one-time approval for a Telegram accounting operation."""
+
+    __tablename__ = "telegram_approval_operations"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','processing','posted','cancelled','expired','failed','revoked')",
+            name="ck_telegram_approval_operations_status",
+        ),
+        CheckConstraint("telegram_user_id > 0", name="ck_telegram_approval_operations_user_positive"),
+        CheckConstraint("telegram_chat_id <> 0", name="ck_telegram_approval_operations_chat_nonzero"),
+        UniqueConstraint(
+            "approval_token_hash",
+            name="uq_telegram_approval_operations_token_hash",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id"), index=True, nullable=False
+    )
+    authorization_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_authorizations.id"), index=True, nullable=False
+    )
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    system_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(50), default="telegram", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    file_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    posted_move_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    attachment_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
 class AuthSession(Base, TimestampMixin):
     """Server-side session state for access/refresh token revocation and rotation."""
 

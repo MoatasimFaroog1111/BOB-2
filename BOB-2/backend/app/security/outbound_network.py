@@ -24,6 +24,13 @@ _NEVER_ALLOWED_IPS = {
     ipaddress.ip_address("168.63.129.16"),    # Azure platform virtual IP
     ipaddress.ip_address("100.100.100.200"),  # Alibaba metadata
 }
+_PRIVATE_NETWORK_SUPERNETS = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("100.64.0.0/10"),
+    ipaddress.ip_network("fc00::/7"),
+)
 
 
 class OutboundPolicyError(ValueError):
@@ -68,13 +75,25 @@ def _allowed_ports() -> set[int]:
     return ports
 
 
+def _network_is_explicit_private_range(
+    network: ipaddress.IPv4Network | ipaddress.IPv6Network,
+) -> bool:
+    return any(
+        network.version == supernet.version and network.subnet_of(supernet)
+        for supernet in _PRIVATE_NETWORK_SUPERNETS
+    )
+
+
 def _allowed_networks() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
     for raw in _split_csv(settings.ERP_OUTBOUND_ALLOWED_CIDRS):
         try:
-            networks.append(ipaddress.ip_network(raw, strict=True))
+            network = ipaddress.ip_network(raw, strict=True)
         except ValueError as exc:
             raise OutboundPolicyError("erp_allowed_cidr_invalid") from exc
+        if not _network_is_explicit_private_range(network):
+            raise OutboundPolicyError("erp_allowed_cidr_not_private")
+        networks.append(network)
     return tuple(networks)
 
 
@@ -84,6 +103,14 @@ def _normalize_hostname(hostname: str | None) -> str:
     candidate = hostname.rstrip(".").lower()
     if not candidate or any(ord(char) < 33 for char in candidate):
         raise OutboundPolicyError("erp_hostname_invalid")
+
+    try:
+        literal = ipaddress.ip_address(candidate)
+    except ValueError:
+        literal = None
+    if literal is not None:
+        return str(literal)
+
     try:
         candidate = candidate.encode("idna").decode("ascii")
     except UnicodeError as exc:
@@ -94,8 +121,11 @@ def _normalize_hostname(hostname: str | None) -> str:
 
 
 def _host_matches_pattern(hostname: str, pattern: str) -> bool:
+    wildcard = pattern.startswith("*.")
     normalized = _normalize_hostname(pattern.removeprefix("*."))
-    if pattern.startswith("*."):
+    if wildcard:
+        if ":" in normalized:
+            raise OutboundPolicyError("erp_ipv6_wildcard_forbidden")
         return hostname.endswith("." + normalized) and hostname != normalized
     return hostname == normalized
 
@@ -116,7 +146,7 @@ def _host_is_allowlisted(hostname: str) -> bool:
         raise OutboundPolicyError("erp_allowlist_invalid") from exc
 
 
-def _ip_is_in_explicit_private_allowlist(
+def _ip_is_explicitly_allowlisted(
     address: ipaddress.IPv4Address | ipaddress.IPv6Address,
     networks: Iterable[ipaddress.IPv4Network | ipaddress.IPv6Network],
 ) -> bool:
@@ -127,6 +157,8 @@ def _validate_address(
     address: ipaddress.IPv4Address | ipaddress.IPv6Address,
     allowed_networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...],
 ) -> None:
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
     if address in _NEVER_ALLOWED_IPS:
         raise OutboundPolicyError("erp_cloud_metadata_address_blocked")
     if (
@@ -137,10 +169,10 @@ def _validate_address(
         or address.is_reserved
     ):
         raise OutboundPolicyError("erp_special_use_address_blocked")
-    if address.is_private:
-        if not _ip_is_in_explicit_private_allowlist(address, allowed_networks):
-            raise OutboundPolicyError("erp_private_address_not_allowlisted")
+    if _ip_is_explicitly_allowlisted(address, allowed_networks):
         return
+    if address.is_private:
+        raise OutboundPolicyError("erp_private_address_not_allowlisted")
     if not address.is_global:
         raise OutboundPolicyError("erp_non_global_address_blocked")
 
@@ -205,9 +237,9 @@ def validate_erp_base_url(
 
     if not isinstance(raw_url, str):
         raise OutboundPolicyError("erp_url_missing")
-    candidate = raw_url.strip()
-    if not candidate or candidate != raw_url.strip(" \r\n\t"):
+    if not raw_url or raw_url != raw_url.strip():
         raise OutboundPolicyError("erp_url_invalid")
+    candidate = raw_url
     if any(char in candidate for char in ("\r", "\n", "\t", "\\")):
         raise OutboundPolicyError("erp_url_invalid")
 

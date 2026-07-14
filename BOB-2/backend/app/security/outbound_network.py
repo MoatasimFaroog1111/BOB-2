@@ -34,14 +34,14 @@ _PRIVATE_NETWORK_SUPERNETS = (
 
 
 class OutboundPolicyError(ValueError):
-    """Structured denial that is safe to map to a generic client response."""
+    """Structured denial with a public string and a separate internal reason code."""
 
     def __init__(
         self,
         reason: str,
         public_message: str = "The ERP destination is not allowed by the outbound network policy.",
     ) -> None:
-        super().__init__(reason)
+        super().__init__(public_message)
         self.reason = reason
         self.public_message = public_message
 
@@ -227,7 +227,7 @@ def _normalize_base_path(path: str) -> str:
 def validate_erp_base_url(
     raw_url: str,
     *,
-    resolver: Resolver = socket.getaddrinfo,
+    resolver: Resolver | None = None,
 ) -> ValidatedOutboundTarget:
     """Validate, normalize, resolve, and authorize one ERP base URL.
 
@@ -271,7 +271,7 @@ def validate_erp_base_url(
 
     base_path = _normalize_base_path(parsed.path)
     allowed_networks = _allowed_networks()
-    addresses = _resolve_addresses(hostname, port, resolver)
+    addresses = _resolve_addresses(hostname, port, resolver or socket.getaddrinfo)
     for address in addresses:
         _validate_address(address, allowed_networks)
 

@@ -42,6 +42,7 @@ from app.services.telegram_accounting_service import (
     build_callback_data,
     cancel_approval,
     create_document_approval,
+    parse_callback_data,
 )
 from app.services.telegram_approval_cleanup import expire_pending_approvals
 from app.services.telegram_security import (
@@ -361,6 +362,7 @@ def _format_proposal_message(proposal: dict[str, Any], expires_at: str) -> str:
                 ]
             )
         )
+    lines_text = "\n\n".join(line_parts)
     return (
         "✅ <b>تم تحليل المستند وإنشاء موافقة آمنة!</b>\n\n"
         f"• 📁 <b>الملف:</b> {html.escape(str(proposal.get('filename') or ''))}\n"
@@ -368,7 +370,7 @@ def _format_proposal_message(proposal: dict[str, Any], expires_at: str) -> str:
         f"• 🏢 <b>الشريك:</b> {html.escape(str(proposal.get('partner_name') or 'غير محدد'))}\n"
         f"• 📑 <b>اليومية:</b> {html.escape(str(proposal.get('journal_name') or ''))}\n"
         f"• ⏱️ <b>تنتهي الموافقة:</b> {html.escape(expires_at)} UTC\n\n"
-        f"<b>القيود المقترحة:</b>\n\n{'\n\n'.join(line_parts)}\n\n"
+        f"<b>القيود المقترحة:</b>\n\n{lines_text}\n\n"
         "زر الاعتماد صالح لمرة واحدة فقط ومربوط بهويتك والمحادثة وبصمة الملف."
     )
 
@@ -415,11 +417,16 @@ def process_ingestion_job(job: TelegramIngestionJob) -> None:
         _read_and_validate_download(local_path, job.filename)
 
         analysis = GuardianDocumentAI().analyze_document(str(local_path))
-        fields = analysis.get("fields", {}) if isinstance(analysis, dict) else {}
+        if isinstance(analysis, dict):
+            fields = analysis.get("fields", {})
+            raw_text = analysis.get("raw_text_preview") or ""
+            document_class = analysis.get("document_class") or "general"
+        else:
+            fields = {}
+            raw_text = ""
+            document_class = "general"
         amount = fields.get("total_amount") or fields.get("amount") or 0
         partner_name = fields.get("supplier_name") or fields.get("partner_name") or ""
-        raw_text = analysis.get("raw_text_preview") or "" if isinstance(analysis, dict) else ""
-        document_class = analysis.get("document_class") or "general" if isinstance(analysis, dict) else "general"
 
         db = SessionLocal()
         try:
@@ -831,18 +838,13 @@ def _cleanup_expired_state() -> None:
     cutoff = time.time() - max(settings.TELEGRAM_INGESTION_JOB_TTL_SECONDS * 2, 600)
     try:
         UPLOAD_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
-        for candidate in UPLOAD_DIR.glob("*.part"):
-            try:
-                if candidate.is_file() and candidate.stat().st_mtime <= cutoff:
-                    candidate.unlink(missing_ok=True)
-            except OSError:
-                continue
-        for candidate in UPLOAD_DIR.glob(".*.part"):
-            try:
-                if candidate.is_file() and candidate.stat().st_mtime <= cutoff:
-                    candidate.unlink(missing_ok=True)
-            except OSError:
-                continue
+        for pattern in ("*.part", ".*.part"):
+            for candidate in UPLOAD_DIR.glob(pattern):
+                try:
+                    if candidate.is_file() and candidate.stat().st_mtime <= cutoff:
+                        candidate.unlink(missing_ok=True)
+                except OSError:
+                    continue
     except OSError:
         logger.exception("Telegram partial-file cleanup failed")
 
@@ -890,12 +892,18 @@ def secure_polling_loop(token: str) -> None:
                     actor = query.get("from") or {}
                     message = query.get("message") or {}
                     chat = message.get("chat") or {}
+                    parsed = parse_callback_data(query.get("data"))
+                    callback_permissions = (
+                        ("post_odoo_entries",)
+                        if parsed is not None and parsed[0] == "approve"
+                        else ("view_financials",)
+                    )
                     try:
                         context = _authorize_update(
                             telegram_user_id=actor.get("id"),
                             telegram_chat_id=chat.get("id"),
                             chat_type=chat.get("type"),
-                            required_permissions=("view_financials",),
+                            required_permissions=callback_permissions,
                             event_type="callback_query",
                             update_id=update_id,
                         )

@@ -60,6 +60,7 @@ services:
       dockerfile: Dockerfile
       target: runtime
     restart: unless-stopped
+    stop_grace_period: 15s
     depends_on:
       db:
         condition: service_healthy
@@ -80,15 +81,28 @@ services:
       CLAMAV_HOST: clamav
       CLAMAV_PORT: "3310"
       REQUIRE_MALWARE_SCAN: "true"
+      MAX_UPLOAD_SIZE_MB: "10"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       GUARDIAN_SEED_EMAIL: ""
       GUARDIAN_SEED_PASSWORD: ""
-      # Telegram remains hard-disabled until queue, secret-store, and remaining
-      # production hardening stages are complete. Approvals expire and are one-time.
+      # Telegram remains hard-disabled until secret-store, SSRF/egress, and remaining
+      # production hardening stages are complete.
       TELEGRAM_BOT_ENABLED: "false"
       TELEGRAM_BOT_PRODUCTION_READY: "false"
       TELEGRAM_ALLOW_GROUP_CHATS: "false"
       TELEGRAM_APPROVAL_TTL_SECONDS: "600"
+      # Fixed bounded queue and strict pre-download/stream limits.
+      TELEGRAM_INGESTION_WORKERS: "2"
+      TELEGRAM_INGESTION_QUEUE_SIZE: "20"
+      TELEGRAM_MAX_PENDING_PER_ACTOR: "1"
+      TELEGRAM_MAX_PENDING_PER_ORGANIZATION: "5"
+      TELEGRAM_UPLOAD_RATE_LIMIT: "5"
+      TELEGRAM_UPLOAD_RATE_WINDOW_SECONDS: "60"
+      TELEGRAM_INGESTION_JOB_TTL_SECONDS: "300"
+      TELEGRAM_DOWNLOAD_TIMEOUT_SECONDS: "30"
+      TELEGRAM_DOWNLOAD_CHUNK_SIZE_BYTES: "65536"
+      TELEGRAM_MESSAGE_MAX_AGE_SECONDS: "120"
+      TELEGRAM_API_RESPONSE_MAX_BYTES: "1048576"
     ports:
       - "${BACKEND_BIND_IP:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     volumes:

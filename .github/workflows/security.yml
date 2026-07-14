@@ -37,26 +37,55 @@ jobs:
         run: pip-audit -r requirements.lock --strict
       - name: Compile Python sources
         run: python -m compileall -q app tests
-      - name: Enforce Telegram accounting route isolation
+      - name: Enforce Telegram route and ingestion isolation
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          source = Path("app/services/telegram_bot.py").read_text(encoding="utf-8")
-          forbidden = (
+          bot_source = Path("app/services/telegram_bot.py").read_text(encoding="utf-8")
+          forbidden_route_calls = (
               "app.api.v1.erp",
               "propose_transaction",
               "register_document",
               "ProposeTransactionRequest",
               "RegisterDocumentRequest",
           )
-          violations = [item for item in forbidden if item in source]
+          violations = [item for item in forbidden_route_calls if item in bot_source]
           assert not violations, f"Telegram bot depends on FastAPI ERP routes: {violations}"
+          assert "urlretrieve" not in bot_source, "Unbounded Telegram download was reintroduced"
+          assert "target=process_document" not in bot_source, "Thread-per-upload was reintroduced"
+          assert "Direct Telegram download is disabled" in bot_source
+          assert "secure_polling_loop" in bot_source
+
+          ingestion_source = Path("app/services/telegram_ingestion.py").read_text(encoding="utf-8")
+          required_ingestion_controls = (
+              "queue.Queue",
+              "TELEGRAM_API_HOST",
+              "Content-Length",
+              "telegram_download_stream_limit_exceeded",
+              "scan_for_malware",
+              "validate_file_content",
+              "max_pending_per_actor",
+              "max_pending_per_organization",
+              "rate_window_seconds",
+              "job_ttl_seconds",
+              "os.fsync",
+              "part_path.replace(destination)",
+          )
+          missing = [item for item in required_ingestion_controls if item not in ingestion_source]
+          assert not missing, f"Telegram ingestion controls missing: {missing}"
+
           approval_source = Path("app/services/telegram_accounting_service.py").read_text(encoding="utf-8")
           assert "approval_token_hash" in approval_source
           assert "status == \"pending\"" in approval_source
           assert "post_odoo_entries" in approval_source
           PY
+      - name: Run Telegram ingestion regression tests
+        env:
+          APP_ENV: test
+          DATABASE_URL: sqlite:///./ci-ingestion-test.db
+          SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+        run: pytest -q tests/test_telegram_ingestion_security.py
       - name: Run backend tests
         env:
           APP_ENV: test
@@ -128,6 +157,23 @@ jobs:
           )
           approval_ttl = int(backend_environment.get("TELEGRAM_APPROVAL_TTL_SECONDS", 0))
           assert 60 <= approval_ttl <= 3600, "Telegram approval TTL must be bounded"
+
+          workers = int(backend_environment.get("TELEGRAM_INGESTION_WORKERS", 0))
+          queue_size = int(backend_environment.get("TELEGRAM_INGESTION_QUEUE_SIZE", 0))
+          actor_limit = int(backend_environment.get("TELEGRAM_MAX_PENDING_PER_ACTOR", 0))
+          organization_limit = int(backend_environment.get("TELEGRAM_MAX_PENDING_PER_ORGANIZATION", 0))
+          rate_limit = int(backend_environment.get("TELEGRAM_UPLOAD_RATE_LIMIT", 0))
+          job_ttl = int(backend_environment.get("TELEGRAM_INGESTION_JOB_TTL_SECONDS", 0))
+          chunk_size = int(backend_environment.get("TELEGRAM_DOWNLOAD_CHUNK_SIZE_BYTES", 0))
+          api_response_limit = int(backend_environment.get("TELEGRAM_API_RESPONSE_MAX_BYTES", 0))
+          assert 1 <= workers <= 8
+          assert 1 <= queue_size <= 200
+          assert 1 <= actor_limit <= organization_limit <= queue_size
+          assert 1 <= rate_limit <= 60
+          assert 30 <= job_ttl <= 1800
+          assert 16384 <= chunk_size <= 1048576
+          assert 65536 <= api_response_limit <= 4194304
+          assert int(backend_environment.get("MAX_UPLOAD_SIZE_MB", 0)) == 10
 
           def assert_loopback(service_name: str, published: str) -> None:
               ports = services[service_name].get("ports", [])

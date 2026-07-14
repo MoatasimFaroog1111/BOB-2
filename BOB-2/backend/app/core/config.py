@@ -164,14 +164,24 @@ class Settings(BaseSettings):
                 errors.append("ERP_OUTBOUND_ALLOWED_PORTS contains an out-of-range port")
                 break
 
+        private_supernets = (
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+            ipaddress.ip_network("100.64.0.0/10"),
+            ipaddress.ip_network("fc00::/7"),
+        )
         for raw_cidr in [item.strip() for item in self.ERP_OUTBOUND_ALLOWED_CIDRS.split(",") if item.strip()]:
             try:
                 network = ipaddress.ip_network(raw_cidr, strict=True)
             except ValueError:
                 errors.append("ERP_OUTBOUND_ALLOWED_CIDRS contains an invalid network")
                 break
-            if network.is_loopback or network.is_link_local or network.is_multicast or network.is_unspecified:
-                errors.append("ERP_OUTBOUND_ALLOWED_CIDRS contains a forbidden special-use network")
+            if not any(
+                network.version == supernet.version and network.subnet_of(supernet)
+                for supernet in private_supernets
+            ):
+                errors.append("ERP_OUTBOUND_ALLOWED_CIDRS must contain only an explicit private network")
                 break
 
         if not 1 <= self.ERP_OUTBOUND_CONNECT_TIMEOUT_SECONDS <= 30:

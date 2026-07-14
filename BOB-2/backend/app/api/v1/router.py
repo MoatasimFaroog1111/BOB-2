@@ -18,6 +18,7 @@ from app.api.v1.journal import router as journal_router
 from app.api.v1.journal_entry_actions import router as journal_entry_actions_router
 from app.api.v1.system import router as system_router
 from app.api.v1.telegram_admin import router as telegram_admin_router
+from app.api.v1.telegram_approvals import router as telegram_approvals_router
 from app.api.v1.telegram_authorizations import router as telegram_authorizations_router
 from app.security.dependencies import enforce_financial_route_permission
 
@@ -36,6 +37,11 @@ api_router.include_router(
     telegram_authorizations_router,
     prefix="/telegram",
     tags=["Telegram Authorizations"],
+)
+api_router.include_router(
+    telegram_approvals_router,
+    prefix="/telegram",
+    tags=["Telegram Approvals"],
 )
 
 # The centralized dependency is method-aware: reads require view_financials,

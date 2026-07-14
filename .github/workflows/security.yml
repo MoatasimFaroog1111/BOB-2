@@ -37,7 +37,7 @@ jobs:
         run: pip-audit -r requirements.lock --strict
       - name: Compile Python sources
         run: python -m compileall -q app tests
-      - name: Enforce Telegram and ERP outbound isolation
+      - name: Enforce Telegram, ERP, and external LLM isolation
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -109,6 +109,60 @@ jobs:
           )
           missing_policy = [item for item in required_policy_controls if item not in policy_source]
           assert not missing_policy, f"ERP outbound policy controls missing: {missing_policy}"
+
+          legacy_llm = Path("app/services/llm_service.py").read_text(encoding="utf-8")
+          forbidden_legacy_external = (
+              "_call_deepseek",
+              "DEEPSEEK_API_URL",
+              "api.deepseek.com",
+              "urllib.request",
+          )
+          legacy_violations = [item for item in forbidden_legacy_external if item in legacy_llm]
+          assert not legacy_violations, f"Legacy LLM external fallback returned: {legacy_violations}"
+          assert "LOCAL_LLM_ENABLED" in legacy_llm
+          assert "address.is_loopback" in legacy_llm
+          assert "There is deliberately no external-provider fallback" in legacy_llm
+
+          reasoner_source = Path("app/services/llm_accounting_reasoner.py").read_text(encoding="utf-8")
+          assert "ExternalLLMGateway" in reasoner_source
+          assert "ExternalLLMRequestContext" in reasoner_source
+          assert "raw_document_text=text" in reasoner_source
+          assert "db_session" in reasoner_source
+          assert "urllib.request" not in reasoner_source
+          assert "http.client" not in reasoner_source
+
+          gateway_source = Path("app/services/external_llm_gateway.py").read_text(encoding="utf-8")
+          required_gateway_controls = (
+              "EXTERNAL_LLM_ENABLED",
+              "ExternalLLMPolicy",
+              "EXTERNAL_LLM_REQUIRED_DPA_VERSION",
+              "ALLOWED_EXTERNAL_LLM_PURPOSES",
+              "external_llm_disclosure_blocked",
+              "external_llm_disclosure_started",
+              "external_llm_disclosure_succeeded",
+              "external_llm_disclosure_failed",
+              "payload_hash",
+              "redaction_counts",
+              "raw_document_text_omitted",
+              "labeled_party_or_address",
+              "accounting_reference",
+              "financial_value_text",
+              "socket.create_connection",
+              "server_hostname=self._endpoint.hostname",
+              "external_llm_proxy_tunnel_forbidden",
+              "EXTERNAL_LLM_MAX_REQUEST_BYTES",
+              "EXTERNAL_LLM_MAX_RESPONSE_BYTES",
+          )
+          missing_gateway = [item for item in required_gateway_controls if item not in gateway_source]
+          assert not missing_gateway, f"External LLM disclosure controls missing: {missing_gateway}"
+          assert gateway_source.index("external_llm_disclosure_started") < gateway_source.index("self.transport(")
+
+          admin_source = Path("app/api/v1/llm_admin.py").read_text(encoding="utf-8")
+          assert 'require_permission("manage_settings")' in admin_source
+          assert 'require_permission("view_audit_logs")' in admin_source
+          assert "accept_dpa" in admin_source
+          assert "api_key_configured" in admin_source
+          assert "ACCOUNTING_LLM_API_KEY" not in admin_source.split("api_key_configured", 1)[-1]
           PY
       - name: Run Telegram ingestion regression tests
         env:
@@ -122,11 +176,21 @@ jobs:
           DATABASE_URL: sqlite:///./ci-erp-outbound-test.db
           SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
         run: pytest -q tests/test_erp_outbound_security.py
+      - name: Run external LLM disclosure regression tests
+        env:
+          APP_ENV: test
+          DATABASE_URL: sqlite:///./ci-external-llm-test.db
+          SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+          LOCAL_LLM_ENABLED: "false"
+          EXTERNAL_LLM_ENABLED: "false"
+        run: pytest -q tests/test_external_llm_security.py
       - name: Run backend tests
         env:
           APP_ENV: test
           DATABASE_URL: sqlite:///./ci-test.db
           SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+          LOCAL_LLM_ENABLED: "false"
+          EXTERNAL_LLM_ENABLED: "false"
         run: pytest -q
 
   frontend-security:
@@ -225,6 +289,21 @@ jobs:
           assert 1 <= int(backend_environment.get("ERP_OUTBOUND_CONNECT_TIMEOUT_SECONDS", 0)) <= 30
           assert 1 <= int(backend_environment.get("ERP_OUTBOUND_READ_TIMEOUT_SECONDS", 0)) <= 120
           assert 65536 <= int(backend_environment.get("ERP_OUTBOUND_MAX_RESPONSE_BYTES", 0)) <= 52428800
+
+          assert str(backend_environment.get("LOCAL_LLM_ENABLED", "")).lower() == "false", (
+              "Production Compose must keep local LLM execution disabled"
+          )
+          assert str(backend_environment.get("EXTERNAL_LLM_ENABLED", "")).lower() == "false", (
+              "Production Compose must keep external LLM disclosure disabled"
+          )
+          assert backend_environment.get("ACCOUNTING_LLM_API_KEY", "") == ""
+          assert backend_environment.get("DEEPSEEK_API_KEY", "") == ""
+          assert backend_environment.get("EXTERNAL_LLM_ALLOWED_PROVIDERS") == "deepseek"
+          assert backend_environment.get("EXTERNAL_LLM_ALLOWED_MODELS") == "deepseek:deepseek-chat"
+          assert backend_environment.get("EXTERNAL_LLM_ALLOWED_HOSTS") == "api.deepseek.com"
+          assert int(backend_environment.get("EXTERNAL_LLM_MAX_REQUEST_BYTES", 0)) <= 1048576
+          assert int(backend_environment.get("EXTERNAL_LLM_MAX_RESPONSE_BYTES", 0)) <= 4194304
+          assert int(backend_environment.get("EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS", 0)) <= 8000
 
           def assert_loopback(service_name: str, published: str) -> None:
               ports = services[service_name].get("ports", [])

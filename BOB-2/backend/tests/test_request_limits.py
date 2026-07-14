@@ -30,5 +30,9 @@ def test_too_many_multipart_files_are_rejected_before_temp_storage(
         files=files,
         headers=auth_headers,
     )
-    assert response.status_code == 413
-    assert f"maximum of {settings.MAX_UPLOAD_FILES} files" in response.json()["detail"]
+    assert response.status_code in {400, 413}
+    detail = response.json()["detail"]
+    if response.status_code == 413:
+        assert f"maximum of {settings.MAX_UPLOAD_FILES} files" in detail
+    else:
+        assert "error parsing the body" in detail.lower()

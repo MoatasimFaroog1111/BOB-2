@@ -71,8 +71,9 @@ def test_viewer_cannot_trigger_financial_ai_mutation(client, db, seeded_user):
 def test_viewer_cannot_post_or_reverse_odoo_entries(client, db, seeded_user):
     headers = _viewer_headers(client, db)
     response = client.post(
-        "/api/v1/erp/journal-entry/TEST-2026-0001/post",
+        "/api/v1/erp/journal-entry/post",
         headers=headers,
+        json={},
     )
     assert response.status_code == 403
     assert "post_odoo_entries" in response.json()["detail"]

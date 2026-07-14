@@ -57,15 +57,16 @@ class RequestSizeLimitMiddleware:
                 return message
 
             body = message.get("body", b"")
+            more_body = message.get("more_body", False)
             received_bytes += len(body)
             if received_bytes > self.max_body_bytes:
                 raise RequestBodyTooLarge
 
-            if is_multipart and body:
+            if is_multipart and (body or (not more_body and scan_tail)):
                 combined = scan_tail + body
                 # Keep enough trailing bytes to detect a filename parameter split
                 # across ASGI chunks; process the complete tail on the final chunk.
-                keep = 0 if not message.get("more_body", False) else 64
+                keep = 0 if not more_body else 64
                 cutoff = max(0, len(combined) - keep)
                 file_count += len(_FILENAME_PARAMETER.findall(combined[:cutoff]))
                 scan_tail = combined[cutoff:]

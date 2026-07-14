@@ -3,8 +3,9 @@ from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jwt import PyJWTError
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
+from email_validator import EmailNotValidError, validate_email
 
 from app.core.config import settings
 from app.db.database import get_db
@@ -29,8 +30,21 @@ router = APIRouter()
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str = Field(..., min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email_format(cls, value: str) -> str:
+        try:
+            normalized = validate_email(
+                value,
+                check_deliverability=False,
+                test_environment=True,
+            )
+        except EmailNotValidError as exc:
+            raise ValueError(str(exc)) from exc
+        return normalized.normalized
 
 
 class LoginResponse(BaseModel):

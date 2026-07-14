@@ -1,3 +1,4 @@
+import ipaddress
 import secrets
 from pathlib import Path
 
@@ -52,6 +53,16 @@ class Settings(BaseSettings):
     TELEGRAM_DOWNLOAD_CHUNK_SIZE_BYTES: int = 65_536
     TELEGRAM_MESSAGE_MAX_AGE_SECONDS: int = 120
     TELEGRAM_API_RESPONSE_MAX_BYTES: int = 1_048_576
+
+    # Tenant-configurable ERP destinations are denied unless explicitly allowlisted.
+    ERP_OUTBOUND_REQUIRE_ALLOWLIST: bool = True
+    ERP_OUTBOUND_ALLOWED_HOSTS: str = ""
+    ERP_OUTBOUND_ALLOWED_CIDRS: str = ""
+    ERP_OUTBOUND_ALLOWED_PORTS: str = "443"
+    ERP_OUTBOUND_ALLOW_HTTP: bool = False
+    ERP_OUTBOUND_CONNECT_TIMEOUT_SECONDS: int = 10
+    ERP_OUTBOUND_READ_TIMEOUT_SECONDS: int = 30
+    ERP_OUTBOUND_MAX_RESPONSE_BYTES: int = 10_485_760
 
     MAX_UPLOAD_SIZE_MB: int = 10
     MAX_REQUEST_SIZE_MB: int = 50
@@ -129,6 +140,57 @@ class Settings(BaseSettings):
                 "Generate one with: openssl rand -hex 64"
             )
 
+    def _validate_erp_outbound_configuration(self, errors: list[str]) -> None:
+        hosts = [item.strip() for item in self.ERP_OUTBOUND_ALLOWED_HOSTS.split(",") if item.strip()]
+        if not self.ERP_OUTBOUND_REQUIRE_ALLOWLIST:
+            errors.append("ERP_OUTBOUND_REQUIRE_ALLOWLIST must be true")
+        if not hosts:
+            errors.append("ERP_OUTBOUND_ALLOWED_HOSTS is required")
+        if any(host == "*" for host in hosts):
+            errors.append("ERP_OUTBOUND_ALLOWED_HOSTS cannot contain a global wildcard")
+        if self.ERP_OUTBOUND_ALLOW_HTTP:
+            errors.append("ERP_OUTBOUND_ALLOW_HTTP must be false in production")
+
+        raw_ports = [item.strip() for item in self.ERP_OUTBOUND_ALLOWED_PORTS.split(",") if item.strip()]
+        if not raw_ports:
+            errors.append("ERP_OUTBOUND_ALLOWED_PORTS cannot be empty")
+        for raw_port in raw_ports:
+            try:
+                port = int(raw_port)
+            except ValueError:
+                errors.append("ERP_OUTBOUND_ALLOWED_PORTS contains an invalid port")
+                break
+            if not 1 <= port <= 65535:
+                errors.append("ERP_OUTBOUND_ALLOWED_PORTS contains an out-of-range port")
+                break
+
+        private_supernets = (
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+            ipaddress.ip_network("100.64.0.0/10"),
+            ipaddress.ip_network("fc00::/7"),
+        )
+        for raw_cidr in [item.strip() for item in self.ERP_OUTBOUND_ALLOWED_CIDRS.split(",") if item.strip()]:
+            try:
+                network = ipaddress.ip_network(raw_cidr, strict=True)
+            except ValueError:
+                errors.append("ERP_OUTBOUND_ALLOWED_CIDRS contains an invalid network")
+                break
+            if not any(
+                network.version == supernet.version and network.subnet_of(supernet)
+                for supernet in private_supernets
+            ):
+                errors.append("ERP_OUTBOUND_ALLOWED_CIDRS must contain only an explicit private network")
+                break
+
+        if not 1 <= self.ERP_OUTBOUND_CONNECT_TIMEOUT_SECONDS <= 30:
+            errors.append("ERP_OUTBOUND_CONNECT_TIMEOUT_SECONDS must be between 1 and 30")
+        if not 1 <= self.ERP_OUTBOUND_READ_TIMEOUT_SECONDS <= 120:
+            errors.append("ERP_OUTBOUND_READ_TIMEOUT_SECONDS must be between 1 and 120")
+        if not 65_536 <= self.ERP_OUTBOUND_MAX_RESPONSE_BYTES <= 52_428_800:
+            errors.append("ERP_OUTBOUND_MAX_RESPONSE_BYTES must be between 65536 and 52428800")
+
     def validate_runtime_security(self) -> None:
         if not self.is_production:
             return
@@ -183,6 +245,8 @@ class Settings(BaseSettings):
             errors.append("TELEGRAM_MESSAGE_MAX_AGE_SECONDS must be between 30 and 600")
         if not 65_536 <= self.TELEGRAM_API_RESPONSE_MAX_BYTES <= 4_194_304:
             errors.append("TELEGRAM_API_RESPONSE_MAX_BYTES must be between 65536 and 4194304")
+
+        self._validate_erp_outbound_configuration(errors)
 
         database_url_lower = self.DATABASE_URL.lower()
         if database_url_lower.startswith("sqlite"):

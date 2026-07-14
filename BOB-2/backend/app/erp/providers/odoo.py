@@ -1,15 +1,17 @@
-import xmlrpc.client
 from typing import Any
+
+from app.erp.odoo_transport import create_odoo_server_proxies
 
 
 class OdooProvider:
     def __init__(self, url: str, db: str, username: str, password: str):
-        self.url = url.rstrip("/")
+        target, common, models = create_odoo_server_proxies(url)
+        self.url = target.normalized_url
         self.db = db
         self.username = username
         self.password = password
-        self.common = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/common")
-        self.models = xmlrpc.client.ServerProxy(f"{self.url}/xmlrpc/2/object")
+        self.common = common
+        self.models = models
 
     def authenticate(self) -> int:
         uid = self.common.authenticate(

@@ -37,7 +37,7 @@ jobs:
         run: pip-audit -r requirements.lock --strict
       - name: Compile Python sources
         run: python -m compileall -q app tests
-      - name: Enforce Telegram route and ingestion isolation
+      - name: Enforce Telegram and ERP outbound isolation
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -79,6 +79,36 @@ jobs:
           assert "approval_token_hash" in approval_source
           assert "status == \"pending\"" in approval_source
           assert "post_odoo_entries" in approval_source
+
+          provider_source = Path("app/erp/providers/odoo.py").read_text(encoding="utf-8")
+          transport_source = Path("app/erp/odoo_transport.py").read_text(encoding="utf-8")
+          policy_source = Path("app/security/outbound_network.py").read_text(encoding="utf-8")
+          assert "xmlrpc.client.ServerProxy" not in provider_source, "Default unpinned Odoo transport returned"
+          assert "create_odoo_server_proxies" in provider_source
+          required_transport_controls = (
+              "socket.create_connection",
+              "server_hostname=self._target.hostname",
+              "validate_erp_base_url(self._base_url)",
+              "ERP_OUTBOUND_CONNECT_TIMEOUT_SECONDS",
+              "ERP_OUTBOUND_READ_TIMEOUT_SECONDS",
+              "ERP_OUTBOUND_MAX_RESPONSE_BYTES",
+              "erp_proxy_tunnel_forbidden",
+          )
+          missing_transport = [item for item in required_transport_controls if item not in transport_source]
+          assert not missing_transport, f"Odoo pinned transport controls missing: {missing_transport}"
+          required_policy_controls = (
+              "ERP_OUTBOUND_ALLOWED_HOSTS",
+              "ERP_OUTBOUND_ALLOWED_CIDRS",
+              "ERP_OUTBOUND_ALLOWED_PORTS",
+              "erp_cloud_metadata_address_blocked",
+              "erp_private_address_not_allowlisted",
+              "erp_wildcard_allowlist_forbidden",
+              "address.is_loopback",
+              "address.is_link_local",
+              "address.is_global",
+          )
+          missing_policy = [item for item in required_policy_controls if item not in policy_source]
+          assert not missing_policy, f"ERP outbound policy controls missing: {missing_policy}"
           PY
       - name: Run Telegram ingestion regression tests
         env:
@@ -86,6 +116,12 @@ jobs:
           DATABASE_URL: sqlite:///./ci-ingestion-test.db
           SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
         run: pytest -q tests/test_telegram_ingestion_security.py
+      - name: Run ERP outbound SSRF regression tests
+        env:
+          APP_ENV: test
+          DATABASE_URL: sqlite:///./ci-erp-outbound-test.db
+          SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+        run: pytest -q tests/test_erp_outbound_security.py
       - name: Run backend tests
         env:
           APP_ENV: test
@@ -130,6 +166,7 @@ jobs:
           TRUSTED_HOSTS: app.example.invalid,api.example.invalid
           TRUSTED_PROXY_IPS: 127.0.0.1/32
           NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid
+          ERP_OUTBOUND_ALLOWED_HOSTS: odoo.example.invalid
         run: |
           docker compose config --quiet
           docker compose config --format json > compose.json
@@ -174,6 +211,20 @@ jobs:
           assert 16384 <= chunk_size <= 1048576
           assert 65536 <= api_response_limit <= 4194304
           assert int(backend_environment.get("MAX_UPLOAD_SIZE_MB", 0)) == 10
+
+          assert str(backend_environment.get("ERP_OUTBOUND_REQUIRE_ALLOWLIST", "")).lower() == "true"
+          outbound_hosts = str(backend_environment.get("ERP_OUTBOUND_ALLOWED_HOSTS", "")).strip()
+          assert outbound_hosts and outbound_hosts != "*"
+          assert str(backend_environment.get("ERP_OUTBOUND_ALLOW_HTTP", "")).lower() == "false"
+          outbound_ports = {
+              int(item.strip())
+              for item in str(backend_environment.get("ERP_OUTBOUND_ALLOWED_PORTS", "")).split(",")
+              if item.strip()
+          }
+          assert outbound_ports and all(1 <= port <= 65535 for port in outbound_ports)
+          assert 1 <= int(backend_environment.get("ERP_OUTBOUND_CONNECT_TIMEOUT_SECONDS", 0)) <= 30
+          assert 1 <= int(backend_environment.get("ERP_OUTBOUND_READ_TIMEOUT_SECONDS", 0)) <= 120
+          assert 65536 <= int(backend_environment.get("ERP_OUTBOUND_MAX_RESPONSE_BYTES", 0)) <= 52428800
 
           def assert_loopback(service_name: str, published: str) -> None:
               ports = services[service_name].get("ports", [])

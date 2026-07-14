@@ -103,6 +103,9 @@ jobs:
           assert str(backend_environment.get("TELEGRAM_BOT_PRODUCTION_READY", "")).lower() == "false", (
               "Production Compose must keep Telegram readiness disabled"
           )
+          assert str(backend_environment.get("TELEGRAM_ALLOW_GROUP_CHATS", "")).lower() == "false", (
+              "Production Compose must deny Telegram group chats by default"
+          )
 
           def assert_loopback(service_name: str, published: str) -> None:
               ports = services[service_name].get("ports", [])

@@ -16,6 +16,7 @@ from app.api.v1.erp import router as erp_router
 from app.api.v1.erp_partners import router as erp_partners_router
 from app.api.v1.journal import router as journal_router
 from app.api.v1.journal_entry_actions import router as journal_entry_actions_router
+from app.api.v1.llm_admin import router as llm_admin_router
 from app.api.v1.system import router as system_router
 from app.api.v1.telegram_admin import router as telegram_admin_router
 from app.api.v1.telegram_approvals import router as telegram_approvals_router
@@ -42,6 +43,11 @@ api_router.include_router(
     telegram_approvals_router,
     prefix="/telegram",
     tags=["Telegram Approvals"],
+)
+api_router.include_router(
+    llm_admin_router,
+    prefix="/llm",
+    tags=["External LLM Administration"],
 )
 
 # The centralized dependency is method-aware: reads require view_financials,

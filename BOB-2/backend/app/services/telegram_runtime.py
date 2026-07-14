@@ -98,6 +98,7 @@ def install_runtime_guard() -> None:
 
 def _clear_pending_entries(reason: str) -> int:
     """Revoke database approvals before clearing process-local runtime markers."""
+
     module = _telegram_module()
     local_count = len(module.PENDING_ENTRIES)
     module.PENDING_ENTRIES.clear()
@@ -130,6 +131,24 @@ def _pending_count() -> int:
         return len(_telegram_module().PENDING_ENTRIES)
 
 
+def _ingestion_status() -> dict[str, Any]:
+    try:
+        from app.services.telegram_ingestion import get_ingestion_status
+
+        return get_ingestion_status()
+    except Exception:
+        logger.exception("Failed to read Telegram ingestion status")
+        return {
+            "queue_depth": 0,
+            "queue_capacity": settings.TELEGRAM_INGESTION_QUEUE_SIZE,
+            "worker_count_configured": settings.TELEGRAM_INGESTION_WORKERS,
+            "workers_alive": 0,
+            "active_actor_count": 0,
+            "active_organization_count": 0,
+            "stopping": True,
+        }
+
+
 def is_running() -> bool:
     module = _telegram_module()
     thread = module.bot_thread
@@ -160,7 +179,11 @@ def start_telegram_bot() -> bool:
 
     _audit_runtime_event(
         "telegram_bot_started" if running else "telegram_bot_start_skipped",
-        details={"reason": _last_reason, "environment": settings.APP_ENV},
+        details={
+            "reason": _last_reason,
+            "environment": settings.APP_ENV,
+            "ingestion": _ingestion_status(),
+        },
     )
     return running
 
@@ -170,13 +193,21 @@ def stop_telegram_bot(
     reason: str = "requested_stop",
     audit_event: bool = True,
 ) -> bool:
-    """Stop polling and atomically revoke all outstanding durable approvals."""
+    """Stop polling, clear queued ingestion, and revoke outstanding approvals."""
+
     global _last_reason
     install_runtime_guard()
     with _runtime_lock:
         was_running = is_running()
         assert _original_stop is not None
         _original_stop()
+        try:
+            from app.services.telegram_ingestion import shutdown_ingestion_queue
+
+            queued_cleared = shutdown_ingestion_queue()
+        except Exception:
+            logger.exception("Failed to stop Telegram ingestion queue")
+            queued_cleared = 0
         pending_cleared = _clear_pending_entries(reason)
         _set_legacy_config_active(False)
         _last_reason = reason
@@ -188,6 +219,7 @@ def stop_telegram_bot(
                 "reason": reason,
                 "was_running": was_running,
                 "pending_entries_cleared": pending_cleared,
+                "queued_ingestion_jobs_cleared": queued_cleared,
             },
         )
     return was_running
@@ -207,6 +239,7 @@ def get_runtime_status() -> dict[str, Any]:
         token_configured = bool(module.get_telegram_token())
     except Exception:
         token_configured = False
+    ingestion = _ingestion_status()
 
     return {
         "environment": settings.APP_ENV,
@@ -218,6 +251,12 @@ def get_runtime_status() -> dict[str, Any]:
         "token_configured": token_configured,
         "pending_entries": _pending_count(),
         "approval_ttl_seconds": settings.TELEGRAM_APPROVAL_TTL_SECONDS,
+        "ingestion_queue_depth": ingestion["queue_depth"],
+        "ingestion_queue_capacity": ingestion["queue_capacity"],
+        "ingestion_workers_configured": ingestion["worker_count_configured"],
+        "ingestion_workers_alive": ingestion["workers_alive"],
+        "ingestion_active_actors": ingestion["active_actor_count"],
+        "ingestion_active_organizations": ingestion["active_organization_count"],
         "policy_reason": policy_reason,
         "last_runtime_reason": _last_reason,
     }
@@ -226,4 +265,9 @@ def get_runtime_status() -> dict[str, Any]:
 def reset_emergency_disable_for_tests() -> None:
     if settings.is_production:
         raise RuntimeError("Emergency disable cannot be reset through application code in production")
-    _emergency_disabled.clear()
+    try:
+        from app.services.telegram_ingestion import reset_ingestion_queue_for_tests
+
+        reset_ingestion_queue_for_tests()
+    finally:
+        _emergency_disabled.clear()

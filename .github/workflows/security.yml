@@ -161,8 +161,10 @@ jobs:
           assert 'require_permission("manage_settings")' in admin_source
           assert 'require_permission("view_audit_logs")' in admin_source
           assert "accept_dpa" in admin_source
-          assert "api_key_configured" in admin_source
-          assert "ACCOUNTING_LLM_API_KEY" not in admin_source.split("api_key_configured", 1)[-1]
+          assert '"api_key_configured"' in admin_source
+          assert '"api_key"' not in admin_source
+          assert "api_key_prefix" not in admin_source
+          assert "api_key_value" not in admin_source
           PY
       - name: Run Telegram ingestion regression tests
         env:

@@ -1,11 +1,4 @@
-"""Central fail-closed runtime control for the legacy Telegram bot.
-
-The legacy bot is intentionally disabled by default.  Production execution requires
-both an explicit enable flag and a separate readiness flag that will only be set after
-the remaining Telegram authorization, approval, storage, and queue controls are in
-place.  This module also patches the legacy start/stop entry points so older API code
-cannot bypass the central policy.
-"""
+"""Central fail-closed runtime control for the Telegram bot."""
 
 from __future__ import annotations
 
@@ -28,7 +21,6 @@ _last_reason = "not_started"
 
 
 def evaluate_runtime_policy() -> tuple[bool, str]:
-    """Return whether Telegram execution is allowed and the governing reason."""
     if _emergency_disabled.is_set():
         return False, "emergency_disabled"
     if not settings.TELEGRAM_BOT_ENABLED:
@@ -45,11 +37,6 @@ def _telegram_module():
 
 
 def _set_legacy_config_active(is_active: bool) -> None:
-    """Keep the legacy UI state aligned with the real runtime state.
-
-    This compatibility write is temporary until Telegram configuration is migrated to
-    the organization-scoped database model in the next remediation stage.
-    """
     try:
         module = _telegram_module()
         path = module.CONFIG_PATH
@@ -72,7 +59,6 @@ def _audit_runtime_event(
     user_id: int | None = None,
     organization_id: int | None = None,
 ) -> None:
-    """Best-effort centralized audit event for automatic runtime transitions."""
     try:
         from app.db.database import SessionLocal
         from app.models.core import AuditLog
@@ -97,7 +83,6 @@ def _audit_runtime_event(
 
 
 def install_runtime_guard() -> None:
-    """Patch every legacy Telegram start/stop import through this policy gate."""
     global _installed, _original_start, _original_stop
     with _runtime_lock:
         if _installed:
@@ -111,11 +96,38 @@ def install_runtime_guard() -> None:
         logger.info("Telegram runtime guard installed")
 
 
-def _clear_pending_entries() -> int:
+def _clear_pending_entries(reason: str) -> int:
+    """Revoke database approvals before clearing process-local runtime markers."""
     module = _telegram_module()
-    pending_count = len(module.PENDING_ENTRIES)
+    local_count = len(module.PENDING_ENTRIES)
     module.PENDING_ENTRIES.clear()
-    return pending_count
+    try:
+        from app.db.database import SessionLocal
+        from app.services.telegram_accounting_service import revoke_all_pending_operations
+
+        db = SessionLocal()
+        try:
+            durable_count = revoke_all_pending_operations(db, reason=reason)
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("Failed to revoke durable Telegram approvals")
+        durable_count = 0
+    return max(local_count, durable_count)
+
+
+def _pending_count() -> int:
+    try:
+        from app.db.database import SessionLocal
+        from app.services.telegram_accounting_service import count_pending_operations
+
+        db = SessionLocal()
+        try:
+            return count_pending_operations(db)
+        finally:
+            db.close()
+    except Exception:
+        return len(_telegram_module().PENDING_ENTRIES)
 
 
 def is_running() -> bool:
@@ -125,7 +137,6 @@ def is_running() -> bool:
 
 
 def start_telegram_bot() -> bool:
-    """Start the bot only when the central fail-closed policy permits it."""
     global _last_reason
     install_runtime_guard()
     allowed, reason = evaluate_runtime_policy()
@@ -159,14 +170,14 @@ def stop_telegram_bot(
     reason: str = "requested_stop",
     audit_event: bool = True,
 ) -> bool:
-    """Stop polling and clear all in-memory approvals/pending work."""
+    """Stop polling and atomically revoke all outstanding durable approvals."""
     global _last_reason
     install_runtime_guard()
     with _runtime_lock:
         was_running = is_running()
         assert _original_stop is not None
         _original_stop()
-        pending_cleared = _clear_pending_entries()
+        pending_cleared = _clear_pending_entries(reason)
         _set_legacy_config_active(False)
         _last_reason = reason
 
@@ -183,14 +194,12 @@ def stop_telegram_bot(
 
 
 def emergency_disable_telegram_bot() -> dict[str, Any]:
-    """Immediately disable runtime execution until the application restarts."""
     _emergency_disabled.set()
     stop_telegram_bot(reason="emergency_disabled", audit_event=False)
     return get_runtime_status()
 
 
 def get_runtime_status() -> dict[str, Any]:
-    """Return administrative state without exposing any token or secret."""
     install_runtime_guard()
     module = _telegram_module()
     allowed, policy_reason = evaluate_runtime_policy()
@@ -207,14 +216,14 @@ def get_runtime_status() -> dict[str, Any]:
         "runtime_allowed": allowed,
         "running": is_running(),
         "token_configured": token_configured,
-        "pending_entries": len(module.PENDING_ENTRIES),
+        "pending_entries": _pending_count(),
+        "approval_ttl_seconds": settings.TELEGRAM_APPROVAL_TTL_SECONDS,
         "policy_reason": policy_reason,
         "last_runtime_reason": _last_reason,
     }
 
 
 def reset_emergency_disable_for_tests() -> None:
-    """Test-only helper; production code intentionally exposes no re-enable endpoint."""
     if settings.is_production:
         raise RuntimeError("Emergency disable cannot be reset through application code in production")
     _emergency_disabled.clear()

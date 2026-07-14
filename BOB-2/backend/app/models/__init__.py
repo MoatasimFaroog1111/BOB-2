@@ -8,11 +8,14 @@ from app.models.bank_reconciliation import BankReconciliationAuditLog
 from app.models.core import (
     ApprovalRequest,
     AuditLog,
+    AuthSession,
     Document,
     ERPConnection,
     ExtractedFinancialObject,
+    JournalEntryRecord,
     Organization,
     User,
+    VectorRecord,
 )
 
 __all__ = [
@@ -23,9 +26,12 @@ __all__ = [
     "BankReconciliationAuditLog",
     "ApprovalRequest",
     "AuditLog",
+    "AuthSession",
     "Document",
     "ERPConnection",
     "ExtractedFinancialObject",
+    "JournalEntryRecord",
     "Organization",
     "User",
+    "VectorRecord",
 ]

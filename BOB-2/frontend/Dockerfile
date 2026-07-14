@@ -1,8 +1,7 @@
-# ─────────────────────────────────────────────────────────────
 # GuardianAI Frontend — Next.js Production Image
-# ─────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+ARG NEXT_PUBLIC_API_BASE_URL
 
+FROM node:24-alpine AS builder
 ARG NEXT_PUBLIC_API_BASE_URL
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 
@@ -10,14 +9,21 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY . .
-RUN npm run build
+RUN test -n "$NEXT_PUBLIC_API_BASE_URL" && npm run build
 
-FROM node:20-alpine AS runner
+FROM node:24-alpine AS runner
+ARG NEXT_PUBLIC_API_BASE_URL
 WORKDIR /app
 
-ENV NODE_ENV=production
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000 \
+    NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 
-RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
+RUN test -n "$NEXT_PUBLIC_API_BASE_URL" \
+    && addgroup -g 1001 -S nodejs \
+    && adduser -S nextjs -u 1001
 
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./

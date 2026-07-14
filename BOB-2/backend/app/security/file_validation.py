@@ -1,201 +1,273 @@
-"""
-File upload security validation utilities.
-Validates file types, sizes, and content for uploaded files.
-Uses built-in magic number detection (no external dependencies).
-"""
+"""Fail-closed validation for financial document uploads."""
+
+import asyncio
+import io
 import os
-from pathlib import Path
-from typing import List, Tuple, Optional
-from fastapi import UploadFile, HTTPException, status
+import zipfile
+from pathlib import Path, PurePosixPath
+from typing import List, Optional, Tuple
+
+from fastapi import HTTPException, UploadFile, status
+
 from app.core.config import settings
 
 
 class FileValidationError(HTTPException):
-    """Custom exception for file validation errors."""
     def __init__(self, detail: str):
-        super().__init__(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=detail,
-        )
+        super().__init__(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
-# Magic bytes signatures for file type detection (no external library needed)
-MAGIC_SIGNATURES = {
-    b"%PDF":                                  ".pdf",
-    b"\x89PNG\r\n\x1a\n":                    ".png",
-    b"\xff\xd8\xff":                          ".jpg",   # JPEG
-    b"GIF87a":                                ".gif",
-    b"GIF89a":                                ".gif",
-    b"RIFF":                                  ".webp",  # further check needed
-    b"PK\x03\x04":                            ".docx",  # also .xlsx, .zip
-    b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":    ".doc",   # also .xls (OLE format)
-}
-
-# Allowed extensions
-ALLOWED_EXTENSIONS = {
-    ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp",
-    ".txt", ".csv", ".docx", ".xlsx", ".doc", ".xls",
-}
-
-# Dangerous extensions that should never be allowed
 DANGEROUS_EXTENSIONS = {
     ".exe", ".dll", ".bat", ".cmd", ".sh", ".py", ".js", ".php",
-    ".jsp", ".asp", ".aspx", ".rb", ".pl", ".cgi", ".com",
-    ".scr", ".msi", ".vbs", ".wsf", ".ps1", ".psm1", ".jar",
+    ".jsp", ".asp", ".aspx", ".rb", ".pl", ".cgi", ".com", ".scr",
+    ".msi", ".vbs", ".wsf", ".ps1", ".psm1", ".jar", ".zip", ".rar",
+    ".7z", ".docm", ".xlsm", ".xlam", ".pptm",
 }
 
+TEXT_EXTENSIONS = {".txt", ".csv", ".tsv", ".ofx", ".qfx", ".qif", ".mt940", ".sta"}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
-def detect_file_type(content: bytes) -> Optional[str]:
-    """Detect file type from magic bytes without external libraries."""
-    for signature, ext in MAGIC_SIGNATURES.items():
-        if content.startswith(signature):
-            # Extra check for webp (RIFF....WEBP)
-            if signature == b"RIFF" and len(content) >= 12:
-                if content[8:12] == b"WEBP":
-                    return ".webp"
-                # Not webp, skip
-                continue
-            return ext
-    # Plain text fallback (txt/csv)
+
+def _looks_like_text(content: bytes) -> bool:
+    if b"\x00" in content[:4096]:
+        return False
+    sample = content[:8192]
+    for encoding in ("utf-8", "cp1252"):
+        try:
+            decoded = sample.decode(encoding)
+            if not decoded:
+                return False
+            printable = sum(char.isprintable() or char in "\r\n\t" for char in decoded)
+            return printable / len(decoded) >= 0.9
+        except UnicodeDecodeError:
+            continue
+    return False
+
+
+def _inspect_office_zip(content: bytes) -> Optional[str]:
     try:
-        content[:512].decode("utf-8")
-        return ".txt"
-    except Exception:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            names = {name.replace("\\", "/") for name in archive.namelist()}
+            if "[Content_Types].xml" in names and any(name.startswith("xl/") for name in names):
+                return ".xlsx"
+    except (zipfile.BadZipFile, OSError):
         return None
+    return None
+
+
+def detect_file_type(content: bytes, declared_extension: str) -> Optional[str]:
+    if content.startswith(b"%PDF-"):
+        return ".pdf"
+    if content.startswith(b"\x89PNG\r\n\x1a\n"):
+        return ".png"
+    if content.startswith(b"\xff\xd8\xff"):
+        return ".jpg"
+    if content.startswith(b"RIFF") and len(content) >= 12 and content[8:12] == b"WEBP":
+        return ".webp"
+    if content.startswith(b"PK\x03\x04"):
+        return _inspect_office_zip(content)
+    if declared_extension in TEXT_EXTENSIONS and _looks_like_text(content):
+        return declared_extension
+    return None
 
 
 def validate_file_extension(filename: Optional[str]) -> bool:
-    """Validate that file extension is allowed."""
     if not filename:
         raise FileValidationError("Filename is required")
 
     ext = Path(filename).suffix.lower()
-
-    # Check for dangerous extensions
+    if not ext:
+        raise FileValidationError("A file extension is required")
     if ext in DANGEROUS_EXTENSIONS:
         raise FileValidationError(f"File type '{ext}' is not allowed for security reasons")
 
-    # Check against allowed extensions from settings
     allowed_exts = settings.allowed_upload_extensions_list
     if ext not in allowed_exts:
         raise FileValidationError(
             f"File extension '{ext}' is not allowed. Allowed: {', '.join(allowed_exts)}"
         )
-
     return True
 
 
 def validate_file_size(content: bytes) -> bool:
-    """Validate that file size is within limits."""
     max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-
     if len(content) > max_size_bytes:
         raise FileValidationError(
             f"File size exceeds maximum allowed size of {settings.MAX_UPLOAD_SIZE_MB}MB"
         )
-
     return True
+
+
+def _validate_zip_member_name(name: str) -> None:
+    normalized = name.replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if normalized.startswith("/") or ".." in path.parts:
+        raise FileValidationError("Archive contains an unsafe path")
+
+
+def validate_xlsx_archive(content: bytes) -> None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(content)) as archive:
+            members = archive.infolist()
+            if len(members) > settings.MAX_ARCHIVE_FILES:
+                raise FileValidationError("Spreadsheet contains too many embedded files")
+
+            total_uncompressed = 0
+            for member in members:
+                _validate_zip_member_name(member.filename)
+                lower_name = member.filename.lower()
+                if lower_name.endswith("vbaproject.bin") or "/externalLinks/".lower() in lower_name:
+                    raise FileValidationError(
+                        "Macro-enabled or externally linked spreadsheets are not allowed"
+                    )
+
+                total_uncompressed += member.file_size
+                if total_uncompressed > settings.MAX_ARCHIVE_UNCOMPRESSED_MB * 1024 * 1024:
+                    raise FileValidationError("Spreadsheet expands beyond the safe size limit")
+
+                if member.file_size > 1_000_000:
+                    compressed = max(member.compress_size, 1)
+                    if member.file_size / compressed > 100:
+                        raise FileValidationError("Suspicious spreadsheet compression ratio detected")
+    except zipfile.BadZipFile as exc:
+        raise FileValidationError("Invalid XLSX archive") from exc
+
+
+def validate_pdf(content: bytes) -> None:
+    try:
+        import fitz
+
+        document = fitz.open(stream=content, filetype="pdf")
+        try:
+            if document.is_encrypted:
+                raise FileValidationError("Encrypted PDF files are not accepted")
+            if document.page_count > settings.MAX_PDF_PAGES:
+                raise FileValidationError(
+                    f"PDF exceeds the maximum of {settings.MAX_PDF_PAGES} pages"
+                )
+        finally:
+            document.close()
+    except FileValidationError:
+        raise
+    except Exception as exc:
+        raise FileValidationError("Invalid or corrupted PDF file") from exc
+
+
+def validate_image(content: bytes) -> None:
+    try:
+        from PIL import Image
+
+        Image.MAX_IMAGE_PIXELS = settings.MAX_IMAGE_PIXELS
+        with Image.open(io.BytesIO(content)) as image:
+            width, height = image.size
+            if width <= 0 or height <= 0 or width * height > settings.MAX_IMAGE_PIXELS:
+                raise FileValidationError("Image dimensions exceed the safe processing limit")
+            image.verify()
+    except FileValidationError:
+        raise
+    except Exception as exc:
+        raise FileValidationError("Invalid or unsafe image file") from exc
 
 
 def validate_file_content(content: bytes, declared_extension: str) -> bool:
-    """
-    Validate file content using built-in magic number detection.
-    Ensures file content matches the declared extension.
-    """
     if not content:
         raise FileValidationError("File is empty")
 
-    detected_ext = detect_file_type(content)
     declared_ext = declared_extension.lower()
+    detected_ext = detect_file_type(content, declared_ext)
+    if detected_ext is None:
+        raise FileValidationError("Unknown or unsupported file content")
 
-    # Allow jpg/jpeg interchange
-    if declared_ext == ".jpeg":
-        declared_ext = ".jpg"
+    normalized_declared = ".jpg" if declared_ext == ".jpeg" else declared_ext
+    normalized_detected = ".jpg" if detected_ext == ".jpeg" else detected_ext
+    if normalized_detected != normalized_declared:
+        raise FileValidationError(
+            "File content does not match its extension "
+            f"(detected: {detected_ext}, declared: {declared_ext})"
+        )
 
-    # If we can detect the type, verify it matches the declared extension
-    if detected_ext is not None:
-        # .docx and .xlsx both start with PK (ZIP), allow both
-        if detected_ext == ".docx" and declared_ext in {".docx", ".xlsx"}:
-            return True
-        # .doc and .xls both use OLE format
-        if detected_ext == ".doc" and declared_ext in {".doc", ".xls"}:
-            return True
-        # txt also covers csv
-        if detected_ext == ".txt" and declared_ext in {".txt", ".csv"}:
-            return True
-
-        if detected_ext != declared_ext:
-            raise FileValidationError(
-                f"File content does not match its extension "
-                f"(detected: {detected_ext}, declared: {declared_ext})"
-            )
-
+    if declared_ext == ".xlsx":
+        validate_xlsx_archive(content)
+    elif declared_ext == ".pdf":
+        validate_pdf(content)
+    elif declared_ext in IMAGE_EXTENSIONS:
+        validate_image(content)
     return True
 
 
+def scan_for_malware(content: bytes) -> None:
+    """Scan bytes with ClamAV and fail closed when scanning is required."""
+    if not settings.CLAMAV_HOST:
+        if settings.REQUIRE_MALWARE_SCAN:
+            raise FileValidationError("Malware scanner is not configured")
+        return
+
+    try:
+        import clamd
+
+        client = clamd.ClamdNetworkSocket(
+            host=settings.CLAMAV_HOST,
+            port=settings.CLAMAV_PORT,
+            timeout=10,
+        )
+        result = client.instream(io.BytesIO(content))
+        status_value = result.get("stream") if isinstance(result, dict) else None
+        scan_status = status_value[0] if status_value else None
+        signature = status_value[1] if status_value and len(status_value) > 1 else None
+
+        if scan_status == "FOUND":
+            raise FileValidationError(
+                f"Upload rejected by malware scanner: {signature or 'malware detected'}"
+            )
+        if scan_status != "OK":
+            raise FileValidationError("Malware scanner returned an indeterminate result")
+    except FileValidationError:
+        raise
+    except Exception as exc:
+        if settings.REQUIRE_MALWARE_SCAN:
+            raise FileValidationError("Malware scan could not be completed") from exc
+
+
 def sanitize_filename(filename: str) -> str:
-    """Sanitize filename to prevent path traversal and other attacks."""
     if not filename:
         return "unnamed_file"
-
-    # Remove path traversal characters
-    filename = os.path.basename(filename)
-
-    # Remove null bytes
-    filename = filename.replace("\x00", "")
-
-    # Replace dangerous characters
-    dangerous_chars = ['<', '>', ':', '"', '|', '?', '*']
-    for char in dangerous_chars:
+    filename = os.path.basename(filename).replace("\x00", "")
+    for char in ['<', '>', ':', '"', '|', '?', '*']:
         filename = filename.replace(char, "_")
-
-    # Limit length
-    max_length = 255
     name, ext = os.path.splitext(filename)
-    if len(filename) > max_length:
-        name = name[:max_length - len(ext)]
-        filename = name + ext
-
+    if len(filename) > 255:
+        filename = name[: 255 - len(ext)] + ext
     return filename
 
 
 async def validate_upload_file(file: UploadFile) -> Tuple[bool, Optional[str]]:
-    """
-    Comprehensive validation of an uploaded file.
-    Returns (is_valid, error_message).
-    """
     try:
-        # Validate filename
         if not file.filename:
             raise FileValidationError("File must have a filename")
 
-        # Sanitize and validate extension
         safe_filename = sanitize_filename(file.filename)
         validate_file_extension(safe_filename)
 
-        # Read and validate content
-        content = await file.read()
-
-        # Reset file position for further processing
+        max_size_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+        content = await file.read(max_size_bytes + 1)
         await file.seek(0)
 
-        # Validate size
         validate_file_size(content)
+        ext = Path(safe_filename).suffix.lower()
 
-        # Validate content type
-        ext = Path(safe_filename).suffix
-        validate_file_content(content, ext)
-
+        # Scan before invoking parsers, decompression, OCR, or image decoders.
+        await asyncio.to_thread(scan_for_malware, content)
+        await asyncio.to_thread(validate_file_content, content, ext)
         return True, None
+    except FileValidationError as exc:
+        return False, str(exc.detail)
+    except Exception:
+        return False, "File validation failed"
 
-    except FileValidationError as e:
-        return False, str(e.detail)
-    except Exception as e:
-        return False, f"File validation failed: {str(e)}"
 
-
-async def validate_upload_files(files: List[UploadFile]) -> List[Tuple[UploadFile, bool, Optional[str]]]:
-    """Validate multiple uploaded files."""
+async def validate_upload_files(
+    files: List[UploadFile],
+) -> List[Tuple[UploadFile, bool, Optional[str]]]:
     results = []
     for file in files:
         is_valid, error = await validate_upload_file(file)
@@ -204,21 +276,13 @@ async def validate_upload_files(files: List[UploadFile]) -> List[Tuple[UploadFil
 
 
 def validate_file_path(path: str, base_dir: str) -> bool:
-    """
-    Validate that a file path is within the allowed base directory.
-    Prevents path traversal attacks using modern path resolution.
-    """
     try:
-        # Resolve to absolute, real paths
         target_path = Path(path).resolve()
         allowed_base = Path(base_dir).resolve()
-
-        # Check if the target path is relative to the allowed base directory
         if not target_path.is_relative_to(allowed_base):
             raise FileValidationError("Path traversal detected - file outside allowed directory")
-
         return True
-    except Exception as e:
-        if isinstance(e, FileValidationError):
-            raise
-        raise FileValidationError(f"Path validation failed: {str(e)}")
+    except FileValidationError:
+        raise
+    except Exception as exc:
+        raise FileValidationError("Path validation failed") from exc

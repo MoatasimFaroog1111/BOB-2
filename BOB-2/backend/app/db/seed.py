@@ -1,8 +1,8 @@
 import logging
-import os
 
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.db.database import SessionLocal
 from app.models.core import Organization, User
 from app.security.auth import hash_password, validate_password_strength
@@ -10,12 +10,13 @@ from app.security.auth import hash_password, validate_password_strength
 logger = logging.getLogger(__name__)
 
 
-def _is_production() -> bool:
-    return os.getenv("APP_ENV", "development").strip().lower() in {"production", "prod"}
-
-
 def seed_db(db: Session) -> None:
-    # Seed a default organization only for an empty database.
+    """Seed non-sensitive baseline data.
+
+    Production deliberately never creates an owner account automatically. A production
+    administrator must be provisioned through a controlled bootstrap process after the
+    database is deployed.
+    """
     org = db.query(Organization).filter(Organization.id == 1).first()
     if not org:
         logger.info("Seeding default organization...")
@@ -31,28 +32,31 @@ def seed_db(db: Session) -> None:
         db.refresh(org)
         logger.info("Default organization seeded: %s", org.name)
 
-    # Production owners must be provisioned through an explicit administrative
-    # workflow. Never create a known owner identity automatically in production.
-    if _is_production():
-        logger.info("Skipping owner seed in production.")
+    if settings.is_production:
+        logger.info("Automatic owner seeding is disabled in production.")
         return
 
-    seed_email = os.getenv("GUARDIAN_SEED_EMAIL", "").strip().lower()
-    seed_password = os.getenv("GUARDIAN_SEED_PASSWORD", "")
+    seed_email = settings.GUARDIAN_SEED_EMAIL.strip().lower()
+    seed_password = settings.GUARDIAN_SEED_PASSWORD.strip()
     if not seed_email and not seed_password:
-        logger.info("No development seed owner requested.")
+        logger.info("No development owner bootstrap was requested.")
         return
     if not seed_email or not seed_password:
-        raise RuntimeError(
-            "GUARDIAN_SEED_EMAIL and GUARDIAN_SEED_PASSWORD must both be set to seed an owner"
+        raise ValueError(
+            "GUARDIAN_SEED_EMAIL and GUARDIAN_SEED_PASSWORD must both be set "
+            "for development owner bootstrap"
         )
 
-    validate_password_strength(seed_password)
+    is_valid, error = validate_password_strength(seed_password)
+    if not is_valid:
+        raise ValueError(f"GUARDIAN_SEED_PASSWORD is not strong enough: {error}")
+
     user = db.query(User).filter(User.email == seed_email).first()
     if user:
-        logger.info("Seed owner already exists.")
+        logger.info("Development owner already exists; seed will not change its password.")
         return
 
+    logger.warning("Creating opt-in development owner account: %s", seed_email)
     user = User(
         organization_id=org.id,
         email=seed_email,
@@ -63,7 +67,6 @@ def seed_db(db: Session) -> None:
     )
     db.add(user)
     db.commit()
-    logger.info("Development seed owner created.")
 
 
 def run_seed() -> None:
@@ -71,7 +74,7 @@ def run_seed() -> None:
     try:
         seed_db(db)
     except Exception:
-        logger.exception("Database seeding failed")
+        logger.exception("Error seeding database")
         db.rollback()
         raise
     finally:

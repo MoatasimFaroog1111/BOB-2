@@ -12,13 +12,47 @@ services:
       - pgdata:/var/lib/postgresql/data
     expose:
       - "5432"
+    networks:
+      - backend_private
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-guardian} -d ${POSTGRES_DB:-guardianai}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+    command: ["sh", "-c", "exec redis-server --appendonly yes --requirepass \"$$REDIS_PASSWORD\""]
+    volumes:
+      - redisdata:/data
+    expose:
+      - "6379"
     networks:
-      - internal
+      - backend_private
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+
+  clamav:
+    image: clamav/clamav:stable
+    restart: unless-stopped
+    expose:
+      - "3310"
+    volumes:
+      - clamdata:/var/lib/clamav
+    networks:
+      - backend_private
+    security_opt:
+      - no-new-privileges:true
 
   backend:
     build:
@@ -29,44 +63,68 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      clamav:
+        condition: service_started
     environment:
       APP_ENV: production
-      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-guardian}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-guardianai}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required; use a URL-encoded strong password}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL is required; use a URL-encoded strong password}
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required; generate with openssl rand -hex 64}
-      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?FRONTEND_ORIGIN is required}
-      CORS_ORIGINS: ${CORS_ORIGINS:?CORS_ORIGINS is required}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?FRONTEND_ORIGIN must be the public HTTPS frontend URL}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
       TRUSTED_HOSTS: ${TRUSTED_HOSTS:?TRUSTED_HOSTS is required}
+      TRUSTED_PROXY_IPS: ${TRUSTED_PROXY_IPS:?TRUSTED_PROXY_IPS is required}
       REQUIRE_HTTPS: "true"
+      CLAMAV_HOST: clamav
+      CLAMAV_PORT: "3310"
+      REQUIRE_MALWARE_SCAN: "true"
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       GUARDIAN_SEED_EMAIL: ""
       GUARDIAN_SEED_PASSWORD: ""
     ports:
-      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+      - "${BACKEND_BIND_IP:-127.0.0.1}:${BACKEND_PORT:-8000}:8000"
     volumes:
       - storage:/app/storage
     networks:
-      - internal
-      - edge
+      - backend_private
+      - public
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?NEXT_PUBLIC_API_BASE_URL is required}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?NEXT_PUBLIC_API_BASE_URL must be the public HTTPS backend URL}
     restart: unless-stopped
     depends_on:
       - backend
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:?NEXT_PUBLIC_API_BASE_URL must be the public HTTPS backend URL}
     ports:
-      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+      - "${FRONTEND_BIND_IP:-127.0.0.1}:${FRONTEND_PORT:-3000}:3000"
     networks:
-      - edge
-
-networks:
-  internal:
-    internal: true
-  edge:
+      - public
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
   pgdata:
+  redisdata:
+  clamdata:
   storage:
+
+networks:
+  backend_private:
+    internal: true
+  public:

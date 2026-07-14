@@ -33,8 +33,8 @@ def test_multi_agent_workflow_requires_enough_text():
         raise AssertionError("Expected ValueError for short text")
 
 
-def test_agents_capabilities_endpoint(client):
-    response = client.get("/api/v1/agents/capabilities")
+def test_agents_capabilities_endpoint(client, auth_headers):
+    response = client.get("/api/v1/agents/capabilities", headers=auth_headers)
 
     assert response.status_code == 200
     payload = response.json()
@@ -50,7 +50,7 @@ def test_agents_capabilities_endpoint(client):
     }
 
 
-def test_agents_run_workflow_endpoint_handles_arabic_tax_invoice(client):
+def test_agents_run_workflow_endpoint_handles_arabic_tax_invoice(client, auth_headers):
     text = """
     فاتورة ضريبية INV/2026/0002
     المورد: شركة غارديان للمقاولات الفنية
@@ -63,6 +63,7 @@ def test_agents_run_workflow_endpoint_handles_arabic_tax_invoice(client):
     response = client.post(
         "/api/v1/agents/run-accounting-workflow",
         json={"text": text, "source_type": "invoice", "organization_id": 1, "language": "auto"},
+        headers=auth_headers,
     )
 
     assert response.status_code == 200

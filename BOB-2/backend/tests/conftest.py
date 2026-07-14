@@ -12,7 +12,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.core.config import settings
 from app.db.database import Base, get_db
 from app.main import app
 
@@ -81,3 +80,18 @@ def seeded_user(db):
     db.add(user)
     db.commit()
     return {"email": "test@guardian-ai.com", "password": password}
+
+
+@pytest.fixture()
+def auth_headers(client, seeded_user):
+    """Return a real bearer token from the hardened login flow."""
+    response = client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": seeded_user["email"],
+            "password": seeded_user["password"],
+        },
+        headers={"User-Agent": "pytest-authenticated-client"},
+    )
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}

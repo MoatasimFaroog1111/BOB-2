@@ -1,7 +1,7 @@
 # GuardianAI Frontend — Next.js Production Image
 ARG NEXT_PUBLIC_API_BASE_URL
 
-FROM node:24-alpine AS builder
+FROM node:26-alpine AS builder
 ARG NEXT_PUBLIC_API_BASE_URL
 ENV NEXT_PUBLIC_API_BASE_URL=$NEXT_PUBLIC_API_BASE_URL
 
@@ -11,7 +11,7 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN test -n "$NEXT_PUBLIC_API_BASE_URL" && npm run build
 
-FROM node:24-alpine AS runner
+FROM node:26-alpine AS runner
 ARG NEXT_PUBLIC_API_BASE_URL
 WORKDIR /app
 

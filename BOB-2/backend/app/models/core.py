@@ -1,6 +1,19 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    CheckConstraint,
+    Date,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    JSON,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -27,6 +40,81 @@ class User(Base, TimestampMixin):
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="viewer")
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
+class TelegramAuthorization(Base, TimestampMixin):
+    """Explicit Telegram identity-to-tenant and identity-to-user binding.
+
+    No role or permission is copied into this table. Authorization always reads the
+    linked system user's current role from the users table so a role reduction takes
+    effect on the next Telegram operation.
+    """
+
+    __tablename__ = "telegram_authorizations"
+    __table_args__ = (
+        UniqueConstraint(
+            "telegram_user_id",
+            "telegram_chat_id",
+            name="uq_telegram_authorizations_actor_chat",
+        ),
+        CheckConstraint("telegram_user_id > 0", name="ck_telegram_authorizations_user_positive"),
+        CheckConstraint("telegram_chat_id <> 0", name="ck_telegram_authorizations_chat_nonzero"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id"), index=True, nullable=False
+    )
+    system_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    created_by_user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id"), index=True, nullable=False
+    )
+    allow_group_chats: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class TelegramApprovalOperation(Base, TimestampMixin):
+    """Durable, actor-bound, one-time approval for a Telegram accounting operation."""
+
+    __tablename__ = "telegram_approval_operations"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','processing','posted','cancelled','expired','failed','revoked')",
+            name="ck_telegram_approval_operations_status",
+        ),
+        CheckConstraint("telegram_user_id > 0", name="ck_telegram_approval_operations_user_positive"),
+        CheckConstraint("telegram_chat_id <> 0", name="ck_telegram_approval_operations_chat_nonzero"),
+        UniqueConstraint(
+            "approval_token_hash",
+            name="uq_telegram_approval_operations_token_hash",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id"), index=True, nullable=False
+    )
+    authorization_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_authorizations.id"), index=True, nullable=False
+    )
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, index=True, nullable=False)
+    system_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(50), default="telegram", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", index=True, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    approval_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    file_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    failure_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    posted_move_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    attachment_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class AuthSession(Base, TimestampMixin):

@@ -33,6 +33,10 @@ Set all of the following through the deployment platform's secret manager, not i
 - `REQUIRE_MALWARE_SCAN=true`
 - `TELEGRAM_BOT_ENABLED=false`
 - `TELEGRAM_BOT_PRODUCTION_READY=false`
+<<<<<<< HEAD
+=======
+- `TELEGRAM_ALLOW_GROUP_CHATS=false`
+>>>>>>> origin/main
 
 The backend deliberately refuses to start when mandatory production controls are missing. Telegram is separately fail-closed: even a legacy endpoint cannot start the bot unless the centralized runtime policy allows it.
 
@@ -101,7 +105,12 @@ Alert on:
 - changes to production secrets or trusted hosts/proxies;
 - unusual journal reads/exports and failed authorization checks;
 - attempts to start Telegram while the policy blocks it;
+<<<<<<< HEAD
 - Telegram emergency-disable events and cleared pending operations.
+=======
+- Telegram emergency-disable events and cleared pending operations;
+- Telegram access denials, inactive identity bindings, tenant mismatches, and permission failures.
+>>>>>>> origin/main
 
 Retain audit and security logs in append-only or centrally controlled storage with access restricted to authorized administrators and auditors.
 
@@ -112,6 +121,10 @@ Until every later Telegram hardening stage is completed, production must keep:
 ```env
 TELEGRAM_BOT_ENABLED=false
 TELEGRAM_BOT_PRODUCTION_READY=false
+<<<<<<< HEAD
+=======
+TELEGRAM_ALLOW_GROUP_CHATS=false
+>>>>>>> origin/main
 ```
 
 The central runtime guard patches the legacy start and stop functions, so the historical `/api/v1/erp/telegram-config` endpoint cannot bypass this policy. A blocked start also synchronizes the legacy UI state to inactive, stops polling, and clears in-memory pending entries.
@@ -127,3 +140,32 @@ The emergency control is:
 - API: `POST /api/v1/telegram/emergency-disable`
 
 The emergency action requires `manage_settings`, immediately stops polling, clears pending entries, and creates a centralized audit record. No application endpoint is provided to reverse an emergency stop in production.
+<<<<<<< HEAD
+=======
+
+## 9. Telegram identity allowlist
+
+Apply migration `4c9d7e2a1b60` before configuring identities. Each allowlist row binds all of the following values:
+
+- exact Telegram user ID;
+- exact Telegram chat ID;
+- one `organization_id`;
+- one active system user in that organization;
+- the administrator who created the binding;
+- optional per-row group-chat permission.
+
+Manage bindings only through the authenticated administration page `/admin/telegram` or the `manage_settings` endpoints under `/api/v1/telegram/authorizations`. Do not insert rows manually except during a controlled recovery procedure.
+
+Security behavior:
+
+- every Telegram message and callback verifies `from.id`, `chat.id`, and chat type;
+- permissions are read from the linked system user's current database role on every operation;
+- inactive bindings, users, and organizations fail closed;
+- channels are rejected;
+- groups and supergroups require both `TELEGRAM_ALLOW_GROUP_CHATS=true` and `allow_group_chats=true` on the exact row;
+- pending work is keyed by both chat ID and Telegram user ID, so another group member cannot approve it;
+- deactivating a binding clears that actor's pending work;
+- every grant and denial is written to the central audit table without tokens or passwords.
+
+The legacy posting implementation still supports only organization 1 and is explicitly blocked for other organizations. Do not set `TELEGRAM_BOT_PRODUCTION_READY=true` until the independent tenant-aware posting and approval service is completed.
+>>>>>>> origin/main

@@ -14,6 +14,8 @@ from app.models.core import (
     ExtractedFinancialObject,
     JournalEntryRecord,
     Organization,
+    TelegramApprovalOperation,
+    TelegramAuthorization,
     User,
     VectorRecord,
 )
@@ -32,6 +34,8 @@ __all__ = [
     "ExtractedFinancialObject",
     "JournalEntryRecord",
     "Organization",
+    "TelegramApprovalOperation",
+    "TelegramAuthorization",
     "User",
     "VectorRecord",
 ]

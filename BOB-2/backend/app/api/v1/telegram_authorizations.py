@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
@@ -13,6 +11,7 @@ from app.db.database import get_db
 from app.models.core import Organization, TelegramAuthorization, User
 from app.security.dependencies import require_permission
 from app.security.roles import ROLE_PERMISSIONS, UserRole
+from app.services.telegram_accounting_service import revoke_actor_pending_operations
 from app.services.telegram_security import record_telegram_event
 
 router = APIRouter()
@@ -155,6 +154,25 @@ def _serialize(db: Session, row: TelegramAuthorization) -> TelegramAuthorization
     )
 
 
+def _clear_runtime_marker(telegram_chat_id: int, telegram_user_id: int) -> int:
+    from app.services import telegram_bot
+
+    with telegram_bot.pending_entries_lock:
+        return 1 if telegram_bot.PENDING_ENTRIES.pop((telegram_chat_id, telegram_user_id), None) else 0
+
+
+def _revoke_pending_for_row(db: Session, row: TelegramAuthorization, reason: str) -> int:
+    """Use the request's tenant transaction; never open a second database session."""
+    durable = revoke_actor_pending_operations(
+        db,
+        telegram_chat_id=row.telegram_chat_id,
+        telegram_user_id=row.telegram_user_id,
+        reason=reason,
+    )
+    local = _clear_runtime_marker(row.telegram_chat_id, row.telegram_user_id)
+    return max(durable, local)
+
+
 @router.get("/system-users", response_model=list[TelegramSystemUserResponse])
 def list_telegram_system_users(
     current_user: dict = Depends(require_permission("manage_settings")),
@@ -291,8 +309,18 @@ def update_telegram_authorization(
             _target_user(db, organization_id, row.system_user_id)
         row.is_active = payload.is_active
 
-    db.commit()
+    security_binding_changed = (
+        not row.is_active or before["system_user_id"] != row.system_user_id
+    )
+    cleared = (
+        _revoke_pending_for_row(db, row, "authorization_binding_changed")
+        if security_binding_changed
+        else 0
+    )
+    if not security_binding_changed:
+        db.commit()
     db.refresh(row)
+
     actor_id = current_user.get("user_id")
     record_telegram_event(
         db,
@@ -309,12 +337,9 @@ def update_telegram_authorization(
                 "allow_group_chats": row.allow_group_chats,
                 "is_active": row.is_active,
             },
+            "pending_approvals_revoked": cleared,
         },
     )
-    if not row.is_active:
-        from app.services.telegram_bot import clear_pending_for_actor
-
-        clear_pending_for_actor(row.telegram_chat_id, row.telegram_user_id)
     return _serialize(db, row)
 
 
@@ -328,12 +353,9 @@ def deactivate_telegram_authorization(
     _active_organization(db, organization_id)
     row = _row_for_tenant(db, authorization_id, organization_id)
     row.is_active = False
-    db.commit()
+    cleared = _revoke_pending_for_row(db, row, "authorization_deactivated")
     db.refresh(row)
 
-    from app.services.telegram_bot import clear_pending_for_actor
-
-    cleared = clear_pending_for_actor(row.telegram_chat_id, row.telegram_user_id)
     actor_id = current_user.get("user_id")
     record_telegram_event(
         db,

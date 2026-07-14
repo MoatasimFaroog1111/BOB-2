@@ -37,11 +37,13 @@ class Settings(BaseSettings):
     GUARDIAN_SEED_EMAIL: str = ""
     GUARDIAN_SEED_PASSWORD: str = ""
 
-    # Telegram execution is fail-closed.  The bot remains disabled unless an
+    # Telegram execution is fail-closed. The bot remains disabled unless an
     # administrator explicitly enables it, and production additionally requires the
     # readiness flag that is only set after all authorization/approval controls exist.
     TELEGRAM_BOT_ENABLED: bool = False
     TELEGRAM_BOT_PRODUCTION_READY: bool = False
+    # Group and supergroup traffic needs this global opt-in plus an allowlist-row opt-in.
+    TELEGRAM_ALLOW_GROUP_CHATS: bool = False
 
     MAX_UPLOAD_SIZE_MB: int = 10
     MAX_REQUEST_SIZE_MB: int = 50
@@ -143,6 +145,10 @@ class Settings(BaseSettings):
             errors.append("MAX_REQUEST_SIZE_MB must be at least MAX_UPLOAD_SIZE_MB and both must be positive")
         if self.MAX_UPLOAD_FILES <= 0 or self.MAX_UPLOAD_FILES > 100:
             errors.append("MAX_UPLOAD_FILES must be between 1 and 100")
+        if self.TELEGRAM_ALLOW_GROUP_CHATS and not self.TELEGRAM_BOT_PRODUCTION_READY:
+            errors.append(
+                "TELEGRAM_ALLOW_GROUP_CHATS cannot be enabled before Telegram production readiness"
+            )
 
         database_url_lower = self.DATABASE_URL.lower()
         if database_url_lower.startswith("sqlite"):

@@ -17,6 +17,7 @@ from app.api.v1.erp_partners import router as erp_partners_router
 from app.api.v1.journal import router as journal_router
 from app.api.v1.journal_entry_actions import router as journal_entry_actions_router
 from app.api.v1.system import router as system_router
+from app.api.v1.telegram_admin import router as telegram_admin_router
 from app.security.dependencies import enforce_financial_route_permission
 
 api_router = APIRouter()
@@ -25,6 +26,11 @@ financial_access = [Depends(enforce_financial_route_permission)]
 api_router.include_router(system_router, prefix="/system", tags=["System"])
 api_router.include_router(auth_router, prefix="/auth", tags=["Security"])
 api_router.include_router(journal_router, prefix="/journal", tags=["Journal Entries"])
+api_router.include_router(
+    telegram_admin_router,
+    prefix="/telegram",
+    tags=["Telegram Administration"],
+)
 
 # The centralized dependency is method-aware: reads require view_financials,
 # mutations require create_entries by default, settings require manage_settings,

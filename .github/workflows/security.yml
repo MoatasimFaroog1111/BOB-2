@@ -96,6 +96,14 @@ jobs:
           assert not services["clamav"].get("ports"), "ClamAV must not publish a host port"
           assert config["networks"]["backend_private"].get("internal") is True
 
+          backend_environment = services["backend"].get("environment", {})
+          assert str(backend_environment.get("TELEGRAM_BOT_ENABLED", "")).lower() == "false", (
+              "Production Compose must keep Telegram disabled"
+          )
+          assert str(backend_environment.get("TELEGRAM_BOT_PRODUCTION_READY", "")).lower() == "false", (
+              "Production Compose must keep Telegram readiness disabled"
+          )
+
           def assert_loopback(service_name: str, published: str) -> None:
               ports = services[service_name].get("ports", [])
               assert len(ports) == 1, f"{service_name} must publish exactly one local port"

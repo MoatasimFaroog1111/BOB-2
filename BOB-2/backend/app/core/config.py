@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     GUARDIAN_SEED_EMAIL: str = ""
     GUARDIAN_SEED_PASSWORD: str = ""
 
+    # Telegram execution is fail-closed.  The bot remains disabled unless an
+    # administrator explicitly enables it, and production additionally requires the
+    # readiness flag that is only set after all authorization/approval controls exist.
+    TELEGRAM_BOT_ENABLED: bool = False
+    TELEGRAM_BOT_PRODUCTION_READY: bool = False
+
     MAX_UPLOAD_SIZE_MB: int = 10
     MAX_REQUEST_SIZE_MB: int = 50
     MAX_UPLOAD_FILES: int = 20

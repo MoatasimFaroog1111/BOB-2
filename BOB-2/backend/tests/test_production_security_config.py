@@ -19,6 +19,11 @@ def _production_settings(**overrides) -> Settings:
         "CLAMAV_HOST": "clamav",
         "GUARDIAN_SEED_EMAIL": "",
         "GUARDIAN_SEED_PASSWORD": "",
+        "ERP_OUTBOUND_REQUIRE_ALLOWLIST": True,
+        "ERP_OUTBOUND_ALLOWED_HOSTS": "odoo.example.test",
+        "ERP_OUTBOUND_ALLOWED_CIDRS": "",
+        "ERP_OUTBOUND_ALLOWED_PORTS": "443",
+        "ERP_OUTBOUND_ALLOW_HTTP": False,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)
@@ -42,6 +47,11 @@ def test_complete_production_security_configuration_is_accepted():
         ("REQUIRE_MALWARE_SCAN", False, "REQUIRE_MALWARE_SCAN"),
         ("CLAMAV_HOST", "", "CLAMAV_HOST"),
         ("GUARDIAN_SEED_EMAIL", "owner@example.test", "owner seeding"),
+        ("ERP_OUTBOUND_REQUIRE_ALLOWLIST", False, "ERP_OUTBOUND_REQUIRE_ALLOWLIST"),
+        ("ERP_OUTBOUND_ALLOWED_HOSTS", "", "ERP_OUTBOUND_ALLOWED_HOSTS"),
+        ("ERP_OUTBOUND_ALLOWED_HOSTS", "*", "global wildcard"),
+        ("ERP_OUTBOUND_ALLOW_HTTP", True, "ERP_OUTBOUND_ALLOW_HTTP"),
+        ("ERP_OUTBOUND_ALLOWED_CIDRS", "0.0.0.0/0", "private network"),
     ],
 )
 def test_production_rejects_missing_security_control(field, value, expected):

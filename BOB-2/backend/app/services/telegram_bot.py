@@ -7,18 +7,19 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Optional
 
-from app.api.v1.erp import (
-    JournalLineRequest,
-    ProposeTransactionRequest,
-    RegisterDocumentRequest,
-    propose_transaction,
-    register_document,
-)
 from app.core.config import settings
 from app.db.database import SessionLocal
 from app.erp.document_ai import GuardianDocumentAI
-from app.models.core import ERPConnection
 from app.security.encryption import decrypt_value, encrypt_value
+from app.services.telegram_accounting_service import (
+    TelegramApprovalDenied,
+    build_callback_data,
+    cancel_approval,
+    consume_and_post_approval,
+    create_document_approval,
+    parse_callback_data,
+    revoke_actor_pending_operations,
+)
 from app.services.telegram_security import (
     TelegramAuthorizationDenied,
     TelegramSecurityContext,
@@ -31,7 +32,8 @@ logger = logging.getLogger(__name__)
 CONFIG_PATH = settings.storage_path / "telegram_config.json"
 UPLOAD_DIR = settings.storage_path / "telegram_uploads"
 
-# Pending work is bound to (chat_id, Telegram user_id), never to chat_id alone.
+# Compatibility/runtime visibility only. The database approval row is the source of truth.
+# No proposal payload or approval token is kept in this process-local map.
 PENDING_ENTRIES: dict[tuple[int, int], dict[str, Any]] = {}
 pending_entries_lock = threading.RLock()
 
@@ -90,14 +92,14 @@ def clear_telegram_config() -> bool:
 
 def send_telegram_request(token: str, method: str, payload: dict) -> Optional[dict]:
     url = f"https://api.telegram.org/bot{token}/{method}"
-    req = urllib.request.Request(
+    request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as response:
+        with urllib.request.urlopen(request, timeout=15) as response:
             return json.loads(response.read().decode("utf-8"))
     except Exception:
         logger.warning("[Telegram Bot] API call failed: %s", method)
@@ -123,40 +125,55 @@ def _audit(
         db.close()
 
 
+def _remember_pending(context: TelegramSecurityContext, operation_id: int) -> None:
+    with pending_entries_lock:
+        PENDING_ENTRIES[context.pending_key] = {"operation_id": operation_id}
+
+
+def _forget_pending(context: TelegramSecurityContext) -> None:
+    with pending_entries_lock:
+        PENDING_ENTRIES.pop(context.pending_key, None)
+
+
 def clear_pending_for_actor(telegram_chat_id: int, telegram_user_id: int) -> int:
-    """Clear only one actor's pending operation and return the number removed."""
-    key = (telegram_chat_id, telegram_user_id)
+    """Revoke durable approvals and clear only one actor's local runtime marker."""
     with pending_entries_lock:
-        pending = PENDING_ENTRIES.pop(key, None)
-    if not pending:
-        return 0
-    local_path = pending.get("local_path")
-    if local_path:
-        try:
-            Path(local_path).unlink(missing_ok=True)
-        except Exception:
-            logger.warning("[Telegram Bot] Could not remove deactivated actor's pending file")
-    return 1
-
-
-def _pending_for_context(context: TelegramSecurityContext) -> dict[str, Any] | None:
-    with pending_entries_lock:
-        pending = PENDING_ENTRIES.get(context.pending_key)
-    if pending is None:
-        return None
-    if (
-        pending.get("telegram_user_id") != context.telegram_user_id
-        or pending.get("telegram_chat_id") != context.telegram_chat_id
-        or pending.get("organization_id") != context.organization_id
-        or pending.get("system_user_id") != context.system_user_id
-    ):
-        _audit(
-            context,
-            "telegram_pending_identity_mismatch",
-            {"pending_authorization_id": pending.get("authorization_id")},
+        local_removed = 1 if PENDING_ENTRIES.pop((telegram_chat_id, telegram_user_id), None) else 0
+    db = SessionLocal()
+    try:
+        durable_removed = revoke_actor_pending_operations(
+            db,
+            telegram_chat_id=telegram_chat_id,
+            telegram_user_id=telegram_user_id,
+            reason="authorization_deactivated",
         )
-        return None
-    return pending
+    finally:
+        db.close()
+    return max(local_removed, durable_removed)
+
+
+def _format_proposal_message(proposal: dict[str, Any], expires_at: str) -> str:
+    lines_text = ""
+    for line in proposal.get("lines") or []:
+        debit = float(line.get("debit") or 0.0)
+        credit = float(line.get("credit") or 0.0)
+        debit_text = f"{debit:,.2f} ر.س" if debit > 0 else "-"
+        credit_text = f"{credit:,.2f} ر.س" if credit > 0 else "-"
+        lines_text += (
+            f"▪️ <b>{html.escape(str(line.get('account_name') or ''))}</b>\n"
+            f"   مدين: <code>{debit_text}</code> | دائن: <code>{credit_text}</code>\n"
+            f"   البيان: {html.escape(str(line.get('name') or ''))}\n\n"
+        )
+    return (
+        "✅ <b>تم تحليل المستند وإنشاء موافقة آمنة!</b>\n\n"
+        f"• 📁 <b>الملف:</b> {html.escape(str(proposal.get('filename') or ''))}\n"
+        f"• 💰 <b>المبلغ:</b> {float(proposal.get('amount') or 0):,.2f} ر.س\n"
+        f"• 🏢 <b>الشريك:</b> {html.escape(str(proposal.get('partner_name') or 'غير محدد'))}\n"
+        f"• 📑 <b>اليومية:</b> {html.escape(str(proposal.get('journal_name') or ''))}\n"
+        f"• ⏱️ <b>تنتهي الموافقة:</b> {html.escape(expires_at)} UTC\n\n"
+        f"<b>القيود المقترحة:</b>\n\n{lines_text}"
+        "زر الاعتماد صالح لمرة واحدة فقط، ومربوط بهويتك وبالمحادثة وبصمة المحتوى."
+    )
 
 
 def process_document(
@@ -166,24 +183,7 @@ def process_document(
     filename: str,
 ) -> None:
     chat_id = context.telegram_chat_id
-    # The current legacy ERP route still targets organization 1. Fail closed for every
-    # other tenant until the independent posting service is completed in the next stage.
-    if context.organization_id != 1:
-        _audit(
-            context,
-            "telegram_document_blocked_legacy_tenant",
-            {"filename": Path(filename).name},
-        )
-        send_telegram_request(
-            token,
-            "sendMessage",
-            {
-                "chat_id": chat_id,
-                "text": "❌ الترحيل عبر Telegram غير متاح لهذه المؤسسة حتى اكتمال خدمة الترحيل المعزولة.",
-            },
-        )
-        return
-
+    local_path: Path | None = None
     try:
         _audit(
             context,
@@ -197,7 +197,6 @@ def process_document(
         telegram_file_path = file_info["result"]["file_path"]
         suffix = Path(telegram_file_path).suffix or ".pdf"
         local_path = UPLOAD_DIR / f"{file_id}{suffix}"
-
         send_telegram_request(
             token,
             "sendMessage",
@@ -207,84 +206,49 @@ def process_document(
 
         analysis = GuardianDocumentAI().analyze_document(str(local_path))
         fields = analysis.get("fields", {})
-        amount = fields.get("total_amount") or fields.get("amount") or 0.0
+        amount = fields.get("total_amount") or fields.get("amount") or 0
         partner_name = fields.get("supplier_name") or fields.get("partner_name") or ""
         raw_text = analysis.get("raw_text_preview") or ""
         document_class = analysis.get("document_class") or "general"
 
         db = SessionLocal()
         try:
-            proposal = propose_transaction(
-                payload=ProposeTransactionRequest(
-                    filename=filename,
-                    document_class=document_class,
-                    amount=amount,
-                    date=time.strftime("%Y-%m-%d"),
-                    partner_name=partner_name,
-                    raw_text=raw_text,
-                ),
-                db_session=db,
+            approval = create_document_approval(
+                db,
+                context,
+                filename=filename,
+                document_class=document_class,
+                amount=amount,
+                transaction_date=time.strftime("%Y-%m-%d"),
+                partner_name=partner_name,
+                raw_text=raw_text,
+                file_path=str(local_path),
+                source="telegram",
             )
         finally:
             db.close()
 
-        if proposal.get("status") != "success" or not proposal.get("lines"):
-            raise RuntimeError("journal_proposal_failed")
-
-        pending = {
-            "proposal": proposal,
-            "filename": filename,
-            "doc_class": document_class,
-            "amount": amount,
-            "partner_name": proposal.get("suggested_partner_name") or partner_name,
-            "partner_id": proposal.get("suggested_partner_id"),
-            "raw_text": raw_text,
-            "local_path": str(local_path),
-            "authorization_id": context.authorization_id,
-            "telegram_user_id": context.telegram_user_id,
-            "telegram_chat_id": context.telegram_chat_id,
-            "organization_id": context.organization_id,
-            "system_user_id": context.system_user_id,
-        }
-        with pending_entries_lock:
-            previous = PENDING_ENTRIES.pop(context.pending_key, None)
-            PENDING_ENTRIES[context.pending_key] = pending
-        if previous and previous.get("local_path") != str(local_path):
-            try:
-                Path(previous["local_path"]).unlink(missing_ok=True)
-            except Exception:
-                logger.warning("[Telegram Bot] Failed to remove replaced pending file")
-
-        lines_text = ""
-        for line in proposal["lines"]:
-            debit = f"{line['debit']:,} ر.س" if line["debit"] > 0 else "-"
-            credit = f"{line['credit']:,} ر.س" if line["credit"] > 0 else "-"
-            lines_text += (
-                f"▪️ <b>{html.escape(str(line['account_name']))}</b>\n"
-                f"   مدين: <code>{debit}</code> | دائن: <code>{credit}</code>\n"
-                f"   البيان: {html.escape(str(line['name']))}\n\n"
-            )
-
-        message = (
-            "✅ <b>تم تحليل المستند بنجاح!</b>\n\n"
-            f"• 📁 <b>الملف:</b> {html.escape(str(filename))}\n"
-            f"• 💰 <b>المبلغ الإجمالي:</b> {amount:,} ر.س\n"
-            f"• 🏢 <b>الشريك المقترح:</b> {html.escape(str(proposal.get('suggested_partner_name') or 'غير محدد'))}\n"
-            f"• 📑 <b>اليومية المقترحة:</b> {html.escape(str(proposal.get('journal_name') or ''))}\n\n"
-            f"<b>القيود المقترحة:</b>\n\n{lines_text}"
-            "هل تريد ترحيل هذا القيد ومرفقه إلى Odoo؟"
+        approve_callback = build_callback_data(
+            "approve", approval.operation_id, approval.approval_token
         )
+        cancel_callback = build_callback_data(
+            "cancel", approval.operation_id, approval.approval_token
+        )
+        _remember_pending(context, approval.operation_id)
         send_telegram_request(
             token,
             "sendMessage",
             {
                 "chat_id": chat_id,
-                "text": message,
+                "text": _format_proposal_message(
+                    approval.proposal,
+                    approval.expires_at.replace(microsecond=0).isoformat(),
+                ),
                 "parse_mode": "HTML",
                 "reply_markup": {
                     "inline_keyboard": [[
-                        {"text": "ترحيل القيد ✅", "callback_data": "post_entry"},
-                        {"text": "إلغاء ❌", "callback_data": "cancel_entry"},
+                        {"text": "ترحيل القيد ✅", "callback_data": approve_callback},
+                        {"text": "إلغاء ❌", "callback_data": cancel_callback},
                     ]]
                 },
             },
@@ -292,10 +256,26 @@ def process_document(
         _audit(
             context,
             "telegram_document_pending_approval",
-            {"filename": Path(filename).name, "document_class": document_class},
+            {
+                "operation_id": approval.operation_id,
+                "filename": Path(filename).name,
+                "expires_at": approval.expires_at.isoformat(),
+            },
+        )
+    except TelegramApprovalDenied as denial:
+        logger.warning("[Telegram Bot] Approval creation denied: %s", denial.reason)
+        if local_path:
+            local_path.unlink(missing_ok=True)
+        _audit(context, "telegram_document_approval_denied", {"reason": denial.reason})
+        send_telegram_request(
+            token,
+            "sendMessage",
+            {"chat_id": chat_id, "text": f"❌ {denial.public_message}"},
         )
     except Exception:
         logger.exception("[Telegram Bot] Document processing failed")
+        if local_path:
+            local_path.unlink(missing_ok=True)
         try:
             _audit(
                 context,
@@ -311,48 +291,18 @@ def process_document(
         )
 
 
-def _upload_attachment_to_odoo(
-    move_id: int,
-    filename: str,
-    file_path: str,
-    db_session,
-    organization_id: int,
-) -> int:
-    import base64
-
-    from app.erp.factory import get_erp_provider
-
-    connection = (
-        db_session.query(ERPConnection)
-        .filter(
-            ERPConnection.organization_id == organization_id,
-            ERPConnection.is_active.is_(True),
-        )
-        .first()
-    )
-    if not connection:
-        raise RuntimeError("No active ERP connection")
-
-    secret_data = json.loads(decrypt_value(connection.encrypted_secret_ref))
-    erp = get_erp_provider(
-        provider=connection.provider,
-        url=connection.base_url,
-        db=connection.database_name or "",
-        username=secret_data["username"],
-        password=secret_data["password"],
-    )
-    with open(file_path, "rb") as source:
-        file_data = base64.b64encode(source.read()).decode("utf-8")
-    return erp.execute_kw(
-        "ir.attachment",
-        "create",
-        [{
-            "name": filename,
-            "type": "binary",
-            "datas": file_data,
-            "res_model": "account.move",
-            "res_id": move_id,
-        }],
+def _edit_callback_message(
+    token: str,
+    context: TelegramSecurityContext,
+    message_id: int | None,
+    text: str,
+) -> None:
+    if not message_id:
+        return
+    send_telegram_request(
+        token,
+        "editMessageText",
+        {"chat_id": context.telegram_chat_id, "message_id": message_id, "text": text},
     )
 
 
@@ -363,9 +313,8 @@ def handle_callback_query(
 ) -> None:
     message = query.get("message") or {}
     message_id = message.get("message_id")
-    chat_id = context.telegram_chat_id
     callback_query_id = query.get("id")
-    data = query.get("data")
+    parsed = parse_callback_data(query.get("data"))
 
     if callback_query_id:
         send_telegram_request(
@@ -373,130 +322,61 @@ def handle_callback_query(
             "answerCallbackQuery",
             {"callback_query_id": callback_query_id},
         )
-
-    pending = _pending_for_context(context)
-    if pending is None:
-        if message_id:
-            send_telegram_request(
-                token,
-                "editMessageText",
-                {
-                    "chat_id": chat_id,
-                    "message_id": message_id,
-                    "text": "❌ لا توجد عملية معلقة تخص هذا المستخدم.",
-                },
-            )
-        return
-
-    if data == "cancel_entry":
-        clear_pending_for_actor(chat_id, context.telegram_user_id)
-        _audit(context, "telegram_pending_entry_cancelled")
-        if message_id:
-            send_telegram_request(
-                token,
-                "editMessageText",
-                {
-                    "chat_id": chat_id,
-                    "message_id": message_id,
-                    "text": "❌ تم إلغاء ترحيل القيد.",
-                },
-            )
-        return
-
-    if data != "post_entry":
-        _audit(context, "telegram_unknown_callback_rejected", {"callback_data": str(data)[:64]})
-        return
-
-    if not context.has_permission("post_odoo_entries"):
-        _audit(context, "telegram_post_permission_denied")
-        send_telegram_request(
-            token,
-            "sendMessage",
-            {"chat_id": chat_id, "text": "❌ لا تملك صلاحية ترحيل القيود إلى Odoo."},
-        )
-        return
-
-    if message_id:
-        send_telegram_request(
-            token,
-            "editMessageText",
-            {
-                "chat_id": chat_id,
-                "message_id": message_id,
-                "text": "⏳ جاري تسجيل القيد في Odoo...",
-            },
-        )
-
-    db = SessionLocal()
-    try:
-        proposal = pending["proposal"]
-        lines = [
-            JournalLineRequest(
-                account_id=line["account_id"],
-                account_name=line["account_name"],
-                debit=line["debit"],
-                credit=line["credit"],
-                name=line["name"],
-                partner_id=pending["partner_id"],
-            )
-            for line in proposal["lines"]
-        ]
-        response = register_document(
-            payload=RegisterDocumentRequest(
-                filename=pending["filename"],
-                document_class=pending["doc_class"],
-                amount=pending["amount"],
-                date=time.strftime("%Y-%m-%d"),
-                partner_name=pending["partner_name"],
-                partner_id=pending["partner_id"],
-                ref=f"TG Bot: {pending['filename']}",
-                raw_text=pending["raw_text"],
-                lines=lines,
-                file_path=pending.get("local_path"),
-            ),
-            db_session=db,
-        )
-        attachment_id = response.get("attachment_id")
-        move_id = response.get("move_id")
-        local_file = pending.get("local_path")
-        if not attachment_id and move_id and local_file and Path(local_file).exists():
-            attachment_id = _upload_attachment_to_odoo(
-                move_id,
-                pending["filename"],
-                local_file,
-                db,
-                context.organization_id,
-            )
-        clear_pending_for_actor(chat_id, context.telegram_user_id)
+    if parsed is None:
         _audit(
             context,
-            "telegram_entry_posted_to_odoo",
-            {"move_id": move_id, "attachment_id": attachment_id},
+            "telegram_unknown_callback_rejected",
+            {"callback_data": str(query.get("data"))[:64]},
         )
+        return
+
+    action, operation_id, approval_token = parsed
+    db = SessionLocal()
+    try:
+        if action == "cancel":
+            cancel_approval(
+                db,
+                context,
+                operation_id=operation_id,
+                token=approval_token,
+            )
+            _forget_pending(context)
+            _edit_callback_message(token, context, message_id, "❌ تم إلغاء العملية الآمنة.")
+            return
+
+        _edit_callback_message(token, context, message_id, "⏳ تم حجز الموافقة، جاري الترحيل إلى Odoo...")
+        result = consume_and_post_approval(
+            db,
+            context,
+            operation_id=operation_id,
+            token=approval_token,
+        )
+        _forget_pending(context)
         send_telegram_request(
             token,
             "sendMessage",
             {
-                "chat_id": chat_id,
+                "chat_id": context.telegram_chat_id,
                 "text": (
-                    "✅ <b>تم ترحيل القيد بنجاح إلى Odoo!</b>\n\n"
-                    f"• <b>مُعرّف القيد:</b> {html.escape(str(move_id or '-'))}\n"
-                    f"• <b>مُعرّف المرفق:</b> {html.escape(str(attachment_id or '-'))}"
+                    "✅ <b>تم ترحيل القيد مرة واحدة بنجاح!</b>\n\n"
+                    f"• <b>رقم العملية الآمنة:</b> {result.operation_id}\n"
+                    f"• <b>معرّف القيد:</b> {html.escape(str(result.move_id))}\n"
+                    f"• <b>اسم القيد:</b> {html.escape(result.move_name)}\n"
+                    f"• <b>معرّف المرفق:</b> {html.escape(str(result.attachment_id or '-'))}"
                 ),
                 "parse_mode": "HTML",
             },
         )
-    except Exception:
-        logger.exception("[Telegram Bot] Odoo registration failed")
-        try:
-            _audit(context, "telegram_entry_post_failed")
-        except Exception:
-            logger.exception("[Telegram Bot] Failed to audit posting failure")
-        send_telegram_request(
-            token,
-            "sendMessage",
-            {"chat_id": chat_id, "text": "❌ تعذر ترحيل القيد بصورة آمنة."},
+    except TelegramApprovalDenied as denial:
+        _audit(
+            context,
+            "telegram_approval_callback_denied",
+            {"operation_id": operation_id, "reason": denial.reason},
         )
+        _edit_callback_message(token, context, message_id, f"❌ {denial.public_message}")
+    except Exception:
+        logger.exception("[Telegram Bot] Approval callback failed")
+        _edit_callback_message(token, context, message_id, "❌ تعذر تنفيذ العملية بصورة آمنة.")
     finally:
         db.close()
 
@@ -563,10 +443,10 @@ def bot_polling_loop(token: str) -> None:
                 actor = query.get("from") or {}
                 message = query.get("message") or {}
                 chat = message.get("chat") or {}
-                callback_data = query.get("data")
+                parsed = parse_callback_data(query.get("data"))
                 permissions = (
                     ("post_odoo_entries",)
-                    if callback_data == "post_entry"
+                    if parsed is not None and parsed[0] == "approve"
                     else ("view_financials",)
                 )
                 try:
@@ -627,7 +507,7 @@ def bot_polling_loop(token: str) -> None:
                     response_text = (
                         "🤖 <b>مرحباً بك في مساعد GuardianAI المحاسبي الآمن!</b>\n\n"
                         "تم التحقق من هويتك وربطك بمستخدم النظام والمؤسسة.\n"
-                        "يمكنك إرسال فاتورة أو إيصال بعد التأكد من امتلاك صلاحيات الرفع وإنشاء القيود."
+                        "كل موافقة محاسبية تصدر بتوكن مشفر أحادي الاستخدام ومحدد المدة."
                     )
                     parse_mode = "HTML"
                 else:

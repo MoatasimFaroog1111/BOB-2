@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterator
 from datetime import datetime
 
 from fastapi import Depends, HTTPException, Request, status
@@ -8,6 +9,7 @@ from app.db.database import get_db
 from app.models.core import AuthSession, Organization, User
 from app.security.auth import decode_access_token
 from app.security.roles import role_has_permission
+from app.security.tenant_scope import tenant_scope
 
 security = HTTPBearer(auto_error=False)
 
@@ -165,21 +167,17 @@ def _required_financial_permission(request: Request) -> str:
     return "create_entries"
 
 
-def enforce_financial_route_permission(
+async def enforce_financial_route_permission(
     request: Request,
     payload: dict = Depends(get_current_token_payload),
-) -> dict:
-    # Several legacy ERP modules still address organization 1 internally. Until
-    # those modules are fully parameterized, users from another tenant are denied
-    # instead of being allowed to read or mutate organization 1 data.
-    if payload.get("organization_id") != 1:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=(
-                "This legacy financial integration is not enabled for the authenticated "
-                "organization. Tenant-isolated journal APIs remain available."
-            ),
-        )
+) -> AsyncIterator[dict]:
+    """Authorize and bind the financial request to its live database tenant.
+
+    This is an async generator intentionally: FastAPI may run synchronous
+    endpoint functions in a worker thread with a copied context, while setup and
+    teardown of this dependency remain in the same async context. That preserves
+    ContextVar token ownership and prevents scope leakage between requests.
+    """
 
     permission = _required_financial_permission(request)
     if not role_has_permission(payload.get("role"), permission):
@@ -187,4 +185,10 @@ def enforce_financial_route_permission(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Insufficient role permissions for this financial operation ({permission}).",
         )
-    return payload
+
+    organization_id = payload.get("organization_id")
+    if not isinstance(organization_id, int) or organization_id <= 0:
+        raise _unauthorized()
+
+    with tenant_scope(organization_id):
+        yield payload

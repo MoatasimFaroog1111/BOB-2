@@ -36,11 +36,13 @@ def _organization_two_headers(client, db) -> dict[str, str]:
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
-def test_other_tenant_cannot_enter_legacy_organization_one_routes(client, db):
+def test_other_tenant_can_enter_legacy_routes_without_seeing_tenant_one_data(client, db):
     headers = _organization_two_headers(client, db)
     response = client.get("/api/v1/erp/companies", headers=headers)
-    assert response.status_code == 403
-    assert "not enabled for the authenticated organization" in response.json()["detail"]
+    assert response.status_code == 200, response.text
+    # No ERP connection exists for tenant two. The route must not fall back to
+    # an organization-one connection or leak its company list.
+    assert response.json() == []
 
 
 def test_other_tenant_can_use_tenant_isolated_journal_api(client, db):

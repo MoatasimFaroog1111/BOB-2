@@ -54,7 +54,20 @@ jobs:
           tests/test_monetary_integrity.py
           tests/test_erp_monetary_route_replacement.py
       - name: Enforce fixed-point source boundaries
-        run: python scripts/check_monetary_integrity.py
+        run: |
+          set +e
+          python scripts/check_monetary_integrity.py > monetary-source-check.log 2>&1
+          status=$?
+          cat monetary-source-check.log
+          exit "$status"
+      - name: Upload source-check failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monetary-source-check-${{ github.run_id }}
+          path: BOB-2/backend/monetary-source-check.log
+          if-no-files-found: error
+          retention-days: 3
       - name: Run fixed-point regression tests
         run: >-
           pytest -q

@@ -4,9 +4,8 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.db.database import get_db
-from app.models.core import AuthSession, User
+from app.models.core import AuthSession, Organization, User
 from app.security.auth import decode_access_token
 from app.security.roles import role_has_permission
 
@@ -19,6 +18,18 @@ def _unauthorized() -> HTTPException:
         detail="Invalid or expired authentication token.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+def _revoke_invalid_session(
+    db: Session,
+    auth_session: AuthSession | None,
+    reason: str,
+) -> None:
+    if auth_session is None or auth_session.revoked_at is not None:
+        return
+    auth_session.revoked_at = datetime.utcnow()
+    auth_session.revocation_reason = reason[:100]
+    db.commit()
 
 
 def get_current_token_payload(
@@ -39,11 +50,8 @@ def get_current_token_payload(
 
     session_id = payload.get("sid")
     access_jti = payload.get("jti")
-
-    if not session_id:
-        if settings.is_production:
-            raise _unauthorized()
-        return payload
+    if not isinstance(session_id, str) or not session_id or not isinstance(access_jti, str):
+        raise _unauthorized()
 
     auth_session = (
         db.query(AuthSession)
@@ -62,17 +70,47 @@ def get_current_token_payload(
 
     user = db.query(User).filter(User.id == auth_session.user_id).first()
     if not user or not user.is_active or user.email != payload.get("sub"):
+        _revoke_invalid_session(db, auth_session, "user_identity_or_status_changed")
         raise _unauthorized()
 
+    organization = None
+    if user.organization_id is not None:
+        organization = (
+            db.query(Organization)
+            .filter(Organization.id == user.organization_id)
+            .first()
+        )
+    if not organization or not organization.is_active:
+        _revoke_invalid_session(db, auth_session, "organization_inactive_or_missing")
+        raise _unauthorized()
+
+    try:
+        token_security_version = int(payload.get("sv"))
+    except (TypeError, ValueError):
+        _revoke_invalid_session(db, auth_session, "missing_security_version")
+        raise _unauthorized()
+
+    current_security_version = int(user.security_version or 1)
+    if (
+        auth_session.organization_id != user.organization_id
+        or auth_session.user_security_version != current_security_version
+        or token_security_version != current_security_version
+    ):
+        _revoke_invalid_session(db, auth_session, "security_version_mismatch")
+        raise _unauthorized()
+
+    # JWT role is informational only. Every authorization decision below this
+    # boundary receives the current database role and tenant identity.
     payload["user_id"] = user.id
     payload["organization_id"] = user.organization_id
+    payload["role"] = user.role
+    payload["security_version"] = current_security_version
     return payload
 
 
 def require_permission(permission: str):
     def checker(payload: dict = Depends(get_current_token_payload)) -> dict:
-        role = payload.get("role")
-        if not role_has_permission(role, permission):
+        if not role_has_permission(payload.get("role"), permission):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Insufficient role permissions.",

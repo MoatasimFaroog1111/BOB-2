@@ -71,7 +71,16 @@ def create_access_token(
     *,
     session_id: str | None = None,
     jti: str | None = None,
+    security_version: int | None = None,
 ) -> str:
+    """Create a signed access token.
+
+    The role claim is retained for client compatibility only. Server authorization
+    must replace it with the current database role before evaluating permissions.
+    Session-backed tokens include ``sv`` so a security-sensitive user change can
+    invalidate the token immediately.
+    """
+
     now = datetime.now(timezone.utc)
     expire = now + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     payload: dict[str, object] = {
@@ -85,6 +94,8 @@ def create_access_token(
     }
     if session_id:
         payload["sid"] = session_id
+    if security_version is not None:
+        payload["sv"] = int(security_version)
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
@@ -94,6 +105,7 @@ def create_refresh_token(
     session_id: str | None = None,
     family_id: str | None = None,
     jti: str | None = None,
+    security_version: int | None = None,
 ) -> str:
     now = datetime.now(timezone.utc)
     expire = now + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
@@ -109,6 +121,8 @@ def create_refresh_token(
         payload["sid"] = session_id
     if family_id:
         payload["fid"] = family_id
+    if security_version is not None:
+        payload["sv"] = int(security_version)
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 

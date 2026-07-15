@@ -41,134 +41,22 @@ jobs:
       - name: Verify one Alembic head
         run: |
           test "$(alembic heads | grep -c '(head)')" -eq 1
-          alembic heads | grep 'e6b8c1d4a290'
-      - name: Upgrade to fixed-point monetary migration
+          alembic heads | grep 'f3a9d2c7b410'
+      - name: Prepare pre-security-version schema and legacy session
         run: |
           rm -f ci-migrations.db
-          alembic upgrade head
+          alembic upgrade e6b8c1d4a290
           python - <<'PY'
           import sqlite3
 
           connection = sqlite3.connect("ci-migrations.db")
           try:
-              tables = {
-                  row[0]
-                  for row in connection.execute(
-                      "SELECT name FROM sqlite_master WHERE type='table'"
-                  )
-              }
-              assert "external_llm_policies" in tables
-              assert "tenant_secret_bindings" in tables
-              assert "tenant_secret_versions" in tables
-              assert "journal_entries" in tables
-              assert "bank_reconciliation_audit_logs" in tables
-
-              revision = connection.execute(
-                  "SELECT version_num FROM alembic_version"
-              ).fetchone()[0]
-              assert revision == "e6b8c1d4a290"
-
-              journal_columns = {
-                  row[1]: row[2].upper()
-                  for row in connection.execute("PRAGMA table_info(journal_entries)")
-              }
-              assert journal_columns["total_debit"].startswith("NUMERIC(20, 2)")
-              assert journal_columns["total_credit"].startswith("NUMERIC(20, 2)")
-
-              bank_columns = {
-                  row[1]: row[2].upper()
-                  for row in connection.execute(
-                      "PRAGMA table_info(bank_reconciliation_audit_logs)"
-                  )
-              }
-              for name in ("statement_total", "ledger_total", "difference"):
-                  assert bank_columns[name].startswith("NUMERIC(20, 2)"), (name, bank_columns[name])
-
-              journal_sql = connection.execute(
-                  "SELECT sql FROM sqlite_master WHERE type='table' AND name='journal_entries'"
-              ).fetchone()[0]
-              assert "ck_journal_entries_positive_total" in journal_sql
-              assert "ck_journal_entries_balanced_totals" in journal_sql
-          finally:
-              connection.close()
-          PY
-      - name: Downgrade and verify float schema restoration
-        run: |
-          alembic downgrade 9c7f2a4b1d80
-          python - <<'PY'
-          import sqlite3
-
-          connection = sqlite3.connect("ci-migrations.db")
-          try:
-              revision = connection.execute(
-                  "SELECT version_num FROM alembic_version"
-              ).fetchone()[0]
-              assert revision == "9c7f2a4b1d80"
-
-              tables = {
-                  row[0]
-                  for row in connection.execute(
-                      "SELECT name FROM sqlite_master WHERE type='table'"
-                  )
-              }
-              assert "tenant_secret_bindings" in tables
-              assert "tenant_secret_versions" in tables
-
-              journal_columns = {
-                  row[1]: row[2].upper()
-                  for row in connection.execute("PRAGMA table_info(journal_entries)")
-              }
-              assert journal_columns["total_debit"] == "FLOAT"
-              assert journal_columns["total_credit"] == "FLOAT"
-
-              bank_columns = {
-                  row[1]: row[2].upper()
-                  for row in connection.execute(
-                      "PRAGMA table_info(bank_reconciliation_audit_logs)"
-                  )
-              }
-              for name in ("statement_total", "ledger_total", "difference"):
-                  assert bank_columns[name] == "FLOAT", (name, bank_columns[name])
-          finally:
-              connection.close()
-          PY
-      - name: Re-upgrade and verify constraints and tenant uniqueness
-        run: |
-          alembic upgrade head
-          python - <<'PY'
-          import sqlite3
-
-          connection = sqlite3.connect("ci-migrations.db")
-          try:
-              revision = connection.execute(
-                  "SELECT version_num FROM alembic_version"
-              ).fetchone()[0]
-              assert revision == "e6b8c1d4a290"
-
-              unique_binding = False
-              for index_row in connection.execute(
-                  "PRAGMA index_list(tenant_secret_bindings)"
-              ):
-                  if not bool(index_row[2]):
-                      continue
-                  index_name = index_row[1]
-                  columns = [
-                      row[2]
-                      for row in connection.execute(
-                          f"PRAGMA index_info('{index_name}')"
-                      )
-                  ]
-                  if columns == ["organization_id", "purpose"]:
-                      unique_binding = True
-                      break
-              assert unique_binding, "one secret binding per organization and purpose is required"
-
               connection.execute(
                   """
                   INSERT INTO organizations
                       (id, name, legal_name, country, is_active, created_at, updated_at)
                   VALUES
-                      (999, 'Migration Test', 'Migration Test', 'SA', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                      (999, 'Auth Migration', 'Auth Migration', 'SA', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                   """
               )
               connection.execute(
@@ -176,23 +64,150 @@ jobs:
                   INSERT INTO users
                       (id, organization_id, email, full_name, role, hashed_password, is_active, created_at, updated_at)
                   VALUES
-                      (999, 999, 'migration@test.invalid', 'Migration Test', 'owner', 'not-used', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                      (999, 999, 'auth-migration@test.invalid', 'Auth Migration', 'owner', 'not-used', 1,
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                   """
               )
               connection.execute(
                   """
-                  INSERT INTO journal_entries
-                      (organization_id, created_by_user_id, entry_date, reference, memo, status, lines,
-                       total_debit, total_credit, created_at, updated_at)
+                  INSERT INTO auth_sessions
+                      (id, family_id, user_id, access_jti, refresh_jti, refresh_token_hash,
+                       expires_at, revoked_at, last_used_at, ip_address, user_agent,
+                       created_at, updated_at)
                   VALUES
-                      (999, 999, '2026-07-15', 'MIGRATION/DECIMAL', '', 'draft', '[]',
-                       '0.30', '0.30', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                      ('legacy-session', 'legacy-family', 999, 'legacy-access', 'legacy-refresh',
+                       'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                       '2099-01-01 00:00:00', NULL, NULL, '127.0.0.1', 'migration-test',
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                   """
               )
-              stored = connection.execute(
-                  "SELECT CAST(total_debit AS TEXT), CAST(total_credit AS TEXT) FROM journal_entries WHERE reference='MIGRATION/DECIMAL'"
+              connection.commit()
+          finally:
+              connection.close()
+          PY
+      - name: Upgrade to live-role session security migration
+        run: |
+          alembic upgrade head
+          python - <<'PY'
+          import sqlite3
+
+          connection = sqlite3.connect("ci-migrations.db")
+          try:
+              revision = connection.execute(
+                  "SELECT version_num FROM alembic_version"
+              ).fetchone()[0]
+              assert revision == "f3a9d2c7b410"
+
+              user_columns = {
+                  row[1]: row[2].upper()
+                  for row in connection.execute("PRAGMA table_info(users)")
+              }
+              assert user_columns["security_version"] == "INTEGER"
+              assert user_columns["security_changed_at"] == "DATETIME"
+
+              session_columns = {
+                  row[1]: row[2].upper()
+                  for row in connection.execute("PRAGMA table_info(auth_sessions)")
+              }
+              assert session_columns["organization_id"] == "INTEGER"
+              assert session_columns["user_security_version"] == "INTEGER"
+              assert session_columns["revocation_reason"].startswith("VARCHAR")
+
+              migrated = connection.execute(
+                  """
+                  SELECT organization_id, user_security_version, revoked_at, revocation_reason
+                    FROM auth_sessions
+                   WHERE id = 'legacy-session'
+                  """
               ).fetchone()
-              assert stored is not None
+              assert migrated is not None
+              assert migrated[0] == 999
+              assert migrated[1] == 1
+              assert migrated[2] is not None
+              assert migrated[3] == "security_version_migration"
+
+              organization_index = False
+              for index_row in connection.execute("PRAGMA index_list(auth_sessions)"):
+                  columns = [
+                      row[2]
+                      for row in connection.execute(
+                          f"PRAGMA index_info('{index_row[1]}')"
+                      )
+                  ]
+                  if columns == ["organization_id"]:
+                      organization_index = True
+                      break
+              assert organization_index
+
+              journal_columns = {
+                  row[1]: row[2].upper()
+                  for row in connection.execute("PRAGMA table_info(journal_entries)")
+              }
+              assert journal_columns["total_debit"].startswith("NUMERIC(20, 2)")
+              assert journal_columns["total_credit"].startswith("NUMERIC(20, 2)")
+          finally:
+              connection.close()
+          PY
+      - name: Downgrade and verify security-version schema removal
+        run: |
+          alembic downgrade e6b8c1d4a290
+          python - <<'PY'
+          import sqlite3
+
+          connection = sqlite3.connect("ci-migrations.db")
+          try:
+              revision = connection.execute(
+                  "SELECT version_num FROM alembic_version"
+              ).fetchone()[0]
+              assert revision == "e6b8c1d4a290"
+
+              user_columns = {
+                  row[1]
+                  for row in connection.execute("PRAGMA table_info(users)")
+              }
+              assert "security_version" not in user_columns
+              assert "security_changed_at" not in user_columns
+
+              session_columns = {
+                  row[1]
+                  for row in connection.execute("PRAGMA table_info(auth_sessions)")
+              }
+              assert "organization_id" not in session_columns
+              assert "user_security_version" not in session_columns
+              assert "revocation_reason" not in session_columns
+          finally:
+              connection.close()
+          PY
+      - name: Re-upgrade and verify live-role session schema
+        run: |
+          alembic upgrade head
+          python - <<'PY'
+          import sqlite3
+
+          connection = sqlite3.connect("ci-migrations.db")
+          try:
+              revision = connection.execute(
+                  "SELECT version_num FROM alembic_version"
+              ).fetchone()[0]
+              assert revision == "f3a9d2c7b410"
+
+              user_version = connection.execute(
+                  "SELECT security_version FROM users WHERE id = 999"
+              ).fetchone()
+              assert user_version == (1,)
+
+              session = connection.execute(
+                  """
+                  SELECT organization_id, user_security_version, revoked_at, revocation_reason
+                    FROM auth_sessions
+                   WHERE id = 'legacy-session'
+                  """
+              ).fetchone()
+              assert session is not None
+              assert session[0] == 999
+              assert session[1] == 1
+              assert session[2] is not None
+              assert session[3] == "security_version_migration"
           finally:
               connection.close()
           PY

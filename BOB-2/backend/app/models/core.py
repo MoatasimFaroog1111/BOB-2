@@ -14,6 +14,10 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    event,
+    inspect,
+    select,
+    update,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -41,6 +45,8 @@ class User(Base, TimestampMixin):
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="viewer")
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    security_version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    security_changed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class TelegramAuthorization(Base, TimestampMixin):
@@ -126,11 +132,16 @@ class AuthSession(Base, TimestampMixin):
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
     family_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True, nullable=False)
+    organization_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id"), index=True, nullable=False
+    )
+    user_security_version: Mapped[int] = mapped_column(Integer, nullable=False)
     access_jti: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
     refresh_jti: Mapped[str] = mapped_column(String(128), unique=True, index=True, nullable=False)
     refresh_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)
+    revocation_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(100), nullable=True)
     user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -241,3 +252,77 @@ class VectorRecord(Base, TimestampMixin):
     document: Mapped[str] = mapped_column(Text, nullable=False)
     record_metadata: Mapped[dict] = mapped_column(JSON, nullable=False)
     embedding: Mapped[list[float]] = mapped_column(JSON, nullable=False)
+
+
+_USER_SECURITY_FIELDS = (
+    "role",
+    "hashed_password",
+    "is_active",
+    "organization_id",
+    "email",
+)
+
+
+@event.listens_for(User, "before_update")
+def _mark_user_security_change(_mapper, _connection, target: User) -> None:
+    state = inspect(target)
+    changed_fields = tuple(
+        field_name
+        for field_name in _USER_SECURITY_FIELDS
+        if state.attrs[field_name].history.has_changes()
+    )
+    if not changed_fields:
+        return
+
+    target.security_version = int(target.security_version or 1) + 1
+    target.security_changed_at = datetime.utcnow()
+    target.__dict__["_pending_security_change_fields"] = changed_fields
+
+
+@event.listens_for(User, "after_update")
+def _revoke_sessions_after_user_security_change(_mapper, connection, target: User) -> None:
+    changed_fields = target.__dict__.pop("_pending_security_change_fields", ())
+    if not changed_fields:
+        return
+
+    connection.execute(
+        update(AuthSession)
+        .where(
+            AuthSession.user_id == target.id,
+            AuthSession.revoked_at.is_(None),
+        )
+        .values(
+            revoked_at=datetime.utcnow(),
+            revocation_reason="user_security_state_changed",
+        )
+    )
+
+
+@event.listens_for(Organization, "before_update")
+def _mark_organization_deactivation(_mapper, _connection, target: Organization) -> None:
+    state = inspect(target)
+    if state.attrs.is_active.history.has_changes() and not target.is_active:
+        target.__dict__["_pending_session_revocation"] = True
+
+
+@event.listens_for(Organization, "after_update")
+def _revoke_sessions_after_organization_deactivation(
+    _mapper,
+    connection,
+    target: Organization,
+) -> None:
+    if not target.__dict__.pop("_pending_session_revocation", False):
+        return
+
+    user_ids = select(User.id).where(User.organization_id == target.id)
+    connection.execute(
+        update(AuthSession)
+        .where(
+            AuthSession.user_id.in_(user_ids),
+            AuthSession.revoked_at.is_(None),
+        )
+        .values(
+            revoked_at=datetime.utcnow(),
+            revocation_reason="organization_deactivated",
+        )
+    )

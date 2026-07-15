@@ -28,6 +28,8 @@ from app.erp.odoo_cache import get_cached, set_cached, invalidate as invalidate_
 from app.erp.bank_reconciliation import reconcile as bank_reconcile, reconcile_with_odoo_data, parse_file as parse_statement_file, get_date_range, transactions_from_odoo_move_lines, _run_matching
 from app.services.llm_service import chat as llm_chat
 
+from app.security.tenant_scope import current_organization_id
+
 router = APIRouter()
 
 
@@ -91,7 +93,7 @@ def save_erp_connection(payload: ERPConnectionRequest, db: Session = Depends(get
     }
     encrypted_secret = encrypt_value(json.dumps(secret_data))
 
-    conn = db.query(ERPConnection).filter(ERPConnection.organization_id == 1).first()
+    conn = db.query(ERPConnection).filter(ERPConnection.organization_id == current_organization_id(required=True)).first()
     if conn:
         conn.provider = payload.provider
         conn.base_url = payload.url
@@ -100,7 +102,7 @@ def save_erp_connection(payload: ERPConnectionRequest, db: Session = Depends(get
         conn.is_active = True
     else:
         conn = ERPConnection(
-            organization_id=1,
+            organization_id=current_organization_id(required=True),
             provider=payload.provider,
             base_url=payload.url,
             database_name=payload.db,
@@ -128,7 +130,7 @@ def save_erp_connection(payload: ERPConnectionRequest, db: Session = Depends(get
 @router.get("/connection", response_model=ERPConnectionResponse)
 def get_erp_connection(db: Session = Depends(get_db)):
     conn = db.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -157,7 +159,7 @@ def get_erp_connection(db: Session = Depends(get_db)):
 @router.post("/test-saved")
 def test_saved_connection(db: Session = Depends(get_db)):
     conn = db.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -196,7 +198,7 @@ def test_saved_connection(db: Session = Depends(get_db)):
 @router.get("/company-info-saved")
 def get_saved_company_info(db: Session = Depends(get_db)):
     conn = db.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -236,7 +238,7 @@ def get_saved_company_info(db: Session = Depends(get_db)):
 def list_companies(db: Session = Depends(get_db)):
     """Return the list of companies from the connected Odoo instance."""
     conn = db.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -279,7 +281,7 @@ def list_companies(db: Session = Depends(get_db)):
 @router.post("/discover")
 def trigger_erp_discovery(db: Session = Depends(get_db)):
     conn = db.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -635,7 +637,7 @@ def match_documents(
         return "weak"
 
     conn = db_session.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -970,7 +972,7 @@ def attach_document(
     import base64
 
     conn = db_session.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -1071,7 +1073,7 @@ class RegisterDocumentRequest(BaseModel):
 @router.get("/partners")
 def get_partners(db_session: Session = Depends(get_db), company_id: Optional[int] = None):
     conn = db_session.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -1407,7 +1409,7 @@ def _suggest_lines_from_similar_move(
 @router.post("/propose-transaction")
 def propose_transaction(payload: ProposeTransactionRequest, db_session: Session = Depends(get_db)):
     conn = db_session.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -1914,7 +1916,7 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
     from datetime import date
 
     conn = db_session.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -2567,7 +2569,7 @@ def chat_spreadsheet(payload: ChatSpreadsheetRequest, db_session: Session = Depe
     
     try:
         conn = db_session.query(ERPConnection).filter(
-            ERPConnection.organization_id == 1,
+            ERPConnection.organization_id == current_organization_id(required=True),
             ERPConnection.is_active == True
         ).first()
         
@@ -2807,7 +2809,7 @@ def parse_manual_text(payload: ParseManualTextRequest, db_session: Session = Dep
     
     try:
         conn = db_session.query(ERPConnection).filter(
-            ERPConnection.organization_id == 1,
+            ERPConnection.organization_id == current_organization_id(required=True),
             ERPConnection.is_active == True
         ).first()
         
@@ -2989,7 +2991,7 @@ class DetectAttachmentsRequest(BaseModel):
 @router.post("/detect-attachments")
 def detect_attachments(payload: DetectAttachmentsRequest, db_session: Session = Depends(get_db)):
     conn = db_session.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -3197,7 +3199,7 @@ def detect_attachments(payload: DetectAttachmentsRequest, db_session: Session = 
 @router.get("/accounts")
 def get_accounts(db_session: Session = Depends(get_db), company_id: Optional[int] = None):
     conn = db_session.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -3252,7 +3254,7 @@ def get_accounts(db_session: Session = Depends(get_db), company_id: Optional[int
 @router.get("/analytic-accounts")
 def get_analytic_accounts(db_session: Session = Depends(get_db), company_id: Optional[int] = None):
     conn = db_session.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -3292,7 +3294,7 @@ def get_analytic_accounts(db_session: Session = Depends(get_db), company_id: Opt
 @router.get("/attachment/{attachment_id}")
 def get_attachment(attachment_id: int, db_session: Session = Depends(get_db)):
     conn = db_session.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -3347,7 +3349,7 @@ def get_attachment(attachment_id: int, db_session: Session = Depends(get_db)):
 @router.get("/journals")
 def get_journals(db_session: Session = Depends(get_db), company_id: Optional[int] = None):
     conn = db_session.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True
     ).first()
 
@@ -3496,7 +3498,7 @@ def bank_reconciliation(
 
         # Load Odoo connection and fetch bank transactions
         conn = db.query(ERPConnection).filter(
-            ERPConnection.organization_id == 1,
+            ERPConnection.organization_id == current_organization_id(required=True),
             ERPConnection.is_active == True
         ).first()
         if not conn:

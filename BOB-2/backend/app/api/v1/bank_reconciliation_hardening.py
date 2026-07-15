@@ -30,6 +30,8 @@ from app.api.v1.bank_reconciliation_entry_suggestions import (
     suggest_bank_reconciliation_entries,
 )
 
+from app.security.tenant_scope import current_organization_id
+
 router = APIRouter()
 
 
@@ -79,7 +81,7 @@ def _write_temp_file(payload: bytes, filename: str) -> str:
 
 def _get_active_erp_provider(db: Session):
     conn = db.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True,  # noqa: E712
     ).first()
     if not conn:
@@ -166,7 +168,7 @@ def _create_audit_log(
 ) -> BankReconciliationAuditLog:
     result_payload = payload or {}
     log = BankReconciliationAuditLog(
-        organization_id=1,
+        organization_id=current_organization_id(required=True),
         company_id=company_id or (selected_journal or {}).get("company_id"),
         bank_journal_id=(selected_journal or {}).get("journal_id"),
         bank_journal_name=(selected_journal or {}).get("journal_name"),

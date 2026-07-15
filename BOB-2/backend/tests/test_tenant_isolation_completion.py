@@ -1,14 +1,20 @@
-"""Stage 11 regressions for request-bound financial tenant isolation."""
+"""Stage 11 and 12 regressions for financial tenant isolation."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+import pytest
+
 from app.erp import discovery, odoo_cache
 from app.models.core import ERPConnection, Organization, User
 from app.security.auth import hash_password
-from app.security.tenant_scope import current_organization_id, tenant_scope
+from app.security.tenant_scope import (
+    TenantScopeError,
+    current_organization_id,
+    tenant_scope,
+)
 from app.services.secret_store import get_secret_provider
 
 
@@ -172,7 +178,7 @@ def test_legacy_connection_save_updates_only_current_tenant(
     assert updated_second.database_name == "tenant_two_new"
 
 
-def test_hardcoded_legacy_predicate_and_insert_are_tenant_rewritten(db):
+def test_literal_tenant_predicate_is_not_reinterpreted_and_inserts_fail_closed(db):
     _second_tenant(db)
     db.add_all(
         [
@@ -199,28 +205,25 @@ def test_hardcoded_legacy_predicate_and_insert_are_tenant_rewritten(db):
     db.commit()
 
     with tenant_scope(2):
-        selected = (
-            db.query(ERPConnection)
-            .filter(ERPConnection.organization_id == 1)
-            .order_by(ERPConnection.id.asc())
-            .all()
-        )
+        # Defense-in-depth criteria must not reinterpret the literal as tenant 2.
+        assert db.query(ERPConnection).filter(ERPConnection.organization_id == 1).all() == []
+        selected = db.query(ERPConnection).filter(ERPConnection.organization_id == 2).all()
         assert selected
         assert {row.organization_id for row in selected} == {2}
 
-        legacy_insert = ERPConnection(
+        cross_tenant_insert = ERPConnection(
             organization_id=1,
             provider="odoo",
-            base_url="https://two-created.example.com",
-            database_name="two_created",
+            base_url="https://forbidden.example.com",
+            database_name="forbidden",
             auth_type="password",
-            encrypted_secret_ref="secretref://memory/two-created/1",
+            encrypted_secret_ref="secretref://memory/forbidden/1",
             is_active=True,
         )
-        db.add(legacy_insert)
-        db.commit()
-        db.refresh(legacy_insert)
-        assert legacy_insert.organization_id == 2
+        db.add(cross_tenant_insert)
+        with pytest.raises(TenantScopeError, match="Cross-tenant object creation"):
+            db.flush()
+        db.rollback()
 
     assert current_organization_id(required=False) is None
 

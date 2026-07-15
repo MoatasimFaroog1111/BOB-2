@@ -20,6 +20,7 @@ from app.models.core import (
     VectorRecord,
 )
 from app.models.external_llm import ExternalLLMPolicy
+from app.models.tenant_secret import TenantSecretBinding, TenantSecretVersion
 
 __all__ = [
     "AIAccountingSuggestion",
@@ -38,6 +39,8 @@ __all__ = [
     "Organization",
     "TelegramApprovalOperation",
     "TelegramAuthorization",
+    "TenantSecretBinding",
+    "TenantSecretVersion",
     "User",
     "VectorRecord",
 ]

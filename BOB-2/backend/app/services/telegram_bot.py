@@ -1,24 +1,20 @@
 """Telegram bot compatibility facade over the bounded ingestion pipeline.
 
-No document downloader or parser lives here. Polling is delegated to the fixed-worker
-pipeline in ``telegram_ingestion``. Historical direct-processing entry points fail
-closed so older imports cannot recreate thread-per-upload or unbounded-download paths.
+No document downloader, parser, token file, or encryption key lives here. Polling
+is delegated to the fixed-worker pipeline in ``telegram_ingestion`` and the bot
+token is resolved from the tenant-scoped centralized secret provider.
 """
 
 from __future__ import annotations
 
 import html
-import json
 import logging
-import os
 import threading
-import time
-from pathlib import Path
 from typing import Any, Optional
 
 from app.core.config import settings
 from app.db.database import SessionLocal
-from app.security.encryption import decrypt_value, encrypt_value
+from app.services.secret_store import SecretNotConfigured, get_tenant_secret
 from app.services.telegram_accounting_service import (
     TelegramApprovalDenied,
     cancel_approval,
@@ -36,9 +32,6 @@ from app.services.telegram_security import TelegramSecurityContext, record_teleg
 
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = settings.storage_path / "telegram_config.json"
-UPLOAD_DIR = settings.storage_path / "telegram_uploads"
-
 # Compatibility/runtime visibility only. Durable approval rows remain authoritative.
 PENDING_ENTRIES: dict[tuple[int, int], dict[str, Any]] = {}
 pending_entries_lock = threading.RLock()
@@ -47,65 +40,38 @@ bot_thread: Optional[threading.Thread] = None
 stop_event = threading.Event()
 
 
-def _encrypt_token(token: str) -> str:
-    return encrypt_value(token)
+def get_telegram_token(organization_id: int | None = None) -> Optional[str]:
+    """Resolve one organization's token without exposing it to an API or log."""
 
-
-def _decrypt_token(encrypted_token: str) -> Optional[str]:
-    try:
-        return decrypt_value(encrypted_token)
-    except Exception:
+    target_organization = organization_id or settings.TELEGRAM_RUNTIME_ORGANIZATION_ID
+    if target_organization <= 0:
         return None
-
-
-def get_telegram_token() -> Optional[str]:
-    """Read the configured token without exposing it to an API response or log."""
-
-    if not CONFIG_PATH.exists():
-        return None
+    db = SessionLocal()
     try:
-        config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        if config.get("is_active") and config.get("encrypted_token"):
-            return _decrypt_token(config["encrypted_token"])
-    except Exception:
-        logger.info("Telegram configuration access failed")
-    return None
-
-
-def save_telegram_config(token: str, is_active: bool = True) -> bool:
-    """Legacy encrypted-file storage retained until the secret-store remediation stage."""
-
-    try:
-        encrypted_token = _encrypt_token(token)
-        config = {
-            "is_active": bool(is_active),
-            "encrypted_token": encrypted_token,
-            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        temp_path = CONFIG_PATH.with_name(f".{CONFIG_PATH.name}.{os.getpid()}.tmp")
-        temp_path.write_text(
-            json.dumps(config, ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        return get_tenant_secret(
+            db,
+            organization_id=target_organization,
+            purpose="telegram_bot_token",
         )
-        try:
-            os.chmod(temp_path, 0o600)
-        except OSError:
-            pass
-        temp_path.replace(CONFIG_PATH)
-        return True
+    except SecretNotConfigured:
+        return None
     except Exception:
-        logger.exception("Failed to save Telegram configuration")
-        return False
+        logger.info("Telegram secret resolution failed safely")
+        return None
+    finally:
+        db.close()
 
 
-def clear_telegram_config() -> bool:
-    try:
-        CONFIG_PATH.unlink(missing_ok=True)
-        return True
-    except Exception:
-        logger.exception("Failed to clear Telegram configuration")
-        return False
+def save_telegram_config(*_args: Any, **_kwargs: Any) -> bool:
+    raise RuntimeError(
+        "Legacy Telegram file storage was removed; use the tenant secret administration API."
+    )
+
+
+def clear_telegram_config(*_args: Any, **_kwargs: Any) -> bool:
+    raise RuntimeError(
+        "Legacy Telegram file storage was removed; revoke the tenant secret through the administration API."
+    )
 
 
 def send_telegram_request(token: str, method: str, payload: dict[str, Any]) -> Optional[dict[str, Any]]:
@@ -270,7 +236,7 @@ def start_telegram_bot() -> None:
     global bot_thread
     token = get_telegram_token()
     if not token:
-        logger.info("No active Telegram bot token configured; bot remains disabled")
+        logger.info("No active tenant Telegram bot token configured; bot remains disabled")
         return
     stop_event.clear()
     bot_thread = threading.Thread(

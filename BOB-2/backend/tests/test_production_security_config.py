@@ -19,6 +19,8 @@ def _production_settings(**overrides) -> Settings:
         "CLAMAV_HOST": "clamav",
         "GUARDIAN_SEED_EMAIL": "",
         "GUARDIAN_SEED_PASSWORD": "",
+        "SECRET_STORE_PROVIDER": "azure_key_vault",
+        "AZURE_KEY_VAULT_URL": "https://guardian-production.vault.azure.net",
         "ERP_OUTBOUND_REQUIRE_ALLOWLIST": True,
         "ERP_OUTBOUND_ALLOWED_HOSTS": "odoo.example.test",
         "ERP_OUTBOUND_ALLOWED_CIDRS": "",
@@ -56,6 +58,8 @@ def test_complete_production_security_configuration_is_accepted():
         ("REQUIRE_MALWARE_SCAN", False, "REQUIRE_MALWARE_SCAN"),
         ("CLAMAV_HOST", "", "CLAMAV_HOST"),
         ("GUARDIAN_SEED_EMAIL", "owner@example.test", "owner seeding"),
+        ("SECRET_STORE_PROVIDER", "memory", "SECRET_STORE_PROVIDER"),
+        ("AZURE_KEY_VAULT_URL", "http://guardian-production.vault.azure.net", "AZURE_KEY_VAULT_URL"),
         ("ERP_OUTBOUND_REQUIRE_ALLOWLIST", False, "ERP_OUTBOUND_REQUIRE_ALLOWLIST"),
         ("ERP_OUTBOUND_ALLOWED_HOSTS", "", "ERP_OUTBOUND_ALLOWED_HOSTS"),
         ("ERP_OUTBOUND_ALLOWED_HOSTS", "*", "global wildcard"),
@@ -66,6 +70,8 @@ def test_complete_production_security_configuration_is_accepted():
         ("EXTERNAL_LLM_MAX_REQUEST_BYTES", 1, "EXTERNAL_LLM_MAX_REQUEST_BYTES"),
         ("EXTERNAL_LLM_MAX_RESPONSE_BYTES", 1, "EXTERNAL_LLM_MAX_RESPONSE_BYTES"),
         ("EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS", 9000, "EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS"),
+        ("ACCOUNTING_LLM_API_KEY", "forbidden-environment-value", "environment variables"),
+        ("DEEPSEEK_API_KEY", "forbidden-environment-value", "environment variables"),
     ],
 )
 def test_production_rejects_missing_security_control(field, value, expected):
@@ -86,25 +92,19 @@ def test_production_rejects_non_loopback_local_llm():
 @pytest.mark.parametrize(
     ("overrides", "expected"),
     [
-        ({"ACCOUNTING_LLM_API_KEY": ""}, "API key"),
-        ({"ACCOUNTING_LLM_API_KEY": "key", "EXTERNAL_LLM_ALLOWED_PROVIDERS": "*"}, "explicit allowlist"),
-        ({"ACCOUNTING_LLM_API_KEY": "key", "EXTERNAL_LLM_ALLOWED_MODELS": "*"}, "explicit provider:model"),
-        ({"ACCOUNTING_LLM_API_KEY": "key", "EXTERNAL_LLM_ALLOWED_HOSTS": "*"}, "exact hosts"),
-        ({"ACCOUNTING_LLM_API_KEY": "key", "EXTERNAL_LLM_REQUIRED_DPA_VERSION": ""}, "DPA_VERSION"),
+        ({"EXTERNAL_LLM_ALLOWED_PROVIDERS": "*"}, "explicit allowlist"),
+        ({"EXTERNAL_LLM_ALLOWED_MODELS": "*"}, "explicit provider:model"),
+        ({"EXTERNAL_LLM_ALLOWED_HOSTS": "*"}, "exact hosts"),
+        ({"EXTERNAL_LLM_REQUIRED_DPA_VERSION": ""}, "DPA_VERSION"),
         (
-            {
-                "ACCOUNTING_LLM_API_KEY": "key",
-                "ACCOUNTING_LLM_API_URL": "http://api.deepseek.com/chat/completions",
-            },
+            {"ACCOUNTING_LLM_API_URL": "http://api.deepseek.com/chat/completions"},
             "approved HTTPS",
         ),
         (
-            {
-                "ACCOUNTING_LLM_API_KEY": "key",
-                "ACCOUNTING_LLM_API_URL": "https://evil.example/chat/completions",
-            },
+            {"ACCOUNTING_LLM_API_URL": "https://evil.example/chat/completions"},
             "approved HTTPS",
         ),
+        ({"SECRET_STORE_PROVIDER": "disabled"}, "Azure Key Vault"),
     ],
 )
 def test_production_external_llm_enablement_is_fail_closed(overrides, expected):
@@ -113,11 +113,8 @@ def test_production_external_llm_enablement_is_fail_closed(overrides, expected):
         settings.validate_runtime_security()
 
 
-def test_production_accepts_explicit_external_llm_technical_configuration():
-    settings = _production_settings(
-        EXTERNAL_LLM_ENABLED=True,
-        ACCOUNTING_LLM_API_KEY="technical-key-present",
-    )
+def test_production_accepts_external_llm_without_environment_credential():
+    settings = _production_settings(EXTERNAL_LLM_ENABLED=True)
     settings.validate_runtime_security()
 
 

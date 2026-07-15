@@ -1,17 +1,21 @@
-import json
-from pathlib import Path
-from typing import Any
+from __future__ import annotations
 
-from cryptography.fernet import Fernet, InvalidToken
-from fastapi import APIRouter, HTTPException, status
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 
-from app.core.config import settings
+from app.db.database import get_db
+from app.security.dependencies import require_permission
+from app.services.secret_store import (
+    SecretStoreError,
+    binding_status,
+    put_tenant_secret,
+    revoke_tenant_secret,
+)
 
 router = APIRouter()
-
-CONFIG_FILENAME = "communication_tools.json"
-KEY_FILENAME = "communication_tools.key"
 
 
 class TelegramTokenPayload(BaseModel):
@@ -20,118 +24,88 @@ class TelegramTokenPayload(BaseModel):
 
 class TelegramStatusResponse(BaseModel):
     configured: bool
-    masked_token: str = ""
-    storage: str = "backend_encrypted_file"
+    storage: str = "central_secret_store"
+    provider: str | None = None
+    status: str | None = None
+    version_fingerprint: str | None = None
+    last_rotated_at: datetime | None = None
 
 
-def _config_path() -> Path:
-    return settings.storage_path / CONFIG_FILENAME
-
-
-def _key_path() -> Path:
-    return settings.storage_path / KEY_FILENAME
-
-
-def _load_or_create_fernet() -> Fernet:
-    """Use a stable local encryption key so saved tokens survive backend restarts."""
-    path = _key_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    if path.exists():
-        key = path.read_bytes().strip()
-    else:
-        key = Fernet.generate_key()
-        path.write_bytes(key)
-
-    return Fernet(key)
-
-
-def _encrypt_secret(value: str) -> str:
-    return _load_or_create_fernet().encrypt(value.encode("utf-8")).decode("utf-8")
-
-
-def _decrypt_secret(value: str) -> str:
-    try:
-        return _load_or_create_fernet().decrypt(value.encode("utf-8")).decode("utf-8")
-    except InvalidToken as exc:
-        raise ValueError("Stored Telegram token cannot be decrypted.") from exc
-
-
-def _load_config() -> dict[str, Any]:
-    path = _config_path()
-    if not path.exists():
-        return {}
-
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Communication tools settings file is invalid.",
-        ) from exc
-
-
-def _save_config(data: dict[str, Any]) -> None:
-    path = _config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    tmp_path = path.with_suffix(".tmp")
-    tmp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(path)
-
-
-def _mask_token(token: str) -> str:
-    clean = (token or "").strip()
-    if not clean:
-        return ""
-    if len(clean) <= 12:
-        return "محفوظ"
-    return f"{clean[:6]}...{clean[-4:]}"
+def _tenant(current_user: dict) -> tuple[int, int]:
+    organization_id = current_user.get("organization_id")
+    user_id = current_user.get("user_id")
+    if not isinstance(organization_id, int) or organization_id <= 0:
+        raise HTTPException(status_code=403, detail="The authenticated user has no active organization.")
+    if not isinstance(user_id, int) or user_id <= 0:
+        raise HTTPException(status_code=401, detail="The authenticated user identity is incomplete.")
+    return organization_id, user_id
 
 
 def _validate_telegram_token(token: str) -> str:
     clean = (token or "").strip()
     if not clean:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Telegram token is required.")
-    if len(clean) < 20 or ":" not in clean:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Telegram token format looks invalid. Paste the full bot token from BotFather.",
-        )
+    if len(clean) < 20 or len(clean) > 256 or ":" not in clean:
+        raise HTTPException(status_code=400, detail="Telegram token format is invalid.")
     return clean
 
 
-@router.get("/telegram-token/status", response_model=TelegramStatusResponse)
-def get_telegram_token_status() -> TelegramStatusResponse:
-    data = _load_config()
-    encrypted_token = data.get("telegram_bot_token", "")
-    if not encrypted_token:
+def _response(binding) -> TelegramStatusResponse:
+    if binding is None:
         return TelegramStatusResponse(configured=False)
+    return TelegramStatusResponse(
+        configured=binding.status == "active" and binding.revoked_at is None,
+        provider=binding.provider,
+        status=binding.status,
+        version_fingerprint=binding.fingerprint_sha256[:12],
+        last_rotated_at=binding.last_rotated_at,
+    )
 
-    try:
-        token = _decrypt_secret(encrypted_token)
-    except ValueError:
-        return TelegramStatusResponse(configured=True, masked_token="محفوظ")
 
-    return TelegramStatusResponse(configured=True, masked_token=_mask_token(token))
+@router.get("/telegram-token/status", response_model=TelegramStatusResponse)
+def get_telegram_token_status(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("manage_settings")),
+) -> TelegramStatusResponse:
+    organization_id, _ = _tenant(current_user)
+    return _response(
+        binding_status(db, organization_id=organization_id, purpose="telegram_bot_token")
+    )
 
 
 @router.put("/telegram-token", response_model=TelegramStatusResponse)
-def save_telegram_token(payload: TelegramTokenPayload) -> TelegramStatusResponse:
-    token = _validate_telegram_token(payload.token)
-    data = _load_config()
-    data["telegram_bot_token"] = _encrypt_secret(token)
-    data["telegram_bot_token_configured"] = True
-    _save_config(data)
-
-    return TelegramStatusResponse(configured=True, masked_token=_mask_token(token))
+def save_telegram_token(
+    payload: TelegramTokenPayload,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("manage_settings")),
+) -> TelegramStatusResponse:
+    organization_id, user_id = _tenant(current_user)
+    try:
+        binding = put_tenant_secret(
+            db,
+            organization_id=organization_id,
+            actor_user_id=user_id,
+            purpose="telegram_bot_token",
+            value=_validate_telegram_token(payload.token),
+        )
+    except SecretStoreError as exc:
+        raise HTTPException(status_code=503, detail=exc.public_message) from exc
+    return _response(binding)
 
 
 @router.delete("/telegram-token", response_model=TelegramStatusResponse)
-def clear_telegram_token() -> TelegramStatusResponse:
-    data = _load_config()
-    data.pop("telegram_bot_token", None)
-    data["telegram_bot_token_configured"] = False
-    _save_config(data)
-
+def clear_telegram_token(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("manage_settings")),
+) -> TelegramStatusResponse:
+    organization_id, user_id = _tenant(current_user)
+    try:
+        revoke_tenant_secret(
+            db,
+            organization_id=organization_id,
+            actor_user_id=user_id,
+            purpose="telegram_bot_token",
+        )
+    except SecretStoreError as exc:
+        raise HTTPException(status_code=503, detail=exc.public_message) from exc
     return TelegramStatusResponse(configured=False)

@@ -1,85 +1,66 @@
-import base64
+"""Compatibility bridge for legacy ERP credential callers.
+
+No encryption key or ciphertext is stored locally. New code should call
+``app.services.secret_store`` directly. These functions remain only while the
+legacy ERP routes are parameterized in the tenant-isolation stage.
+"""
+
 import hashlib
 import os
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
 from app.core.config import settings
-
-# Use a constant salt - in production, this should be stored securely and separately
-# from the database. For now, we derive it deterministically from SECRET_KEY.
-SALT_HASH = hashlib.sha256(b"guardianai_salt_" + settings.SECRET_KEY.encode()).digest()[:16]
-
-
-def get_fernet_key() -> bytes:
-    """
-    Derive a secure Fernet key from SECRET_KEY using PBKDF2.
-    This is more secure than simple SHA256 hashing.
-    """
-    kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=SALT_HASH,
-        iterations=100000,
-    )
-    key = base64.urlsafe_b64encode(kdf.derive(settings.SECRET_KEY.encode()))
-    return key
+from app.db.database import SessionLocal
+from app.services.secret_store import (
+    get_secret_provider,
+    put_tenant_secret,
+    resolve_secret_reference,
+    secret_reference,
+)
 
 
 def encrypt_value(value: str) -> str:
-    """Encrypt a string value using Fernet symmetric encryption."""
+    """Store legacy ERP credentials in the centralized secret provider."""
+
     if not value:
         return ""
+    if not settings.is_production:
+        provider = get_secret_provider()
+        name = "legacy-erp-test-" + hashlib.sha256(os.urandom(32)).hexdigest()[:20]
+        remote = provider.set_secret(
+            name,
+            value,
+            tags={"purpose": "erp_credentials", "environment": settings.APP_ENV},
+        )
+        return f"secretref://{provider.provider_name}/{remote.name}/{remote.version}"
+
+    db = SessionLocal()
     try:
-        f = Fernet(get_fernet_key())
-        return f.encrypt(value.encode()).decode()
-    except Exception as e:
-        # Log error but don't expose details
-        raise ValueError("Encryption failed") from e
+        binding = put_tenant_secret(
+            db,
+            organization_id=settings.LEGACY_FINANCIAL_ORGANIZATION_ID,
+            actor_user_id=None,
+            purpose="erp_credentials",
+            value=value,
+        )
+        return secret_reference(binding)
+    finally:
+        db.close()
 
 
-def decrypt_value(encrypted_value: str) -> str:
-    """Decrypt a Fernet-encrypted string value."""
-    if not encrypted_value:
+def decrypt_value(reference: str) -> str:
+    """Resolve a versioned remote secret reference; ciphertext is not accepted."""
+
+    if not reference:
         return ""
+    if not reference.startswith("secretref://"):
+        raise ValueError("Legacy encrypted values are no longer accepted.")
     try:
-        f = Fernet(get_fernet_key())
-        return f.decrypt(encrypted_value.encode()).decode()
-    except Exception as e:
-        # Log error but don't expose details
-        raise ValueError("Decryption failed - invalid or corrupted data") from e
+        return resolve_secret_reference(reference)
+    except Exception as exc:
+        raise ValueError("Secure secret reference could not be resolved.") from exc
 
 
-def rotate_encryption_key(old_secret_key: str, new_secret_key: str, encrypted_data: str) -> str:
-    """
-    Re-encrypt data with a new key (key rotation).
-    This allows changing SECRET_KEY without losing encrypted data.
-    """
-    # Derive the correct salts for both old and new keys
-    old_salt = hashlib.sha256(b"guardianai_salt_" + old_secret_key.encode()).digest()[:16]
-    new_salt = hashlib.sha256(b"guardianai_salt_" + new_secret_key.encode()).digest()[:16]
-
-    # Temporarily use old key to decrypt
-    old_kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=old_salt,
-        iterations=100000,
+def rotate_encryption_key(*_args: object, **_kwargs: object) -> str:
+    raise RuntimeError(
+        "Local encryption-key rotation was removed. Rotate the tenant secret through the centralized secret store."
     )
-    old_key = base64.urlsafe_b64encode(old_kdf.derive(old_secret_key.encode()))
-
-    new_kdf = PBKDF2HMAC(
-        algorithm=hashes.SHA256(),
-        length=32,
-        salt=new_salt,
-        iterations=100000,
-    )
-    new_key = base64.urlsafe_b64encode(new_kdf.derive(new_secret_key.encode()))
-
-    # Decrypt with old key
-    f_old = Fernet(old_key)
-    decrypted = f_old.decrypt(encrypted_data.encode())
-
-    # Re-encrypt with new key
-    f_new = Fernet(new_key)
-    return f_new.encrypt(decrypted).decode()

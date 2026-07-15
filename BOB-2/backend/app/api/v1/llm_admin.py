@@ -15,7 +15,13 @@ from app.security.dependencies import require_permission
 from app.services.external_llm_gateway import (
     ALLOWED_EXTERNAL_LLM_PURPOSES,
     ALLOWED_RETENTION_MODES,
-    current_policy_effective_enabled,
+)
+from app.services.secret_store import (
+    SecretStoreError,
+    binding_status,
+    put_tenant_secret,
+    revoke_tenant_secret,
+    secret_is_configured,
 )
 
 router = APIRouter()
@@ -25,23 +31,13 @@ def _csv_items(value: str) -> list[str]:
     return [item.strip().lower() for item in value.split(",") if item.strip()]
 
 
-def _api_key_configured() -> bool:
-    return bool(settings.ACCOUNTING_LLM_API_KEY or settings.DEEPSEEK_API_KEY)
-
-
 def _organization_context(db: Session, token_payload: dict) -> tuple[int, int]:
     organization_id = token_payload.get("organization_id")
     user_id = token_payload.get("user_id")
     if not isinstance(organization_id, int) or organization_id <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="The authenticated user is not assigned to an organization.",
-        )
+        raise HTTPException(status_code=403, detail="The authenticated user is not assigned to an organization.")
     if not isinstance(user_id, int) or user_id <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="The authenticated user identity is incomplete.",
-        )
+        raise HTTPException(status_code=401, detail="The authenticated user identity is incomplete.")
     organization = db.query(Organization).filter(Organization.id == organization_id).first()
     user = db.query(User).filter(User.id == user_id).first()
     if organization is None or not organization.is_active:
@@ -92,6 +88,10 @@ class ExternalLLMPolicyUpdate(BaseModel):
         return normalized
 
 
+class ExternalLLMKeyPayload(BaseModel):
+    api_key: str = Field(min_length=20, max_length=4096)
+
+
 class ExternalLLMDisclosureEvent(BaseModel):
     id: int
     action: str
@@ -101,14 +101,56 @@ class ExternalLLMDisclosureEvent(BaseModel):
     created_at: datetime
 
 
-def _policy_response(policy: ExternalLLMPolicy | None, organization_id: int) -> dict[str, Any]:
+def _effective_enabled(policy: ExternalLLMPolicy | None, key_configured: bool) -> bool:
+    if policy is None:
+        return False
+    provider = (policy.approved_provider or "").strip().lower()
+    model = (policy.approved_model or "").strip()
+    return bool(
+        settings.EXTERNAL_LLM_ENABLED
+        and key_configured
+        and policy.external_llm_enabled
+        and provider in set(_csv_items(settings.EXTERNAL_LLM_ALLOWED_PROVIDERS))
+        and f"{provider}:{model}".lower() in set(_csv_items(settings.EXTERNAL_LLM_ALLOWED_MODELS))
+        and bool(policy.allowed_purposes)
+        and set(policy.allowed_purposes or []).issubset(ALLOWED_EXTERNAL_LLM_PURPOSES)
+        and policy.dpa_version == settings.EXTERNAL_LLM_REQUIRED_DPA_VERSION
+        and policy.dpa_reference
+        and policy.data_residency_region
+        and policy.provider_retention_mode in ALLOWED_RETENTION_MODES
+        and policy.accepted_at
+        and policy.accepted_by_user_id
+        and policy.revoked_at is None
+        and policy.max_redacted_text_chars <= settings.EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS
+    )
+
+
+def _credential_response(db: Session, organization_id: int) -> dict[str, Any]:
+    binding = binding_status(db, organization_id=organization_id, purpose="external_llm_api_key")
+    return {
+        "configured": bool(binding and binding.status == "active" and binding.revoked_at is None),
+        "storage": "central_secret_store",
+        "provider": binding.provider if binding else None,
+        "status": binding.status if binding else None,
+        "version_fingerprint": binding.fingerprint_sha256[:12] if binding else None,
+        "last_rotated_at": binding.last_rotated_at if binding else None,
+    }
+
+
+def _policy_response(db: Session, policy: ExternalLLMPolicy | None, organization_id: int) -> dict[str, Any]:
     allowed_providers = _csv_items(settings.EXTERNAL_LLM_ALLOWED_PROVIDERS)
     allowed_models = _csv_items(settings.EXTERNAL_LLM_ALLOWED_MODELS)
+    key_configured = secret_is_configured(
+        db,
+        organization_id=organization_id,
+        purpose="external_llm_api_key",
+    )
     return {
         "organization_id": organization_id,
         "global_enabled": settings.EXTERNAL_LLM_ENABLED,
-        "api_key_configured": _api_key_configured(),
-        "effective_enabled": current_policy_effective_enabled(policy),
+        "api_key_configured": key_configured,
+        "credential": _credential_response(db, organization_id),
+        "effective_enabled": _effective_enabled(policy, key_configured),
         "required_dpa_version": settings.EXTERNAL_LLM_REQUIRED_DPA_VERSION,
         "globally_allowed_providers": allowed_providers,
         "globally_allowed_models": allowed_models,
@@ -143,11 +185,15 @@ def _policy_response(policy: ExternalLLMPolicy | None, organization_id: int) -> 
 
 
 def _validate_enable_request(
+    db: Session,
+    organization_id: int,
     payload: ExternalLLMPolicyUpdate,
     current: ExternalLLMPolicy | None,
 ) -> bool:
     if not payload.external_llm_enabled:
         return False
+    if not secret_is_configured(db, organization_id=organization_id, purpose="external_llm_api_key"):
+        raise HTTPException(status_code=400, detail="Configure the tenant external AI credential before enabling the policy.")
     allowed_providers = set(_csv_items(settings.EXTERNAL_LLM_ALLOWED_PROVIDERS))
     allowed_models = set(_csv_items(settings.EXTERNAL_LLM_ALLOWED_MODELS))
     purposes = set(payload.allowed_purposes)
@@ -181,10 +227,7 @@ def _validate_enable_request(
         or current.provider_retention_mode != payload.provider_retention_mode
     )
     if material_change and not payload.accept_dpa:
-        raise HTTPException(
-            status_code=400,
-            detail="Explicit DPA acceptance is required to enable or materially change external AI processing.",
-        )
+        raise HTTPException(status_code=400, detail="Explicit DPA acceptance is required to enable or materially change external AI processing.")
     return material_change
 
 
@@ -221,18 +264,61 @@ def _add_policy_audit(
     )
 
 
+@router.get("/credential")
+def get_external_llm_credential_status(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(require_permission("manage_settings")),
+):
+    organization_id, _ = _organization_context(db, token_payload)
+    return _credential_response(db, organization_id)
+
+
+@router.put("/credential")
+def rotate_external_llm_credential(
+    payload: ExternalLLMKeyPayload,
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(require_permission("manage_settings")),
+):
+    organization_id, user_id = _organization_context(db, token_payload)
+    try:
+        put_tenant_secret(
+            db,
+            organization_id=organization_id,
+            actor_user_id=user_id,
+            purpose="external_llm_api_key",
+            value=payload.api_key,
+        )
+    except SecretStoreError as exc:
+        raise HTTPException(status_code=503, detail=exc.public_message) from exc
+    return _credential_response(db, organization_id)
+
+
+@router.delete("/credential")
+def revoke_external_llm_credential(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(require_permission("manage_settings")),
+):
+    organization_id, user_id = _organization_context(db, token_payload)
+    try:
+        revoke_tenant_secret(
+            db,
+            organization_id=organization_id,
+            actor_user_id=user_id,
+            purpose="external_llm_api_key",
+        )
+    except SecretStoreError as exc:
+        raise HTTPException(status_code=503, detail=exc.public_message) from exc
+    return _credential_response(db, organization_id)
+
+
 @router.get("/policy")
 def get_external_llm_policy(
     db: Session = Depends(get_db),
     token_payload: dict = Depends(require_permission("manage_settings")),
 ):
     organization_id, _ = _organization_context(db, token_payload)
-    policy = (
-        db.query(ExternalLLMPolicy)
-        .filter(ExternalLLMPolicy.organization_id == organization_id)
-        .first()
-    )
-    return _policy_response(policy, organization_id)
+    policy = db.query(ExternalLLMPolicy).filter(ExternalLLMPolicy.organization_id == organization_id).first()
+    return _policy_response(db, policy, organization_id)
 
 
 @router.put("/policy")
@@ -242,20 +328,12 @@ def update_external_llm_policy(
     token_payload: dict = Depends(require_permission("manage_settings")),
 ):
     organization_id, user_id = _organization_context(db, token_payload)
-    policy = (
-        db.query(ExternalLLMPolicy)
-        .filter(ExternalLLMPolicy.organization_id == organization_id)
-        .first()
-    )
-    material_change = _validate_enable_request(payload, policy)
+    policy = db.query(ExternalLLMPolicy).filter(ExternalLLMPolicy.organization_id == organization_id).first()
+    material_change = _validate_enable_request(db, organization_id, payload, policy)
     now = datetime.utcnow()
     created = policy is None
     if policy is None:
-        policy = ExternalLLMPolicy(
-            organization_id=organization_id,
-            policy_version=1,
-            allowed_purposes=[],
-        )
+        policy = ExternalLLMPolicy(organization_id=organization_id, policy_version=1, allowed_purposes=[])
         db.add(policy)
         db.flush()
     else:
@@ -286,23 +364,14 @@ def update_external_llm_policy(
         policy.revoked_at = now
         action = "external_llm_policy_created_disabled" if created else "external_llm_policy_disabled"
 
-    _add_policy_audit(
-        db,
-        organization_id=organization_id,
-        user_id=user_id,
-        action=action,
-        policy=policy,
-    )
+    _add_policy_audit(db, organization_id=organization_id, user_id=user_id, action=action, policy=policy)
     try:
         db.commit()
         db.refresh(policy)
     except Exception as exc:
         db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail="The external AI policy could not be saved.",
-        ) from exc
-    return _policy_response(policy, organization_id)
+        raise HTTPException(status_code=500, detail="The external AI policy could not be saved.") from exc
+    return _policy_response(db, policy, organization_id)
 
 
 @router.get("/disclosures", response_model=list[ExternalLLMDisclosureEvent])

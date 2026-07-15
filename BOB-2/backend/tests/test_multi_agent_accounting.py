@@ -166,12 +166,18 @@ def test_llm_reasoner_parses_provider_shape_only_through_gateway(db, monkeypatch
             }
         ]
     }
+    call_order: list[str] = []
 
     class FakeGateway:
         def __init__(self, **_kwargs):
-            pass
+            self.api_key = ""
+
+        def authorize(self):
+            call_order.append("authorize")
+            return object()
 
         def execute_chat_completion(self, **kwargs):
+            call_order.append("execute")
             assert kwargs["structured_payload"]
             assert kwargs["raw_document_text"]
             return provider_response
@@ -192,6 +198,7 @@ def test_llm_reasoner_parses_provider_shape_only_through_gateway(db, monkeypatch
         request_id="reasoner-test-request",
     )
 
+    assert call_order == ["authorize", "execute"]
     assert result.status == "success"
     assert result.reasoning is not None
     assert result.reasoning["confidence_score"] == 0.82

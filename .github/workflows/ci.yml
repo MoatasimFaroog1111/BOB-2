@@ -217,14 +217,23 @@ jobs:
           cache-dependency-path: BOB-2/backend/requirements.lock
       - name: Install hash-locked dependencies
         run: pip install --quiet --require-hashes -r requirements.lock
-      - name: Run tests
+      - name: Run tests with actionable failure tail
         env:
           APP_ENV: test
           DATABASE_URL: sqlite:///./test.db
           SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+          SECRET_STORE_PROVIDER: memory
           LOCAL_LLM_ENABLED: "false"
           EXTERNAL_LLM_ENABLED: "false"
-        run: python -m pytest tests/ -q
+        run: |
+          set +e
+          python -m pytest tests/ -q --tb=short > pytest-full.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            tail -n 220 pytest-full.log
+            exit "$status"
+          fi
+          cat pytest-full.log
 
   frontend-lint:
     name: Frontend — Lint & Build

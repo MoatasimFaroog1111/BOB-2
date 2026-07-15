@@ -1,0 +1,49 @@
+name: Backend full diagnostics
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-full-diagnostics-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  full-backend-diagnostics:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: BOB-2/backend
+    env:
+      APP_ENV: test
+      DATABASE_URL: sqlite:///./diagnostic-test.db
+      SECRET_STORE_PROVIDER: memory
+      LOCAL_LLM_ENABLED: "false"
+      EXTERNAL_LLM_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: BOB-2/backend/requirements.lock
+      - name: Install locked dependencies
+        run: pip install --quiet --require-hashes -r requirements.lock
+      - name: Run complete backend suite
+        run: |
+          set +e
+          python -m pytest tests/ -q --tb=short > pytest-full.log 2>&1
+          status=$?
+          tail -n 220 pytest-full.log
+          exit "$status"
+      - name: Upload failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-full-failure-${{ github.run_id }}
+          path: BOB-2/backend/pytest-full.log
+          if-no-files-found: error
+          retention-days: 3

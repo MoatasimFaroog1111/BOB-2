@@ -1,8 +1,7 @@
 """Administrative Telegram runtime controls.
 
-These endpoints intentionally expose runtime state only. They never return the bot
-token or any decrypted secret. Re-enabling after an emergency stop is deliberately
-not exposed until the remaining authorization and approval hardening is complete.
+These endpoints expose runtime state only. They never return the bot token,
+secret name, Key Vault version, or any decrypted value.
 """
 
 from typing import Any
@@ -34,7 +33,7 @@ def _record_admin_event(
             user_id=current_user.get("user_id"),
             action=action,
             entity_type="telegram_runtime",
-            entity_id="singleton",
+            entity_id=str(current_user.get("organization_id") or "unknown"),
             details=details,
         )
     )
@@ -42,7 +41,7 @@ def _record_admin_event(
 
 
 def _status_for_user(current_user: dict) -> dict[str, Any]:
-    status = get_runtime_status()
+    status = get_runtime_status(current_user.get("organization_id"))
     status["group_chats_globally_enabled"] = settings.TELEGRAM_ALLOW_GROUP_CHATS
     status["requested_by"] = current_user.get("sub")
     return status
@@ -52,7 +51,6 @@ def _status_for_user(current_user: dict) -> dict[str, Any]:
 def telegram_runtime_status(
     current_user: dict = Depends(require_permission("manage_settings")),
 ) -> dict[str, Any]:
-    """Return secret-free Telegram runtime status to authorized administrators."""
     return _status_for_user(current_user)
 
 
@@ -61,8 +59,7 @@ def emergency_disable(
     current_user: dict = Depends(require_permission("manage_settings")),
     db: Session = Depends(get_db),
 ) -> dict[str, Any]:
-    """Stop polling immediately and clear every in-memory pending approval."""
-    before = get_runtime_status()
+    before = get_runtime_status(current_user.get("organization_id"))
     after = emergency_disable_telegram_bot()
     _record_admin_event(
         db,

@@ -21,6 +21,8 @@ jobs:
     defaults:
       run:
         working-directory: BOB-2/backend
+    env:
+      SECRET_STORE_PROVIDER: memory
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
@@ -37,7 +39,7 @@ jobs:
         run: pip-audit -r requirements.lock --strict
       - name: Compile Python sources
         run: python -m compileall -q app tests
-      - name: Enforce Telegram, ERP, and external LLM isolation
+      - name: Enforce Telegram, ERP, LLM, and secret-store isolation
         run: |
           python - <<'PY'
           from pathlib import Path
@@ -56,6 +58,43 @@ jobs:
           assert "target=process_document" not in bot_source, "Thread-per-upload was reintroduced"
           assert "Direct Telegram download is disabled" in bot_source
           assert "secure_polling_loop" in bot_source
+          for forbidden in ("telegram_config.json", "encrypted_token", "Fernet", "encrypt_value"):
+              assert forbidden not in bot_source, f"Local Telegram secret path returned: {forbidden}"
+
+          communication_source = Path("app/api/v1/communication_tools.py").read_text(encoding="utf-8")
+          for forbidden in ("communication_tools.key", "communication_tools.json", "Fernet", "masked_token"):
+              assert forbidden not in communication_source, f"Local communication secret storage returned: {forbidden}"
+          assert "put_tenant_secret" in communication_source
+          assert "revoke_tenant_secret" in communication_source
+          assert 'require_permission("manage_settings")' in communication_source
+
+          encryption_source = Path("app/security/encryption.py").read_text(encoding="utf-8")
+          for forbidden in ("PBKDF2HMAC", "Fernet", "SECRET_KEY.encode", "SALT_HASH"):
+              assert forbidden not in encryption_source, f"Local encryption-key derivation returned: {forbidden}"
+          assert "secretref://" in encryption_source
+          assert "put_tenant_secret" in encryption_source
+
+          secret_store_source = Path("app/services/secret_store.py").read_text(encoding="utf-8")
+          required_secret_controls = (
+              "AzureKeyVaultSecretProvider",
+              "MemorySecretProvider",
+              "memory_secret_store_forbidden_in_production",
+              "AZURE_KEY_VAULT_URL",
+              ".vault.azure.net",
+              "_managed_identity_token",
+              "socket.create_connection",
+              "server_hostname=self._vault.hostname",
+              "azure_key_vault_proxy_tunnel_forbidden",
+              "TenantSecretBinding",
+              "TenantSecretVersion",
+              "fingerprint_sha256",
+              "tenant_secret_rotated",
+              "tenant_secret_revoked",
+              "provider.disable_secret",
+          )
+          missing_secret_controls = [item for item in required_secret_controls if item not in secret_store_source]
+          assert not missing_secret_controls, f"Central secret-store controls missing: {missing_secret_controls}"
+          assert "Fernet" not in secret_store_source
 
           ingestion_source = Path("app/services/telegram_ingestion.py").read_text(encoding="utf-8")
           required_ingestion_controls = (
@@ -77,7 +116,7 @@ jobs:
 
           approval_source = Path("app/services/telegram_accounting_service.py").read_text(encoding="utf-8")
           assert "approval_token_hash" in approval_source
-          assert "status == \"pending\"" in approval_source
+          assert 'status == "pending"' in approval_source
           assert "post_odoo_entries" in approval_source
 
           provider_source = Path("app/erp/providers/odoo.py").read_text(encoding="utf-8")
@@ -128,6 +167,8 @@ jobs:
           assert "ExternalLLMRequestContext" in reasoner_source
           assert "raw_document_text=text" in reasoner_source
           assert "db_session" in reasoner_source
+          assert "get_tenant_secret" in reasoner_source
+          assert "gateway.authorize()" in reasoner_source
           assert "urllib.request" not in reasoner_source
           assert "http.client" not in reasoner_source
 
@@ -161,28 +202,41 @@ jobs:
           assert 'require_permission("manage_settings")' in admin_source
           assert 'require_permission("view_audit_logs")' in admin_source
           assert "accept_dpa" in admin_source
-          assert '"api_key_configured"' in admin_source
-          assert '"api_key"' not in admin_source
+          assert 'router.put("/credential")' in admin_source
+          assert 'router.delete("/credential")' in admin_source
+          assert "put_tenant_secret" in admin_source
+          assert "ACCOUNTING_LLM_API_KEY" not in admin_source
+          assert "DEEPSEEK_API_KEY" not in admin_source
           assert "api_key_prefix" not in admin_source
           assert "api_key_value" not in admin_source
           PY
+      - name: Run centralized secret-store regression tests
+        env:
+          APP_ENV: test
+          DATABASE_URL: sqlite:///./ci-secret-store-test.db
+          SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+          SECRET_STORE_PROVIDER: memory
+        run: pytest -q tests/test_secret_store_security.py tests/test_secret_store_production_config.py
       - name: Run Telegram ingestion regression tests
         env:
           APP_ENV: test
           DATABASE_URL: sqlite:///./ci-ingestion-test.db
           SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+          SECRET_STORE_PROVIDER: memory
         run: pytest -q tests/test_telegram_ingestion_security.py
       - name: Run ERP outbound SSRF regression tests
         env:
           APP_ENV: test
           DATABASE_URL: sqlite:///./ci-erp-outbound-test.db
           SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+          SECRET_STORE_PROVIDER: memory
         run: pytest -q tests/test_erp_outbound_security.py
       - name: Run external LLM disclosure regression tests
         env:
           APP_ENV: test
           DATABASE_URL: sqlite:///./ci-external-llm-test.db
           SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+          SECRET_STORE_PROVIDER: memory
           LOCAL_LLM_ENABLED: "false"
           EXTERNAL_LLM_ENABLED: "false"
         run: pytest -q tests/test_external_llm_security.py
@@ -191,6 +245,7 @@ jobs:
           APP_ENV: test
           DATABASE_URL: sqlite:///./ci-test.db
           SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+          SECRET_STORE_PROVIDER: memory
           LOCAL_LLM_ENABLED: "false"
           EXTERNAL_LLM_ENABLED: "false"
         run: pytest -q
@@ -233,12 +288,14 @@ jobs:
           TRUSTED_PROXY_IPS: 127.0.0.1/32
           NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid
           ERP_OUTBOUND_ALLOWED_HOSTS: odoo.example.invalid
+          AZURE_KEY_VAULT_URL: https://ci-guardian.vault.azure.net
         run: |
           docker compose config --quiet
           docker compose config --format json > compose.json
           python - <<'PY'
           import json
           from pathlib import Path
+          from urllib.parse import urlsplit
 
           config = json.loads(Path("compose.json").read_text())
           services = config["services"]
@@ -249,17 +306,22 @@ jobs:
           assert config["networks"]["backend_private"].get("internal") is True
 
           backend_environment = services["backend"].get("environment", {})
-          assert str(backend_environment.get("TELEGRAM_BOT_ENABLED", "")).lower() == "false", (
-              "Production Compose must keep Telegram disabled"
-          )
-          assert str(backend_environment.get("TELEGRAM_BOT_PRODUCTION_READY", "")).lower() == "false", (
-              "Production Compose must keep Telegram readiness disabled"
-          )
-          assert str(backend_environment.get("TELEGRAM_ALLOW_GROUP_CHATS", "")).lower() == "false", (
-              "Production Compose must deny Telegram group chats by default"
-          )
+          assert backend_environment.get("SECRET_STORE_PROVIDER") == "azure_key_vault"
+          vault = urlsplit(str(backend_environment.get("AZURE_KEY_VAULT_URL", "")))
+          assert vault.scheme == "https"
+          assert (vault.hostname or "").endswith(".vault.azure.net")
+          assert vault.path in {"", "/"} and not vault.query and not vault.fragment
+          assert 1 <= int(backend_environment.get("SECRET_STORE_CONNECT_TIMEOUT_SECONDS", 0)) <= 30
+          assert 1 <= int(backend_environment.get("SECRET_STORE_READ_TIMEOUT_SECONDS", 0)) <= 120
+          assert 1024 <= int(backend_environment.get("SECRET_STORE_MAX_REQUEST_BYTES", 0)) <= 1048576
+          assert 16384 <= int(backend_environment.get("SECRET_STORE_MAX_RESPONSE_BYTES", 0)) <= 4194304
+
+          assert str(backend_environment.get("TELEGRAM_BOT_ENABLED", "")).lower() == "false"
+          assert str(backend_environment.get("TELEGRAM_BOT_PRODUCTION_READY", "")).lower() == "false"
+          assert str(backend_environment.get("TELEGRAM_ALLOW_GROUP_CHATS", "")).lower() == "false"
+          assert int(backend_environment.get("TELEGRAM_RUNTIME_ORGANIZATION_ID", -1)) == 0
           approval_ttl = int(backend_environment.get("TELEGRAM_APPROVAL_TTL_SECONDS", 0))
-          assert 60 <= approval_ttl <= 3600, "Telegram approval TTL must be bounded"
+          assert 60 <= approval_ttl <= 3600
 
           workers = int(backend_environment.get("TELEGRAM_INGESTION_WORKERS", 0))
           queue_size = int(backend_environment.get("TELEGRAM_INGESTION_QUEUE_SIZE", 0))
@@ -292,12 +354,8 @@ jobs:
           assert 1 <= int(backend_environment.get("ERP_OUTBOUND_READ_TIMEOUT_SECONDS", 0)) <= 120
           assert 65536 <= int(backend_environment.get("ERP_OUTBOUND_MAX_RESPONSE_BYTES", 0)) <= 52428800
 
-          assert str(backend_environment.get("LOCAL_LLM_ENABLED", "")).lower() == "false", (
-              "Production Compose must keep local LLM execution disabled"
-          )
-          assert str(backend_environment.get("EXTERNAL_LLM_ENABLED", "")).lower() == "false", (
-              "Production Compose must keep external LLM disclosure disabled"
-          )
+          assert str(backend_environment.get("LOCAL_LLM_ENABLED", "")).lower() == "false"
+          assert str(backend_environment.get("EXTERNAL_LLM_ENABLED", "")).lower() == "false"
           assert backend_environment.get("ACCOUNTING_LLM_API_KEY", "") == ""
           assert backend_environment.get("DEEPSEEK_API_KEY", "") == ""
           assert backend_environment.get("EXTERNAL_LLM_ALLOWED_PROVIDERS") == "deepseek"

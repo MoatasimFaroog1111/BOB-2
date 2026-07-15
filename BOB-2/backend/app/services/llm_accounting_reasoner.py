@@ -15,10 +15,11 @@ from app.services.external_llm_gateway import (
     ExternalLLMPolicyDenied,
     ExternalLLMProviderError,
     ExternalLLMRequestContext,
+    record_external_llm_event,
 )
+from app.services.secret_store import SecretNotConfigured, SecretStoreError, get_tenant_secret
 
 logger = logging.getLogger(__name__)
-
 
 SYSTEM_PROMPT = """You are GuardianAI's senior accounting, audit, VAT, and ERP review brain.
 You must be conservative, audit-safe, and practical.
@@ -50,13 +51,7 @@ GatewayFactory = Callable[..., ExternalLLMGateway]
 
 
 class LLMAccountingReasoner:
-    """Optional external LLM reasoning behind explicit tenant disclosure controls.
-
-    Rule-based accounting agents remain the primary workflow. This class does not treat an
-    API key as consent and cannot send data without a database session, organization, current
-    user, purpose, request ID, active tenant policy, current DPA acknowledgement, redaction,
-    and a committed pre-disclosure audit event.
-    """
+    """Optional external LLM reasoning behind tenant disclosure and secret controls."""
 
     def __init__(
         self,
@@ -69,7 +64,8 @@ class LLMAccountingReasoner:
     ) -> None:
         self.provider = (provider or settings.ACCOUNTING_LLM_PROVIDER).strip().lower()
         self.model = (model or settings.ACCOUNTING_LLM_MODEL).strip()
-        self.api_key = api_key
+        # Direct key injection exists only for isolated non-production tests.
+        self.api_key = None if settings.is_production else api_key
         self.api_url = api_url
         self.gateway_factory = gateway_factory
 
@@ -103,13 +99,6 @@ class LLMAccountingReasoner:
                 error="External AI reasoning requires authenticated tenant context.",
             )
 
-        structured_payload = self._build_structured_payload(
-            source_type=source_type,
-            extracted_signals=extracted_signals,
-            agent_findings=agent_findings,
-            conflicts=conflicts,
-            final_recommendation=final_recommendation,
-        )
         context = ExternalLLMRequestContext(
             organization_id=organization_id,
             user_id=user_id,
@@ -117,13 +106,93 @@ class LLMAccountingReasoner:
             source_type=source_type,
             request_id=request_id,
         )
+        # A non-secret probe satisfies the gateway's final credential-presence check
+        # during policy preflight. No network call occurs in authorize(). This ensures
+        # kill-switch, tenant, purpose, provider/model, and DPA decisions are audited
+        # before the application asks Key Vault for a value.
         gateway = self.gateway_factory(
             db=db_session,
             context=context,
             provider=self.provider,
             model=self.model,
-            api_key=self.api_key,
+            api_key=self.api_key or "policy-preflight-only",
             api_url=self.api_url,
+        )
+
+        try:
+            gateway.authorize()
+        except ExternalLLMPolicyDenied:
+            logger.info("External accounting reasoning blocked by tenant disclosure policy")
+            return LLMReasoningResult(
+                status="blocked_by_policy",
+                provider=self.provider,
+                model=self.model,
+                reasoning=None,
+                error="External AI processing is not authorized for this organization.",
+            )
+        except ExternalLLMAuditError:
+            logger.error("External accounting reasoning failed closed because audit persistence failed")
+            return LLMReasoningResult(
+                status="blocked_audit_unavailable",
+                provider=self.provider,
+                model=self.model,
+                reasoning=None,
+                error="External AI processing is unavailable because security auditing failed.",
+            )
+
+        api_key = self.api_key
+        if api_key is None:
+            try:
+                api_key = get_tenant_secret(
+                    db_session,
+                    organization_id=organization_id,
+                    purpose="external_llm_api_key",
+                )
+            except SecretNotConfigured:
+                record_external_llm_event(
+                    db_session,
+                    context=context,
+                    action="external_llm_disclosure_blocked",
+                    details={
+                        "reason": "external_llm_tenant_credential_missing",
+                        "provider": self.provider,
+                        "model": self.model,
+                    },
+                )
+                return LLMReasoningResult(
+                    status="blocked_secret_not_configured",
+                    provider=self.provider,
+                    model=self.model,
+                    reasoning=None,
+                    error="The organization has no active external AI credential.",
+                )
+            except SecretStoreError:
+                record_external_llm_event(
+                    db_session,
+                    context=context,
+                    action="external_llm_disclosure_blocked",
+                    details={
+                        "reason": "external_llm_secret_store_unavailable",
+                        "provider": self.provider,
+                        "model": self.model,
+                    },
+                )
+                logger.warning("External accounting reasoning secret resolution failed closed")
+                return LLMReasoningResult(
+                    status="blocked_secret_store_unavailable",
+                    provider=self.provider,
+                    model=self.model,
+                    reasoning=None,
+                    error="External AI processing is unavailable because the secure credential store failed.",
+                )
+
+        gateway.api_key = api_key
+        structured_payload = self._build_structured_payload(
+            source_type=source_type,
+            extracted_signals=extracted_signals,
+            agent_findings=agent_findings,
+            conflicts=conflicts,
+            final_recommendation=final_recommendation,
         )
         try:
             response_payload = gateway.execute_chat_completion(

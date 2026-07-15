@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import threading
-from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import settings
@@ -27,6 +25,8 @@ def evaluate_runtime_policy() -> tuple[bool, str]:
         return False, "disabled_by_configuration"
     if settings.is_production and not settings.TELEGRAM_BOT_PRODUCTION_READY:
         return False, "production_security_controls_incomplete"
+    if settings.TELEGRAM_RUNTIME_ORGANIZATION_ID <= 0:
+        return False, "runtime_organization_not_configured"
     return True, "allowed"
 
 
@@ -34,22 +34,6 @@ def _telegram_module():
     from app.services import telegram_bot
 
     return telegram_bot
-
-
-def _set_legacy_config_active(is_active: bool) -> None:
-    try:
-        module = _telegram_module()
-        path = module.CONFIG_PATH
-        if not path.exists():
-            return
-        data = json.loads(path.read_text(encoding="utf-8"))
-        data["is_active"] = bool(is_active)
-        data["runtime_updated_at"] = datetime.now(timezone.utc).isoformat()
-        temp_path = path.with_suffix(".runtime.tmp")
-        temp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp_path.replace(path)
-    except Exception:
-        logger.exception("Failed to synchronize legacy Telegram runtime state")
 
 
 def _audit_runtime_event(
@@ -65,13 +49,14 @@ def _audit_runtime_event(
 
         db = SessionLocal()
         try:
+            target_org = organization_id or settings.TELEGRAM_RUNTIME_ORGANIZATION_ID or None
             db.add(
                 AuditLog(
-                    organization_id=organization_id,
+                    organization_id=target_org,
                     user_id=user_id,
                     action=action,
                     entity_type="telegram_runtime",
-                    entity_id="singleton",
+                    entity_id=str(target_org or "disabled"),
                     details=details or {},
                 )
             )
@@ -97,8 +82,6 @@ def install_runtime_guard() -> None:
 
 
 def _clear_pending_entries(reason: str) -> int:
-    """Revoke database approvals before clearing process-local runtime markers."""
-
     module = _telegram_module()
     local_count = len(module.PENDING_ENTRIES)
     module.PENDING_ENTRIES.clear()
@@ -161,7 +144,6 @@ def start_telegram_bot() -> bool:
     allowed, reason = evaluate_runtime_policy()
     if not allowed:
         _last_reason = reason
-        _set_legacy_config_active(False)
         stop_telegram_bot(reason=reason, audit_event=False)
         logger.warning("Telegram bot start refused: %s", reason)
         _audit_runtime_event(
@@ -174,14 +156,14 @@ def start_telegram_bot() -> bool:
         assert _original_start is not None
         _original_start()
         running = is_running()
-        _last_reason = "running" if running else "no_active_token"
-        _set_legacy_config_active(running)
+        _last_reason = "running" if running else "no_active_tenant_token"
 
     _audit_runtime_event(
         "telegram_bot_started" if running else "telegram_bot_start_skipped",
         details={
             "reason": _last_reason,
             "environment": settings.APP_ENV,
+            "runtime_organization_id": settings.TELEGRAM_RUNTIME_ORGANIZATION_ID,
             "ingestion": _ingestion_status(),
         },
     )
@@ -209,7 +191,6 @@ def stop_telegram_bot(
             logger.exception("Failed to stop Telegram ingestion queue")
             queued_cleared = 0
         pending_cleared = _clear_pending_entries(reason)
-        _set_legacy_config_active(False)
         _last_reason = reason
 
     if audit_event:
@@ -231,12 +212,13 @@ def emergency_disable_telegram_bot() -> dict[str, Any]:
     return get_runtime_status()
 
 
-def get_runtime_status() -> dict[str, Any]:
+def get_runtime_status(organization_id: int | None = None) -> dict[str, Any]:
     install_runtime_guard()
     module = _telegram_module()
     allowed, policy_reason = evaluate_runtime_policy()
+    target_org = organization_id or settings.TELEGRAM_RUNTIME_ORGANIZATION_ID
     try:
-        token_configured = bool(module.get_telegram_token())
+        token_configured = bool(module.get_telegram_token(target_org)) if target_org > 0 else False
     except Exception:
         token_configured = False
     ingestion = _ingestion_status()
@@ -245,6 +227,8 @@ def get_runtime_status() -> dict[str, Any]:
         "environment": settings.APP_ENV,
         "enabled_by_configuration": settings.TELEGRAM_BOT_ENABLED,
         "production_ready": settings.TELEGRAM_BOT_PRODUCTION_READY,
+        "runtime_organization_id": settings.TELEGRAM_RUNTIME_ORGANIZATION_ID,
+        "requested_organization_id": target_org or None,
         "emergency_disabled": _emergency_disabled.is_set(),
         "runtime_allowed": allowed,
         "running": is_running(),

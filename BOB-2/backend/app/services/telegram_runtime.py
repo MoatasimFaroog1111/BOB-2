@@ -23,10 +23,10 @@ def evaluate_runtime_policy() -> tuple[bool, str]:
         return False, "emergency_disabled"
     if not settings.TELEGRAM_BOT_ENABLED:
         return False, "disabled_by_configuration"
-    if settings.TELEGRAM_RUNTIME_ORGANIZATION_ID <= 0:
-        return False, "runtime_organization_not_configured"
     if settings.is_production and not settings.TELEGRAM_BOT_PRODUCTION_READY:
         return False, "production_security_controls_incomplete"
+    if settings.TELEGRAM_RUNTIME_ORGANIZATION_ID <= 0:
+        return False, "runtime_organization_not_configured"
     return True, "allowed"
 
 

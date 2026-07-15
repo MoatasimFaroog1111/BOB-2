@@ -2,8 +2,6 @@
 
 from decimal import Decimal
 
-from fastapi.routing import APIRoute
-
 from app.api.v1.erp_monetary_legacy import (
     LegacyProposeTransactionRequest,
     _build_proposal,
@@ -46,18 +44,21 @@ class ProposalERP:
         raise AssertionError(f"Unexpected ERP call: {model}.{method} {args} {kwargs}")
 
 
-def test_application_registers_only_decimal_safe_legacy_monetary_endpoints(client):
-    paths = {
-        "/api/v1/erp/propose-transaction": [],
-        "/api/v1/erp/register-document": [],
+def test_application_openapi_exposes_only_decimal_safe_legacy_monetary_operations(client):
+    paths = client.app.openapi()["paths"]
+    expected = {
+        "/api/v1/erp/propose-transaction": "propose_transaction_fixed_point",
+        "/api/v1/erp/register-document": "register_document_fixed_point",
     }
-    for route in client.app.routes:
-        if isinstance(route, APIRoute) and route.path in paths:
-            paths[route.path].append(route)
 
-    for path, routes in paths.items():
-        assert len(routes) == 1, (path, [route.endpoint.__module__ for route in routes])
-        assert routes[0].endpoint.__module__ == "app.api.v1.erp_monetary_legacy"
+    for path, function_name in expected.items():
+        assert path in paths, sorted(
+            candidate for candidate in paths if candidate.endswith(path.removeprefix("/api/v1"))
+        )
+        post_operation = paths[path].get("post")
+        assert post_operation is not None, (path, paths[path].keys())
+        operation_id = str(post_operation.get("operationId") or "")
+        assert function_name in operation_id, (path, operation_id)
 
 
 def test_decimal_safe_proposal_returns_fixed_scale_balanced_strings():

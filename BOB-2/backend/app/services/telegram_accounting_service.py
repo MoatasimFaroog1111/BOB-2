@@ -1,9 +1,9 @@
-"""Independent accounting service for Telegram-originated operations.
+"""Independent, fixed-point accounting service for Telegram-originated operations.
 
-This module deliberately has no dependency on FastAPI route modules. Every operation
-requires an explicit actor context, organization, source, current permission check,
-content hash, expiring one-time token, and an atomic state transition before Odoo is
-called.
+Every operation requires an explicit actor context, tenant, current permission
+check, canonical content hash, expiring one-time token, and atomic state
+transition. Monetary values remain fixed-scale strings in durable JSON and are
+converted to XML-RPC numbers only at the final Odoo boundary.
 """
 
 from __future__ import annotations
@@ -12,17 +12,24 @@ import base64
 import hashlib
 import hmac
 import json
-import math
 import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Iterable
 
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.money import (
+    MONEY_ZERO,
+    MoneyValidationError,
+    canonical_money_lines,
+    money_to_erp_float,
+    money_to_str,
+    parse_money,
+    validate_balanced_lines,
+)
 from app.erp.factory import get_erp_provider
 from app.models.core import (
     ERPConnection,
@@ -130,16 +137,37 @@ def _content_hash_for_row(row: TelegramApprovalOperation) -> str:
     )
 
 
-def _safe_amount(value: Any) -> Decimal:
+def _safe_amount(value: Any):
     try:
-        amount = Decimal(str(value))
-    except (InvalidOperation, ValueError, TypeError) as exc:
-        raise TelegramApprovalDenied("invalid_amount", "المبلغ المستخرج غير صالح.") from exc
-    if not amount.is_finite() or amount <= 0:
-        raise TelegramApprovalDenied("invalid_amount", "المبلغ المستخرج غير صالح.")
-    if amount > Decimal("999999999999999.9999"):
-        raise TelegramApprovalDenied("amount_limit_exceeded", "المبلغ يتجاوز الحد المسموح.")
-    return amount.quantize(Decimal("0.0001"))
+        return parse_money(
+            value,
+            field_name="amount",
+            allow_negative=False,
+            allow_zero=False,
+            reject_excess_scale=True,
+        )
+    except MoneyValidationError as exc:
+        reason = "amount_limit_exceeded" if "range" in str(exc) else "invalid_amount"
+        public = "المبلغ يتجاوز الحد المسموح." if reason == "amount_limit_exceeded" else "المبلغ المستخرج غير صالح."
+        raise TelegramApprovalDenied(reason, public) from exc
+
+
+def _canonicalize_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(proposal, dict):
+        raise TelegramApprovalDenied("invalid_proposal")
+    normalized = dict(proposal)
+    lines = proposal.get("lines")
+    if not isinstance(lines, list):
+        raise TelegramApprovalDenied("invalid_journal_lines")
+    try:
+        validate_balanced_lines(lines)
+        normalized["lines"] = canonical_money_lines(lines)
+        amount = _safe_amount(proposal.get("amount"))
+    except MoneyValidationError as exc:
+        raise TelegramApprovalDenied("invalid_journal_lines") from exc
+    normalized["amount"] = money_to_str(amount)
+    normalized["money_scale"] = 2
+    return json.loads(json.dumps(normalized, ensure_ascii=False, allow_nan=False))
 
 
 def _validate_actor(
@@ -172,7 +200,11 @@ def _validate_actor(
             "actor_binding_invalid",
             "تم إلغاء أو تغيير صلاحية حساب Telegram المرتبط.",
         )
-    missing = [permission for permission in required_permissions if not role_has_permission(user.role, permission)]
+    missing = [
+        permission
+        for permission in required_permissions
+        if not role_has_permission(user.role, permission)
+    ]
     if missing:
         raise TelegramApprovalDenied(
             "current_permission_missing",
@@ -259,7 +291,9 @@ def _account_label(account: dict[str, Any]) -> str:
     return f"{code} {name}".strip()
 
 
-def _search_journal(erp: Any, company_id: int | None, journal_type: str) -> dict[str, Any] | None:
+def _search_journal(
+    erp: Any, company_id: int | None, journal_type: str
+) -> dict[str, Any] | None:
     domain: list[Any] = [("type", "=", journal_type)]
     if company_id:
         domain.append(("company_id", "=", company_id))
@@ -291,7 +325,10 @@ def _classify(document_class: str, filename: str, raw_text: str) -> str:
     blob = f"{document_class} {filename} {raw_text}".lower()
     if any(term in blob for term in ("payroll", "salary", "مسير", "رواتب")):
         return "payroll"
-    if any(term in blob for term in ("bank", "statement", "receipt", "كشف", "إيصال", "ايصال", "إشعار")):
+    if any(
+        term in blob
+        for term in ("bank", "statement", "receipt", "كشف", "إيصال", "ايصال", "إشعار")
+    ):
         return "bank"
     if any(term in blob for term in ("invoice", "bill", "فاتورة")):
         return "invoice"
@@ -310,7 +347,8 @@ def build_accounting_proposal(
     raw_text: str,
     source: str,
 ) -> dict[str, Any]:
-    """Build a tenant-scoped balanced proposal without importing any API route."""
+    """Build a tenant-scoped balanced proposal without importing API routes."""
+
     if source != "telegram":
         raise TelegramApprovalDenied("invalid_source")
     _validate_actor(db, context, ("upload_documents", "create_entries"))
@@ -327,7 +365,9 @@ def build_accounting_proposal(
     )
     fallback = expense or _search_account(erp, company_id)
     if fallback is None:
-        raise TelegramApprovalDenied("account_mapping_unavailable", "تعذر تحديد حسابات القيد في Odoo.")
+        raise TelegramApprovalDenied(
+            "account_mapping_unavailable", "تعذر تحديد حسابات القيد في Odoo."
+        )
     expense = expense or fallback
     payable = payable or fallback
     suspense = suspense or fallback
@@ -341,45 +381,52 @@ def build_accounting_proposal(
     if category == "bank":
         journal = _search_journal(erp, company_id, "bank")
         default_account = journal.get("default_account_id") if journal else None
-        bank_account_id = default_account[0] if isinstance(default_account, (list, tuple)) and default_account else None
-        bank_account_name = default_account[1] if isinstance(default_account, (list, tuple)) and len(default_account) > 1 else "Bank"
+        bank_account_id = (
+            default_account[0]
+            if isinstance(default_account, (list, tuple)) and default_account
+            else None
+        )
+        bank_account_name = (
+            default_account[1]
+            if isinstance(default_account, (list, tuple)) and len(default_account) > 1
+            else "Bank"
+        )
         if bank_account_id:
-            credit_account = {"id": bank_account_id, "name": bank_account_name, "code": ""}
+            credit_account = {
+                "id": bank_account_id,
+                "name": bank_account_name,
+                "code": "",
+            }
         journal_type = "bank"
         journal_name = str(journal.get("name") or "Bank") if journal else "Bank"
 
-    amount_float = float(safe_amount)
+    amount_text = money_to_str(safe_amount)
     labels = {
-        "invoice": (f"فاتورة من {safe_filename}", f"التزام مورد من {safe_filename}"),
-        "payroll": (f"مصروف رواتب من {safe_filename}", f"رواتب مستحقة من {safe_filename}"),
-        "bank": (f"عملية بنكية من {safe_filename}", f"حركة البنك من {safe_filename}"),
-        "general": (f"تسجيل مستند {safe_filename}", f"القيد المقابل للمستند {safe_filename}"),
+        "invoice": (
+            f"فاتورة من {safe_filename}",
+            f"التزام مورد من {safe_filename}",
+        ),
+        "payroll": (
+            f"مصروف رواتب من {safe_filename}",
+            f"رواتب مستحقة من {safe_filename}",
+        ),
+        "bank": (
+            f"عملية بنكية من {safe_filename}",
+            f"حركة البنك من {safe_filename}",
+        ),
+        "general": (
+            f"تسجيل مستند {safe_filename}",
+            f"القيد المقابل للمستند {safe_filename}",
+        ),
     }
     debit_label, credit_label = labels[category]
-    lines = [
-        {
-            "account_id": int(debit_account["id"]),
-            "account_name": _account_label(debit_account),
-            "debit": amount_float,
-            "credit": 0.0,
-            "name": debit_label,
-            "partner_id": partner_id,
-        },
-        {
-            "account_id": int(credit_account["id"]),
-            "account_name": _account_label(credit_account),
-            "debit": 0.0,
-            "credit": amount_float,
-            "name": credit_label,
-            "partner_id": partner_id,
-        },
-    ]
-    return {
-        "schema_version": 1,
+    proposal = {
+        "schema_version": 2,
         "source": source,
         "filename": safe_filename,
         "document_class": category,
-        "amount": amount_float,
+        "amount": amount_text,
+        "money_scale": 2,
         "date": transaction_date,
         "partner_name": resolved_partner_name or (partner_name or "")[:255],
         "partner_id": partner_id,
@@ -387,8 +434,26 @@ def build_accounting_proposal(
         "journal_type": journal_type,
         "journal_name": journal_name,
         "erp_connection_id": connection.id,
-        "lines": lines,
+        "lines": [
+            {
+                "account_id": int(debit_account["id"]),
+                "account_name": _account_label(debit_account),
+                "debit": amount_text,
+                "credit": "0.00",
+                "name": debit_label,
+                "partner_id": partner_id,
+            },
+            {
+                "account_id": int(credit_account["id"]),
+                "account_name": _account_label(credit_account),
+                "debit": "0.00",
+                "credit": amount_text,
+                "name": credit_label,
+                "partner_id": partner_id,
+            },
+        ],
     }
+    return _canonicalize_proposal(proposal)
 
 
 def create_approval_request(
@@ -402,11 +467,13 @@ def create_approval_request(
     _validate_actor(db, context, ("upload_documents", "create_entries"))
     if source != "telegram" or proposal.get("source") != source:
         raise TelegramApprovalDenied("source_mismatch")
-    proposal = json.loads(json.dumps(proposal, ensure_ascii=False, allow_nan=False))
+    proposal = _canonicalize_proposal(proposal)
     proposal["file_sha256"] = _file_sha256(file_path)
     token = secrets.token_urlsafe(18)
     token_hash = _hash_token(token)
-    expires_at = _utcnow() + timedelta(seconds=settings.TELEGRAM_APPROVAL_TTL_SECONDS)
+    expires_at = _utcnow() + timedelta(
+        seconds=settings.TELEGRAM_APPROVAL_TTL_SECONDS
+    )
     content_hash = _content_hash_for_values(
         organization_id=context.organization_id,
         authorization_id=context.authorization_id,
@@ -442,6 +509,8 @@ def create_approval_request(
             "source": source,
             "content_hash_prefix": content_hash[:12],
             "expires_at": expires_at.isoformat(),
+            "amount": proposal["amount"],
+            "money_scale": 2,
         },
     )
     return ApprovalCreationResult(operation.id, token, expires_at, proposal)
@@ -528,15 +597,21 @@ def _load_and_validate_pending(
         or operation.system_user_id != context.system_user_id
         or operation.source != "telegram"
     ):
-        raise TelegramApprovalDenied("approval_actor_mismatch", "هذه الموافقة لا تخص هذا المستخدم.")
+        raise TelegramApprovalDenied(
+            "approval_actor_mismatch", "هذه الموافقة لا تخص هذا المستخدم."
+        )
     if operation.status != "pending":
-        raise TelegramApprovalDenied("approval_not_pending", "تم استخدام أو إلغاء هذه الموافقة مسبقًا.")
+        raise TelegramApprovalDenied(
+            "approval_not_pending", "تم استخدام أو إلغاء هذه الموافقة مسبقًا."
+        )
     if operation.revoked_at is not None:
         raise TelegramApprovalDenied("approval_revoked")
     expected_token_hash = _hash_token(token)
     if not hmac.compare_digest(operation.approval_token_hash, expected_token_hash):
         raise TelegramApprovalDenied("approval_token_invalid")
-    if not hmac.compare_digest(operation.content_hash, _content_hash_for_row(operation)):
+    if not hmac.compare_digest(
+        operation.content_hash, _content_hash_for_row(operation)
+    ):
         raise TelegramApprovalDenied("approval_content_tampered")
     now = _utcnow()
     if operation.expires_at <= now:
@@ -544,18 +619,22 @@ def _load_and_validate_pending(
             TelegramApprovalOperation.id == operation.id,
             TelegramApprovalOperation.status == "pending",
         ).update(
-            {"status": "expired", "consumed_at": now, "failure_code": "approval_expired"},
+            {
+                "status": "expired",
+                "consumed_at": now,
+                "failure_code": "approval_expired",
+            },
             synchronize_session=False,
         )
         db.commit()
-        raise TelegramApprovalDenied("approval_expired", "انتهت صلاحية الموافقة. أعد إرسال المستند.")
+        raise TelegramApprovalDenied(
+            "approval_expired", "انتهت صلاحية الموافقة. أعد إرسال المستند."
+        )
     return operation
 
 
 def _claim_operation_atomically(
-    db: Session,
-    operation: TelegramApprovalOperation,
-    token: str,
+    db: Session, operation: TelegramApprovalOperation, token: str
 ) -> TelegramApprovalOperation:
     now = _utcnow()
     expected_token_hash = _hash_token(token)
@@ -576,9 +655,17 @@ def _claim_operation_atomically(
     )
     db.commit()
     if updated != 1:
-        raise TelegramApprovalDenied("approval_claim_conflict", "تم استخدام هذه الموافقة بالفعل.")
-    claimed = db.query(TelegramApprovalOperation).filter(TelegramApprovalOperation.id == operation.id).first()
-    if claimed is None or not hmac.compare_digest(claimed.content_hash, _content_hash_for_row(claimed)):
+        raise TelegramApprovalDenied(
+            "approval_claim_conflict", "تم استخدام هذه الموافقة بالفعل."
+        )
+    claimed = (
+        db.query(TelegramApprovalOperation)
+        .filter(TelegramApprovalOperation.id == operation.id)
+        .first()
+    )
+    if claimed is None or not hmac.compare_digest(
+        claimed.content_hash, _content_hash_for_row(claimed)
+    ):
         if claimed is not None:
             claimed.status = "failed"
             claimed.failure_code = "content_hash_changed_after_claim"
@@ -593,49 +680,53 @@ def _verify_file_integrity(operation: TelegramApprovalOperation) -> None:
         return
     actual = _file_sha256(operation.file_path)
     if not actual or not hmac.compare_digest(str(expected), actual):
-        raise TelegramApprovalDenied("approval_file_tampered", "تغير الملف بعد إنشاء الموافقة.")
+        raise TelegramApprovalDenied(
+            "approval_file_tampered", "تغير الملف بعد إنشاء الموافقة."
+        )
 
 
 def _balanced_lines(payload: dict[str, Any]) -> list[dict[str, Any]]:
     lines = payload.get("lines")
-    if not isinstance(lines, list) or len(lines) < 2:
+    if not isinstance(lines, list):
         raise TelegramApprovalDenied("invalid_journal_lines")
-    debit_total = 0.0
-    credit_total = 0.0
+    try:
+        validate_balanced_lines(lines)
+        canonical = canonical_money_lines(lines)
+    except MoneyValidationError as exc:
+        raise TelegramApprovalDenied("journal_not_balanced") from exc
+
     normalized: list[dict[str, Any]] = []
-    for line in lines:
-        if not isinstance(line, dict):
-            raise TelegramApprovalDenied("invalid_journal_lines")
-        debit = float(line.get("debit") or 0.0)
-        credit = float(line.get("credit") or 0.0)
-        if not math.isfinite(debit) or not math.isfinite(credit) or debit < 0 or credit < 0:
-            raise TelegramApprovalDenied("invalid_journal_lines")
-        if (debit > 0) == (credit > 0):
-            raise TelegramApprovalDenied("invalid_journal_lines")
+    for line in canonical:
+        try:
+            account_id = int(line["account_id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise TelegramApprovalDenied("invalid_journal_lines") from exc
         normalized.append(
             {
-                "account_id": int(line["account_id"]),
-                "name": str(line.get("name") or "Telegram accounting operation")[:255],
-                "debit": debit,
-                "credit": credit,
+                "account_id": account_id,
+                "name": str(
+                    line.get("name") or "Telegram accounting operation"
+                )[:255],
+                "debit": money_to_erp_float(line["debit"]),
+                "credit": money_to_erp_float(line["credit"]),
                 "partner_id": line.get("partner_id") or False,
             }
         )
-        debit_total += debit
-        credit_total += credit
-    if abs(debit_total - credit_total) > 0.005 or debit_total <= 0:
-        raise TelegramApprovalDenied("journal_not_balanced")
     return normalized
 
 
-def _post_claimed_operation(db: Session, operation: TelegramApprovalOperation) -> ApprovalPostingResult:
+def _post_claimed_operation(
+    db: Session, operation: TelegramApprovalOperation
+) -> ApprovalPostingResult:
     _verify_file_integrity(operation)
     connection, erp, username = _erp_for_organization(db, operation.organization_id)
     company_id = _company_id(erp, username)
     payload = operation.payload
     lines = _balanced_lines(payload)
     journal_type = str(payload.get("journal_type") or "general")
-    journal = _search_journal(erp, company_id, journal_type) or _search_journal(erp, company_id, "general")
+    journal = _search_journal(erp, company_id, journal_type) or _search_journal(
+        erp, company_id, "general"
+    )
     move_vals: dict[str, Any] = {
         "move_type": "entry",
         "date": str(payload.get("date") or _utcnow().date().isoformat()),
@@ -656,19 +747,23 @@ def _post_claimed_operation(db: Session, operation: TelegramApprovalOperation) -
             erp.execute_kw(
                 "ir.attachment",
                 "create",
-                [{
-                    "name": str(payload.get("filename") or path.name)[:500],
-                    "type": "binary",
-                    "datas": encoded,
-                    "res_model": "account.move",
-                    "res_id": move_id,
-                }],
+                [
+                    {
+                        "name": str(payload.get("filename") or path.name)[:500],
+                        "type": "binary",
+                        "datas": encoded,
+                        "res_model": "account.move",
+                        "res_id": move_id,
+                    }
+                ],
             )
         )
 
     move_name = f"MOVE/{move_id}"
     try:
-        rows = erp.execute_kw("account.move", "read", [[move_id]], {"fields": ["name"]})
+        rows = erp.execute_kw(
+            "account.move", "read", [[move_id]], {"fields": ["name"]}
+        )
         if rows and rows[0].get("name"):
             move_name = str(rows[0]["name"])
     except Exception:
@@ -678,7 +773,10 @@ def _post_claimed_operation(db: Session, operation: TelegramApprovalOperation) -
         move_id=move_id,
         move_name=move_name,
         attachment_id=attachment_id,
-        odoo_url=f"{connection.base_url.rstrip('/')}/web#id={move_id}&model=account.move&view_type=form",
+        odoo_url=(
+            f"{connection.base_url.rstrip('/')}/web#id={move_id}"
+            "&model=account.move&view_type=form"
+        ),
     )
 
 
@@ -701,12 +799,19 @@ def consume_and_post_approval(
         db,
         "telegram_approval_claimed",
         context=context,
-        details={"operation_id": claimed.id, "content_hash_prefix": claimed.content_hash[:12]},
+        details={
+            "operation_id": claimed.id,
+            "content_hash_prefix": claimed.content_hash[:12],
+        },
     )
     try:
         _validate_actor(db, context, ("post_odoo_entries",))
         result = _post_claimed_operation(db, claimed)
-        claimed = db.query(TelegramApprovalOperation).filter(TelegramApprovalOperation.id == claimed.id).first()
+        claimed = (
+            db.query(TelegramApprovalOperation)
+            .filter(TelegramApprovalOperation.id == claimed.id)
+            .first()
+        )
         if claimed is None or claimed.status != "processing":
             raise TelegramApprovalDenied("approval_state_changed_during_post")
         claimed.status = "posted"
@@ -727,7 +832,11 @@ def consume_and_post_approval(
         return result
     except Exception as exc:
         db.rollback()
-        failed = db.query(TelegramApprovalOperation).filter(TelegramApprovalOperation.id == operation_id).first()
+        failed = (
+            db.query(TelegramApprovalOperation)
+            .filter(TelegramApprovalOperation.id == operation_id)
+            .first()
+        )
         if failed is not None and failed.status == "processing":
             failed.status = "failed"
             failed.failure_code = getattr(exc, "reason", "odoo_post_failed")[:100]
@@ -736,11 +845,16 @@ def consume_and_post_approval(
             db,
             "telegram_approval_post_failed",
             context=context,
-            details={"operation_id": operation_id, "failure_code": getattr(exc, "reason", "odoo_post_failed")},
+            details={
+                "operation_id": operation_id,
+                "failure_code": getattr(exc, "reason", "odoo_post_failed"),
+            },
         )
         if isinstance(exc, TelegramApprovalDenied):
             raise
-        raise TelegramApprovalDenied("odoo_post_failed", "تعذر ترحيل القيد إلى Odoo بصورة آمنة.") from exc
+        raise TelegramApprovalDenied(
+            "odoo_post_failed", "تعذر ترحيل القيد إلى Odoo بصورة آمنة."
+        ) from exc
 
 
 def cancel_approval(
@@ -773,7 +887,9 @@ def cancel_approval(
     )
     db.commit()
     if updated != 1:
-        raise TelegramApprovalDenied("approval_cancel_conflict", "تم استخدام هذه الموافقة بالفعل.")
+        raise TelegramApprovalDenied(
+            "approval_cancel_conflict", "تم استخدام هذه الموافقة بالفعل."
+        )
     record_telegram_event(
         db,
         "telegram_approval_cancelled",
@@ -820,7 +936,11 @@ def revoke_actor_pending_operations(
 
 
 def revoke_all_pending_operations(db: Session, *, reason: str) -> int:
-    rows = db.query(TelegramApprovalOperation).filter(TelegramApprovalOperation.status == "pending").all()
+    rows = (
+        db.query(TelegramApprovalOperation)
+        .filter(TelegramApprovalOperation.status == "pending")
+        .all()
+    )
     now = _utcnow()
     for row in rows:
         row.status = "revoked"

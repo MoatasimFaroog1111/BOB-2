@@ -1,5 +1,6 @@
 """Regression tests for fixed-point accounting amounts."""
 
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -148,7 +149,7 @@ def test_database_constraint_rejects_unbalanced_persisted_totals(db, seeded_user
         JournalEntryRecord(
             organization_id=1,
             created_by_user_id=1,
-            entry_date="2026-07-15",
+            entry_date=date(2026, 7, 15),
             reference="DIRECT/UNBALANCED",
             memo="",
             status="draft",

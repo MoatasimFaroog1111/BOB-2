@@ -2,9 +2,10 @@
 
 import os
 
-# Force non-production environment for tests
+# Force non-production, non-persistent test services before importing the app.
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
+os.environ.setdefault("SECRET_STORE_PROVIDER", "memory")
 
 import pytest
 from fastapi.testclient import TestClient

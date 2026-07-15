@@ -93,7 +93,6 @@ services:
       SECRET_STORE_READ_TIMEOUT_SECONDS: "15"
       SECRET_STORE_MAX_REQUEST_BYTES: "262144"
       SECRET_STORE_MAX_RESPONSE_BYTES: "1048576"
-      LEGACY_FINANCIAL_ORGANIZATION_ID: "1"
       # Telegram remains hard-disabled. A future enablement must select exactly
       # one tenant whose Key Vault token binding is used by the singleton poller.
       TELEGRAM_BOT_ENABLED: "false"

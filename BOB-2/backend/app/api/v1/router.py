@@ -49,6 +49,11 @@ api_router.include_router(
     prefix="/llm",
     tags=["External LLM Administration"],
 )
+api_router.include_router(
+    communication_tools_router,
+    prefix="/communication-tools",
+    tags=["Communication Tools"],
+)
 
 # The centralized dependency is method-aware: reads require view_financials,
 # mutations require create_entries by default, settings require manage_settings,
@@ -66,4 +71,3 @@ api_router.include_router(journal_entry_actions_router, prefix="/erp", tags=["ER
 api_router.include_router(bank_posting_v2_router, prefix="/erp", tags=["ERP Bank Posting"], dependencies=financial_access)
 api_router.include_router(accounting_ai_router, prefix="/accounting-ai", tags=["Accounting AI Matching"], dependencies=financial_access)
 api_router.include_router(agents_router, prefix="/agents", tags=["GMAWS Accounting Agents"], dependencies=financial_access)
-api_router.include_router(communication_tools_router, prefix="/communication-tools", tags=["Communication Tools"], dependencies=financial_access)

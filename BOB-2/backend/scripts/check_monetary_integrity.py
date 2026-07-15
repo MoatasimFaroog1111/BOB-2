@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,19 @@ def require(name: str, condition: bool) -> None:
     if not condition:
         raise AssertionError(f"Monetary integrity control failed: {name}")
     print(f"OK: {name}")
+
+
+def direct_float_call_lines(text: str) -> list[int]:
+    """Return lines that call Python's built-in float(), not helper names."""
+
+    tree = ast.parse(text)
+    return [
+        int(node.lineno)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "float"
+    ]
 
 
 def main() -> None:
@@ -70,15 +84,15 @@ def main() -> None:
     require("journal exact balance validation", "validate_balanced_lines" in journal)
     require("journal fixed-string line persistence", "canonical_money_lines" in journal)
     require("journal fixed-string audit totals", "money_to_str(total_debit)" in journal)
+    require("journal has no direct float calls", not direct_float_call_lines(journal))
 
     posting = sources["bank posting"]
     require("bank posting Decimal requests", "NonNegativeMoney" in posting and "amount: Money" in posting)
     require("bank posting final ERP boundary helper", "money_to_erp_float" in posting)
     require("bank posting idempotency fixed amount", "money_to_str(payload.amount)" in posting)
-    require("bank posting no direct amount float", "float(payload.amount" not in posting)
     require(
-        "bank posting no direct line float",
-        "float(line.debit" not in posting and "float(line.credit" not in posting,
+        f"bank posting has no direct float calls {direct_float_call_lines(posting)}",
+        not direct_float_call_lines(posting),
     )
 
     actions = sources["journal actions"]
@@ -86,7 +100,10 @@ def main() -> None:
     require("journal actions exact balance validation", "validate_balanced_lines" in actions)
     require("journal actions final ERP boundary helper", "money_to_erp_float" in actions)
     require("journal actions no Optional float money", "Optional[float]" not in actions)
-    require("journal actions no direct balance float", 'float(line.get("debit"' not in actions)
+    require(
+        f"journal actions have no direct float calls {direct_float_call_lines(actions)}",
+        not direct_float_call_lines(actions),
+    )
 
     reconciliation = sources["bank reconciliation"]
     require("reconciliation Transaction amount is Money", "amount: Money" in reconciliation)
@@ -114,7 +131,10 @@ def main() -> None:
         'normalized["amount"] = money_to_str(amount)' in telegram,
     )
     require("Telegram payload declares scale", '"money_scale": 2' in telegram)
-    require("Telegram no direct line float", 'float(line.get("debit"' not in telegram)
+    require(
+        f"Telegram accounting has no direct float calls {direct_float_call_lines(telegram)}",
+        not direct_float_call_lines(telegram),
+    )
     require("Telegram no float balance tolerance", "abs(debit_total - credit_total)" not in telegram)
 
     replacements = sources["legacy replacements"]
@@ -141,6 +161,10 @@ def main() -> None:
         "validate_balanced_lines(raw_lines)" in replacements,
     )
     require("replacement registration uses boundary conversion", "money_to_erp_float" in replacements)
+    require(
+        f"replacement routes have no direct float calls {direct_float_call_lines(replacements)}",
+        not direct_float_call_lines(replacements),
+    )
     require(
         "replacement registration rejects server paths",
         "Server-side file paths are no longer accepted" in replacements,

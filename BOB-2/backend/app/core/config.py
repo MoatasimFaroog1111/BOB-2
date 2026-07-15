@@ -29,6 +29,18 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str = ""
 
+    # Secret values never belong in the database, local storage, or ordinary
+    # production environment variables. Production uses Azure Key Vault via
+    # Managed Identity. The memory provider exists only for tests/development.
+    SECRET_STORE_PROVIDER: str = "disabled"
+    AZURE_KEY_VAULT_URL: str = ""
+    AZURE_MANAGED_IDENTITY_CLIENT_ID: str = ""
+    SECRET_STORE_CONNECT_TIMEOUT_SECONDS: int = 5
+    SECRET_STORE_READ_TIMEOUT_SECONDS: int = 15
+    SECRET_STORE_MAX_REQUEST_BYTES: int = 262_144
+    SECRET_STORE_MAX_RESPONSE_BYTES: int = 1_048_576
+    LEGACY_FINANCIAL_ORGANIZATION_ID: int = 1
+
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 3
 
@@ -42,6 +54,7 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_ENABLED: bool = False
     TELEGRAM_BOT_PRODUCTION_READY: bool = False
     TELEGRAM_ALLOW_GROUP_CHATS: bool = False
+    TELEGRAM_RUNTIME_ORGANIZATION_ID: int = 0
     TELEGRAM_APPROVAL_TTL_SECONDS: int = 600
     TELEGRAM_INGESTION_WORKERS: int = 2
     TELEGRAM_INGESTION_QUEUE_SIZE: int = 20
@@ -90,7 +103,8 @@ class Settings(BaseSettings):
     LOCAL_LLM_TIMEOUT_SECONDS: int = 120
     LOCAL_LLM_MAX_RESPONSE_BYTES: int = 1_048_576
 
-    # External LLM is protected by both this global kill switch and a tenant policy row.
+    # External LLM is protected by the global kill switch, tenant policy, and
+    # a tenant-scoped Key Vault secret binding.
     EXTERNAL_LLM_ENABLED: bool = False
     EXTERNAL_LLM_REQUIRED_DPA_VERSION: str = "2026-07-v1"
     EXTERNAL_LLM_ALLOWED_PROVIDERS: str = "deepseek"
@@ -100,6 +114,8 @@ class Settings(BaseSettings):
     EXTERNAL_LLM_MAX_RESPONSE_BYTES: int = 1_048_576
     EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS: int = 4_000
 
+    # Deprecated compatibility inputs. Production validation requires both to
+    # remain empty; external provider credentials are resolved from Key Vault.
     DEEPSEEK_API_KEY: str = ""
     ACCOUNTING_LLM_PROVIDER: str = "deepseek"
     ACCOUNTING_LLM_MODEL: str = "deepseek-chat"
@@ -157,6 +173,46 @@ class Settings(BaseSettings):
                 "SECRET_KEY must be a non-default value of at least 32 characters in production. "
                 "Generate one with: openssl rand -hex 64"
             )
+
+    def _validate_secret_store_configuration(self, errors: list[str]) -> None:
+        provider = self.SECRET_STORE_PROVIDER.strip().lower()
+        if provider not in {"disabled", "memory", "azure_key_vault"}:
+            errors.append("SECRET_STORE_PROVIDER is invalid")
+        if self.is_production and provider != "azure_key_vault":
+            errors.append("SECRET_STORE_PROVIDER must be azure_key_vault in production")
+        if provider == "azure_key_vault":
+            try:
+                vault = urlsplit(self.AZURE_KEY_VAULT_URL)
+            except ValueError:
+                vault = None
+            hostname = (vault.hostname or "").lower().rstrip(".") if vault else ""
+            if (
+                vault is None
+                or vault.scheme.lower() != "https"
+                or not hostname.endswith(".vault.azure.net")
+                or hostname.count(".") < 3
+                or vault.port not in {None, 443}
+                or vault.username is not None
+                or vault.password is not None
+                or vault.path not in {"", "/"}
+                or vault.query
+                or vault.fragment
+            ):
+                errors.append("AZURE_KEY_VAULT_URL must be an exact Azure Key Vault HTTPS URL")
+        if not 1 <= self.SECRET_STORE_CONNECT_TIMEOUT_SECONDS <= 30:
+            errors.append("SECRET_STORE_CONNECT_TIMEOUT_SECONDS must be between 1 and 30")
+        if not 1 <= self.SECRET_STORE_READ_TIMEOUT_SECONDS <= 120:
+            errors.append("SECRET_STORE_READ_TIMEOUT_SECONDS must be between 1 and 120")
+        if not 1_024 <= self.SECRET_STORE_MAX_REQUEST_BYTES <= 1_048_576:
+            errors.append("SECRET_STORE_MAX_REQUEST_BYTES must be between 1024 and 1048576")
+        if not 16_384 <= self.SECRET_STORE_MAX_RESPONSE_BYTES <= 4_194_304:
+            errors.append("SECRET_STORE_MAX_RESPONSE_BYTES must be between 16384 and 4194304")
+        if self.LEGACY_FINANCIAL_ORGANIZATION_ID <= 0:
+            errors.append("LEGACY_FINANCIAL_ORGANIZATION_ID must be positive")
+        if self.is_production and (self.ACCOUNTING_LLM_API_KEY or self.DEEPSEEK_API_KEY):
+            errors.append("External LLM API keys must not be stored in production environment variables")
+        if self.TELEGRAM_BOT_ENABLED and self.TELEGRAM_RUNTIME_ORGANIZATION_ID <= 0:
+            errors.append("TELEGRAM_RUNTIME_ORGANIZATION_ID is required when Telegram is enabled")
 
     def _validate_erp_outbound_configuration(self, errors: list[str]) -> None:
         hosts = [item.strip() for item in self.ERP_OUTBOUND_ALLOWED_HOSTS.split(",") if item.strip()]
@@ -251,8 +307,8 @@ class Settings(BaseSettings):
                 errors.append("EXTERNAL_LLM_ALLOWED_HOSTS requires exact hosts")
             if not self.EXTERNAL_LLM_REQUIRED_DPA_VERSION.strip():
                 errors.append("EXTERNAL_LLM_REQUIRED_DPA_VERSION is required")
-            if not (self.ACCOUNTING_LLM_API_KEY or self.DEEPSEEK_API_KEY):
-                errors.append("An external LLM API key is required when EXTERNAL_LLM_ENABLED is true")
+            if self.SECRET_STORE_PROVIDER.strip().lower() != "azure_key_vault":
+                errors.append("External LLM requires the Azure Key Vault secret provider")
             try:
                 endpoint = urlsplit(self.ACCOUNTING_LLM_API_URL)
             except ValueError:
@@ -325,6 +381,7 @@ class Settings(BaseSettings):
         if not 65_536 <= self.TELEGRAM_API_RESPONSE_MAX_BYTES <= 4_194_304:
             errors.append("TELEGRAM_API_RESPONSE_MAX_BYTES must be between 65536 and 4194304")
 
+        self._validate_secret_store_configuration(errors)
         self._validate_erp_outbound_configuration(errors)
         self._validate_llm_configuration(errors)
 

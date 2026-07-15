@@ -51,6 +51,7 @@ jobs:
           app/erp/bank_reconciliation.py
           app/services/telegram_accounting_service.py
           tests/test_monetary_integrity.py
+          tests/test_erp_monetary_route_replacement.py
       - name: Enforce fixed-point source boundaries
         run: |
           python - <<'PY'
@@ -158,7 +159,10 @@ jobs:
           require("replacement registration rejects server paths", "Server-side file paths are no longer accepted" in replacements)
           PY
       - name: Run fixed-point regression tests
-        run: pytest -q tests/test_monetary_integrity.py
+        run: >-
+          pytest -q
+          tests/test_monetary_integrity.py
+          tests/test_erp_monetary_route_replacement.py
       - name: Run posting, reconciliation, and Telegram approval regressions
         run: >-
           pytest -q

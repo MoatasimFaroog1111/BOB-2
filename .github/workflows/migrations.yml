@@ -41,8 +41,8 @@ jobs:
       - name: Verify one Alembic head
         run: |
           test "$(alembic heads | grep -c '(head)')" -eq 1
-          alembic heads | grep '9c7f2a4b1d80'
-      - name: Upgrade to tenant secret metadata migration
+          alembic heads | grep 'e6b8c1d4a290'
+      - name: Upgrade to fixed-point monetary migration
         run: |
           rm -f ci-migrations.db
           alembic upgrade head
@@ -60,79 +60,79 @@ jobs:
               assert "external_llm_policies" in tables
               assert "tenant_secret_bindings" in tables
               assert "tenant_secret_versions" in tables
+              assert "journal_entries" in tables
+              assert "bank_reconciliation_audit_logs" in tables
+
               revision = connection.execute(
                   "SELECT version_num FROM alembic_version"
               ).fetchone()[0]
-              assert revision == "9c7f2a4b1d80"
-              binding_columns = {
-                  row[1]
+              assert revision == "e6b8c1d4a290"
+
+              journal_columns = {
+                  row[1]: row[2].upper()
+                  for row in connection.execute("PRAGMA table_info(journal_entries)")
+              }
+              assert journal_columns["total_debit"].startswith("NUMERIC(20, 2)")
+              assert journal_columns["total_credit"].startswith("NUMERIC(20, 2)")
+
+              bank_columns = {
+                  row[1]: row[2].upper()
                   for row in connection.execute(
-                      "PRAGMA table_info(tenant_secret_bindings)"
+                      "PRAGMA table_info(bank_reconciliation_audit_logs)"
                   )
               }
-              required_binding = {
-                  "organization_id",
-                  "purpose",
-                  "provider",
-                  "secret_name",
-                  "current_version",
-                  "status",
-                  "fingerprint_sha256",
-                  "created_by_user_id",
-                  "rotated_by_user_id",
-                  "revoked_by_user_id",
-                  "last_rotated_at",
-                  "revoked_at",
-              }
-              assert required_binding.issubset(binding_columns), required_binding - binding_columns
-              version_columns = {
-                  row[1]
-                  for row in connection.execute(
-                      "PRAGMA table_info(tenant_secret_versions)"
-                  )
-              }
-              required_version = {
-                  "binding_id",
-                  "organization_id",
-                  "purpose",
-                  "provider",
-                  "secret_name",
-                  "version",
-                  "fingerprint_sha256",
-                  "status",
-                  "created_by_user_id",
-                  "superseded_at",
-                  "revoked_at",
-              }
-              assert required_version.issubset(version_columns), required_version - version_columns
+              for name in ("statement_total", "ledger_total", "difference"):
+                  assert bank_columns[name].startswith("NUMERIC(20, 2)"), (name, bank_columns[name])
+
+              journal_sql = connection.execute(
+                  "SELECT sql FROM sqlite_master WHERE type='table' AND name='journal_entries'"
+              ).fetchone()[0]
+              assert "ck_journal_entries_positive_total" in journal_sql
+              assert "ck_journal_entries_balanced_totals" in journal_sql
           finally:
               connection.close()
           PY
-      - name: Downgrade and verify secret metadata removal
+      - name: Downgrade and verify float schema restoration
         run: |
-          alembic downgrade 7a4c9e2d1f60
+          alembic downgrade 9c7f2a4b1d80
           python - <<'PY'
           import sqlite3
 
           connection = sqlite3.connect("ci-migrations.db")
           try:
+              revision = connection.execute(
+                  "SELECT version_num FROM alembic_version"
+              ).fetchone()[0]
+              assert revision == "9c7f2a4b1d80"
+
               tables = {
                   row[0]
                   for row in connection.execute(
                       "SELECT name FROM sqlite_master WHERE type='table'"
                   )
               }
-              assert "tenant_secret_bindings" not in tables
-              assert "tenant_secret_versions" not in tables
-              assert "external_llm_policies" in tables
-              revision = connection.execute(
-                  "SELECT version_num FROM alembic_version"
-              ).fetchone()[0]
-              assert revision == "7a4c9e2d1f60"
+              assert "tenant_secret_bindings" in tables
+              assert "tenant_secret_versions" in tables
+
+              journal_columns = {
+                  row[1]: row[2].upper()
+                  for row in connection.execute("PRAGMA table_info(journal_entries)")
+              }
+              assert journal_columns["total_debit"] == "FLOAT"
+              assert journal_columns["total_credit"] == "FLOAT"
+
+              bank_columns = {
+                  row[1]: row[2].upper()
+                  for row in connection.execute(
+                      "PRAGMA table_info(bank_reconciliation_audit_logs)"
+                  )
+              }
+              for name in ("statement_total", "ledger_total", "difference"):
+                  assert bank_columns[name] == "FLOAT", (name, bank_columns[name])
           finally:
               connection.close()
           PY
-      - name: Re-upgrade and verify tenant uniqueness
+      - name: Re-upgrade and verify constraints and tenant uniqueness
         run: |
           alembic upgrade head
           python - <<'PY'
@@ -143,7 +143,7 @@ jobs:
               revision = connection.execute(
                   "SELECT version_num FROM alembic_version"
               ).fetchone()[0]
-              assert revision == "9c7f2a4b1d80"
+              assert revision == "e6b8c1d4a290"
 
               unique_binding = False
               for index_row in connection.execute(
@@ -162,6 +162,37 @@ jobs:
                       unique_binding = True
                       break
               assert unique_binding, "one secret binding per organization and purpose is required"
+
+              connection.execute(
+                  """
+                  INSERT INTO organizations
+                      (id, name, legal_name, country, is_active, created_at, updated_at)
+                  VALUES
+                      (999, 'Migration Test', 'Migration Test', 'SA', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                  """
+              )
+              connection.execute(
+                  """
+                  INSERT INTO users
+                      (id, organization_id, email, full_name, role, hashed_password, is_active, created_at, updated_at)
+                  VALUES
+                      (999, 999, 'migration@test.invalid', 'Migration Test', 'owner', 'not-used', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                  """
+              )
+              connection.execute(
+                  """
+                  INSERT INTO journal_entries
+                      (organization_id, created_by_user_id, entry_date, reference, memo, status, lines,
+                       total_debit, total_credit, created_at, updated_at)
+                  VALUES
+                      (999, 999, '2026-07-15', 'MIGRATION/DECIMAL', '', 'draft', '[]',
+                       '0.30', '0.30', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                  """
+              )
+              stored = connection.execute(
+                  "SELECT CAST(total_debit AS TEXT), CAST(total_credit AS TEXT) FROM journal_entries WHERE reference='MIGRATION/DECIMAL'"
+              ).fetchone()
+              assert stored is not None
           finally:
               connection.close()
           PY

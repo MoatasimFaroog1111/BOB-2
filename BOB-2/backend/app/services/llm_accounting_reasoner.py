@@ -16,9 +16,9 @@ from app.services.external_llm_gateway import (
     ExternalLLMProviderError,
     ExternalLLMRequestContext,
 )
+from app.services.secret_store import SecretNotConfigured, SecretStoreError, get_tenant_secret
 
 logger = logging.getLogger(__name__)
-
 
 SYSTEM_PROMPT = """You are GuardianAI's senior accounting, audit, VAT, and ERP review brain.
 You must be conservative, audit-safe, and practical.
@@ -50,13 +50,7 @@ GatewayFactory = Callable[..., ExternalLLMGateway]
 
 
 class LLMAccountingReasoner:
-    """Optional external LLM reasoning behind explicit tenant disclosure controls.
-
-    Rule-based accounting agents remain the primary workflow. This class does not treat an
-    API key as consent and cannot send data without a database session, organization, current
-    user, purpose, request ID, active tenant policy, current DPA acknowledgement, redaction,
-    and a committed pre-disclosure audit event.
-    """
+    """Optional external LLM reasoning behind tenant disclosure and secret controls."""
 
     def __init__(
         self,
@@ -69,7 +63,9 @@ class LLMAccountingReasoner:
     ) -> None:
         self.provider = (provider or settings.ACCOUNTING_LLM_PROVIDER).strip().lower()
         self.model = (model or settings.ACCOUNTING_LLM_MODEL).strip()
-        self.api_key = api_key
+        # Direct key injection exists only for isolated non-production tests. Production
+        # always resolves the current tenant's versioned Key Vault binding.
+        self.api_key = None if settings.is_production else api_key
         self.api_url = api_url
         self.gateway_factory = gateway_factory
 
@@ -103,6 +99,32 @@ class LLMAccountingReasoner:
                 error="External AI reasoning requires authenticated tenant context.",
             )
 
+        api_key = self.api_key
+        if api_key is None:
+            try:
+                api_key = get_tenant_secret(
+                    db_session,
+                    organization_id=organization_id,
+                    purpose="external_llm_api_key",
+                )
+            except SecretNotConfigured:
+                return LLMReasoningResult(
+                    status="blocked_secret_not_configured",
+                    provider=self.provider,
+                    model=self.model,
+                    reasoning=None,
+                    error="The organization has no active external AI credential.",
+                )
+            except SecretStoreError:
+                logger.warning("External accounting reasoning secret resolution failed closed")
+                return LLMReasoningResult(
+                    status="blocked_secret_store_unavailable",
+                    provider=self.provider,
+                    model=self.model,
+                    reasoning=None,
+                    error="External AI processing is unavailable because the secure credential store failed.",
+                )
+
         structured_payload = self._build_structured_payload(
             source_type=source_type,
             extracted_signals=extracted_signals,
@@ -122,7 +144,7 @@ class LLMAccountingReasoner:
             context=context,
             provider=self.provider,
             model=self.model,
-            api_key=self.api_key,
+            api_key=api_key,
             api_url=self.api_url,
         )
         try:

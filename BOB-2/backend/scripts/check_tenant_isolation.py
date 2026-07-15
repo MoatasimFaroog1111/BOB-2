@@ -57,7 +57,6 @@ encryption = read("app/security/encryption.py")
 discovery = read("app/erp/discovery.py")
 cache = read("app/erp/odoo_cache.py")
 partners = read("app/api/v1/erp_partners.py")
-router = read("app/api/v1/router.py")
 compose = (REPO / "docker-compose.yml").read_text(encoding="utf-8-sig")
 secret_example = (REPO / ".env.secret-store.example").read_text(encoding="utf-8-sig")
 
@@ -83,15 +82,15 @@ for path in APP.rglob("*.py"):
         violations[path.relative_to(ROOT).as_posix()] = lines
 require(not violations, f"hardcoded organization 1 literals are forbidden: {violations}")
 
-for relative in (
-    "app/api/v1/erp.py",
-    "app/api/v1/journal_entry_actions.py",
-    "app/api/v1/chat_journal_lookup.py",
-    "app/api/v1/bank_posting_v2.py",
-    "app/api/v1/bank_reconciliation_entry_suggestions.py",
-    "app/api/v1/bank_reconciliation_hardening.py",
-):
-    text = read(relative)
-    require("current_organization_id" in text, f"legacy financial module must select the current tenant explicitly: {relative}")
+explicit_markers = {
+    "app/api/v1/erp.py": "current_organization_id(required=True)",
+    "app/api/v1/journal_entry_actions.py": "current_organization_id(required=True)",
+    "app/api/v1/chat_journal_lookup.py": "current_organization_id(required=True)",
+    "app/api/v1/bank_reconciliation_entry_suggestions.py": "current_organization_id(required=True)",
+    "app/api/v1/bank_reconciliation_hardening.py": "current_organization_id(required=True)",
+    "app/api/v1/bank_posting_v2.py": "ERPConnection.organization_id == int(user.organization_id)",
+}
+for relative, marker in explicit_markers.items():
+    require(marker in read(relative), f"financial module must select the authenticated tenant explicitly: {relative}")
 
 print("Explicit financial tenant source guard passed.")

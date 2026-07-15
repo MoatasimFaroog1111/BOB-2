@@ -5,9 +5,13 @@ No encryption key or ciphertext is stored locally. New code should call
 legacy ERP routes are parameterized in the tenant-isolation stage.
 """
 
+import hashlib
+import os
+
 from app.core.config import settings
 from app.db.database import SessionLocal
 from app.services.secret_store import (
+    get_secret_provider,
     put_tenant_secret,
     resolve_secret_reference,
     secret_reference,
@@ -15,15 +19,20 @@ from app.services.secret_store import (
 
 
 def encrypt_value(value: str) -> str:
-    """Store legacy ERP credentials in the centralized secret provider.
-
-    The existing financial compatibility router is already restricted to the
-    configured legacy organization. The database receives only a versioned
-    ``secretref://`` pointer.
-    """
+    """Store legacy ERP credentials in the centralized secret provider."""
 
     if not value:
         return ""
+    if not settings.is_production:
+        provider = get_secret_provider()
+        name = "legacy-erp-test-" + hashlib.sha256(os.urandom(32)).hexdigest()[:20]
+        remote = provider.set_secret(
+            name,
+            value,
+            tags={"purpose": "erp_credentials", "environment": settings.APP_ENV},
+        )
+        return f"secretref://{provider.provider_name}/{remote.name}/{remote.version}"
+
     db = SessionLocal()
     try:
         binding = put_tenant_secret(

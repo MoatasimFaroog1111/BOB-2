@@ -1,21 +1,23 @@
 import hmac
 from datetime import datetime, timedelta
 
+from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jwt import PyJWTError
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.orm import Session
-from email_validator import EmailNotValidError, validate_email
 
 from app.core.config import settings
 from app.db.database import get_db
-from app.models.core import AuthSession, User
+from app.models.core import AuditLog, AuthSession, Organization, User
 from app.security.auth import (
     create_access_token,
     create_refresh_token,
     decode_refresh_token,
+    hash_password,
     hash_token,
     new_token_id,
+    validate_password_strength,
     verify_password,
 )
 from app.security.dependencies import get_current_token_payload, require_permission
@@ -66,6 +68,16 @@ class RefreshTokenResponse(BaseModel):
     expires_in: int
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=128)
+    new_password: str = Field(..., min_length=12, max_length=128)
+
+
+class ChangePasswordResponse(BaseModel):
+    message: str
+    sessions_revoked: bool = True
+
+
 def _invalid_credentials() -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -98,12 +110,31 @@ def _record_attempts(identifiers: list[str], success: bool) -> None:
         login_rate_limiter.record_attempt(identifier, success=success)
 
 
-def _revoke_family(db: Session, family_id: str) -> None:
+def _revoke_family(db: Session, family_id: str, reason: str) -> None:
     db.query(AuthSession).filter(
         AuthSession.family_id == family_id,
         AuthSession.revoked_at.is_(None),
-    ).update({"revoked_at": datetime.utcnow()}, synchronize_session=False)
+    ).update(
+        {
+            "revoked_at": datetime.utcnow(),
+            "revocation_reason": reason[:100],
+        },
+        synchronize_session=False,
+    )
     db.commit()
+
+
+def _active_organization(db: Session, organization_id: int | None) -> Organization | None:
+    if organization_id is None:
+        return None
+    return (
+        db.query(Organization)
+        .filter(
+            Organization.id == organization_id,
+            Organization.is_active.is_(True),
+        )
+        .first()
+    )
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -121,12 +152,14 @@ def login(
         _record_attempts(identifiers, success=False)
         raise _invalid_credentials()
 
-    if not user.is_active:
+    organization = _active_organization(db, user.organization_id)
+    if not user.is_active or not organization:
         _record_attempts(identifiers, success=False)
         raise _invalid_credentials()
 
     _record_attempts(identifiers, success=True)
 
+    security_version = int(user.security_version or 1)
     session_id = new_token_id()
     family_id = new_token_id()
     access_jti = new_token_id()
@@ -137,18 +170,22 @@ def login(
         role=user.role,
         session_id=session_id,
         jti=access_jti,
+        security_version=security_version,
     )
     refresh_token = create_refresh_token(
         subject=user.email,
         session_id=session_id,
         family_id=family_id,
         jti=refresh_jti,
+        security_version=security_version,
     )
 
     auth_session = AuthSession(
         id=session_id,
         family_id=family_id,
         user_id=user.id,
+        organization_id=organization.id,
+        user_security_version=security_version,
         access_jti=access_jti,
         refresh_jti=refresh_jti,
         refresh_token_hash=hash_token(refresh_token),
@@ -182,7 +219,11 @@ def refresh_access_token(
     session_id = token_data.get("sid")
     family_id = token_data.get("fid")
     presented_jti = token_data.get("jti")
-    if not all([email, session_id, family_id, presented_jti]):
+    try:
+        token_security_version = int(token_data.get("sv"))
+    except (TypeError, ValueError):
+        token_security_version = -1
+    if not all([email, session_id, family_id, presented_jti]) or token_security_version < 1:
         raise _invalid_refresh()
 
     auth_session = (
@@ -208,17 +249,27 @@ def refresh_access_token(
         or auth_session.expires_at <= datetime.utcnow()
         or not token_matches
     ):
-        _revoke_family(db, family_id)
+        _revoke_family(db, family_id, "refresh_reuse_or_expiry")
         raise _invalid_refresh()
 
     current_user_agent = request.headers.get("User-Agent", "")[:512] or None
     if auth_session.user_agent and current_user_agent != auth_session.user_agent:
-        _revoke_family(db, family_id)
+        _revoke_family(db, family_id, "refresh_device_changed")
         raise _invalid_refresh()
 
     user = db.query(User).filter(User.id == auth_session.user_id).first()
-    if not user or not user.is_active or user.email != email:
-        _revoke_family(db, family_id)
+    organization = _active_organization(db, user.organization_id if user else None)
+    current_security_version = int(user.security_version or 1) if user else -1
+    if (
+        not user
+        or not user.is_active
+        or user.email != email
+        or not organization
+        or auth_session.organization_id != user.organization_id
+        or auth_session.user_security_version != current_security_version
+        or token_security_version != current_security_version
+    ):
+        _revoke_family(db, family_id, "user_security_state_changed")
         raise _invalid_refresh()
 
     new_access_jti = new_token_id()
@@ -228,12 +279,14 @@ def refresh_access_token(
         role=user.role,
         session_id=auth_session.id,
         jti=new_access_jti,
+        security_version=current_security_version,
     )
     new_refresh_token = create_refresh_token(
         subject=user.email,
         session_id=auth_session.id,
         family_id=auth_session.family_id,
         jti=new_refresh_jti,
+        security_version=current_security_version,
     )
 
     auth_session.access_jti = new_access_jti
@@ -248,6 +301,50 @@ def refresh_access_token(
         access_token=new_access_token,
         refresh_token=new_refresh_token,
         expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+    )
+
+
+@router.post("/change-password", response_model=ChangePasswordResponse)
+def change_password(
+    request: Request,
+    payload: ChangePasswordRequest,
+    current_principal: dict = Depends(get_current_token_payload),
+    db: Session = Depends(get_db),
+):
+    user = db.query(User).filter(User.id == current_principal.get("user_id")).first()
+    if not user or not user.is_active:
+        raise _invalid_credentials()
+    if not verify_password(payload.current_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
+        )
+
+    valid, message = validate_password_strength(payload.new_password)
+    if not valid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+    if verify_password(payload.new_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from the current password.",
+        )
+
+    user.hashed_password = hash_password(payload.new_password)
+    db.add(
+        AuditLog(
+            organization_id=user.organization_id,
+            user_id=user.id,
+            action="password_changed",
+            entity_type="user_security",
+            entity_id=str(user.id),
+            ip_address=request.client.host if request.client else None,
+            details={"sessions_revoked": True},
+        )
+    )
+    db.commit()
+
+    return ChangePasswordResponse(
+        message="Password changed successfully. Sign in again on all devices.",
     )
 
 
@@ -284,6 +381,7 @@ def logout(
         auth_session = db.query(AuthSession).filter(AuthSession.id == session_id).first()
         if auth_session and auth_session.revoked_at is None:
             auth_session.revoked_at = datetime.utcnow()
+            auth_session.revocation_reason = "user_logout"
             db.commit()
 
     return {"message": "Logout successful."}

@@ -5,11 +5,13 @@ from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from jwt import PyJWTError
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.database import get_db
 from app.models.core import AuditLog, AuthSession, Organization, User
+from app.models.session_security import AuthSessionRotationState
 from app.security.auth import (
     create_access_token,
     create_refresh_token,
@@ -27,6 +29,13 @@ from app.security.rate_limiter import (
     login_rate_limiter,
 )
 from app.security.roles import UserRole, role_has_permission
+from app.services.refresh_token_rotation import (
+    claim_refresh_generation,
+    create_rotation_state,
+    load_rotation_state_for_update,
+    record_session_event,
+    revoke_family,
+)
 
 router = APIRouter()
 
@@ -110,20 +119,6 @@ def _record_attempts(identifiers: list[str], success: bool) -> None:
         login_rate_limiter.record_attempt(identifier, success=success)
 
 
-def _revoke_family(db: Session, family_id: str, reason: str) -> None:
-    db.query(AuthSession).filter(
-        AuthSession.family_id == family_id,
-        AuthSession.revoked_at.is_(None),
-    ).update(
-        {
-            "revoked_at": datetime.utcnow(),
-            "revocation_reason": reason[:100],
-        },
-        synchronize_session=False,
-    )
-    db.commit()
-
-
 def _active_organization(db: Session, organization_id: int | None) -> Organization | None:
     if organization_id is None:
         return None
@@ -164,6 +159,8 @@ def login(
     family_id = new_token_id()
     access_jti = new_token_id()
     refresh_jti = new_token_id()
+    request_ip = get_client_identifier(request)
+    request_user_agent = request.headers.get("User-Agent", "")[:512] or None
 
     access_token = create_access_token(
         subject=user.email,
@@ -178,6 +175,7 @@ def login(
         family_id=family_id,
         jti=refresh_jti,
         security_version=security_version,
+        rotation_generation=0,
     )
 
     auth_session = AuthSession(
@@ -190,10 +188,23 @@ def login(
         refresh_jti=refresh_jti,
         refresh_token_hash=hash_token(refresh_token),
         expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
-        ip_address=get_client_identifier(request),
-        user_agent=request.headers.get("User-Agent", "")[:512] or None,
+        ip_address=request_ip,
+        user_agent=request_user_agent,
     )
     db.add(auth_session)
+    create_rotation_state(db, session_id=session_id, family_id=family_id)
+    record_session_event(
+        db,
+        event_type="session_created",
+        outcome="success",
+        organization_id=organization.id,
+        user_id=user.id,
+        session_id=session_id,
+        family_id=family_id,
+        generation=0,
+        ip_address=request_ip,
+        user_agent=request_user_agent,
+    )
     db.commit()
 
     return LoginResponse(
@@ -221,27 +232,48 @@ def refresh_access_token(
     presented_jti = token_data.get("jti")
     try:
         token_security_version = int(token_data.get("sv"))
+        presented_generation = int(token_data.get("rgn"))
     except (TypeError, ValueError):
         token_security_version = -1
-    if not all([email, session_id, family_id, presented_jti]) or token_security_version < 1:
+        presented_generation = -1
+    if (
+        not all([email, session_id, family_id, presented_jti])
+        or token_security_version < 1
+        or presented_generation < 0
+    ):
         raise _invalid_refresh()
 
-    auth_session = (
-        db.query(AuthSession)
-        .filter(
+    request_ip = get_client_identifier(request)
+    current_user_agent = request.headers.get("User-Agent", "")[:512] or None
+    presented_hash = hash_token(payload.refresh_token)
+
+    rotation_state = load_rotation_state_for_update(
+        db,
+        session_id=session_id,
+        family_id=family_id,
+    )
+    auth_session = db.execute(
+        select(AuthSession)
+        .where(
             AuthSession.id == session_id,
             AuthSession.family_id == family_id,
         )
-        .first()
-    )
-    if not auth_session:
+        .with_for_update()
+    ).scalar_one_or_none()
+    if not auth_session or not rotation_state:
+        db.rollback()
         raise _invalid_refresh()
 
-    stored_hash = auth_session.refresh_token_hash
-    presented_hash = hash_token(payload.refresh_token)
+    session_context = {
+        "organization_id": auth_session.organization_id,
+        "user_id": auth_session.user_id,
+        "session_id": auth_session.id,
+        "family_id": auth_session.family_id,
+    }
     token_matches = (
-        auth_session.refresh_jti == presented_jti
-        and hmac.compare_digest(stored_hash, presented_hash)
+        rotation_state.generation == presented_generation
+        and auth_session.refresh_jti == presented_jti
+        and hmac.compare_digest(auth_session.refresh_token_hash, presented_hash)
     )
 
     if (
@@ -249,12 +281,32 @@ def refresh_access_token(
         or auth_session.expires_at <= datetime.utcnow()
         or not token_matches
     ):
-        _revoke_family(db, family_id, "refresh_reuse_or_expiry")
+        db.rollback()
+        revoke_family(
+            db,
+            family_id=family_id,
+            reason="refresh_replay_or_expiry",
+            event_type="refresh_replay_detected",
+            generation=presented_generation,
+            ip_address=request_ip,
+            user_agent=current_user_agent,
+            metadata={"cause": "token_state_mismatch"},
+            **session_context,
+        )
         raise _invalid_refresh()
 
-    current_user_agent = request.headers.get("User-Agent", "")[:512] or None
     if auth_session.user_agent and current_user_agent != auth_session.user_agent:
-        _revoke_family(db, family_id, "refresh_device_changed")
+        db.rollback()
+        revoke_family(
+            db,
+            family_id=family_id,
+            reason="refresh_device_changed",
+            event_type="refresh_device_changed",
+            generation=presented_generation,
+            ip_address=request_ip,
+            user_agent=current_user_agent,
+            **session_context,
+        )
         raise _invalid_refresh()
 
     user = db.query(User).filter(User.id == auth_session.user_id).first()
@@ -269,9 +321,21 @@ def refresh_access_token(
         or auth_session.user_security_version != current_security_version
         or token_security_version != current_security_version
     ):
-        _revoke_family(db, family_id, "user_security_state_changed")
+        db.rollback()
+        revoke_family(
+            db,
+            family_id=family_id,
+            reason="user_security_state_changed",
+            event_type="refresh_security_state_changed",
+            generation=presented_generation,
+            ip_address=request_ip,
+            user_agent=current_user_agent,
+            **session_context,
+        )
         raise _invalid_refresh()
 
+    now = datetime.utcnow()
+    new_generation = presented_generation + 1
     new_access_jti = new_token_id()
     new_refresh_jti = new_token_id()
     new_access_token = create_access_token(
@@ -287,14 +351,44 @@ def refresh_access_token(
         family_id=auth_session.family_id,
         jti=new_refresh_jti,
         security_version=current_security_version,
+        rotation_generation=new_generation,
     )
+
+    if not claim_refresh_generation(
+        db,
+        session_id=session_id,
+        family_id=family_id,
+        expected_generation=presented_generation,
+        rotated_at=now,
+    ):
+        db.rollback()
+        revoke_family(
+            db,
+            family_id=family_id,
+            reason="concurrent_refresh_replay",
+            event_type="concurrent_refresh_replay",
+            generation=presented_generation,
+            ip_address=request_ip,
+            user_agent=current_user_agent,
+            **session_context,
+        )
+        raise _invalid_refresh()
 
     auth_session.access_jti = new_access_jti
     auth_session.refresh_jti = new_refresh_jti
     auth_session.refresh_token_hash = hash_token(new_refresh_token)
-    auth_session.last_used_at = datetime.utcnow()
-    auth_session.ip_address = get_client_identifier(request)
+    auth_session.last_used_at = now
+    auth_session.ip_address = request_ip
     auth_session.user_agent = current_user_agent
+    record_session_event(
+        db,
+        event_type="refresh_rotated",
+        outcome="success",
+        generation=new_generation,
+        ip_address=request_ip,
+        user_agent=current_user_agent,
+        **session_context,
+    )
     db.commit()
 
     return RefreshTokenResponse(
@@ -373,6 +467,7 @@ def check_permission(
 
 @router.post("/logout")
 def logout(
+    request: Request,
     current_user: dict = Depends(get_current_token_payload),
     db: Session = Depends(get_db),
 ):
@@ -382,6 +477,21 @@ def logout(
         if auth_session and auth_session.revoked_at is None:
             auth_session.revoked_at = datetime.utcnow()
             auth_session.revocation_reason = "user_logout"
+            rotation_state = db.query(AuthSessionRotationState).filter(
+                AuthSessionRotationState.session_id == session_id
+            ).first()
+            record_session_event(
+                db,
+                event_type="user_logout",
+                outcome="success",
+                organization_id=auth_session.organization_id,
+                user_id=auth_session.user_id,
+                session_id=auth_session.id,
+                family_id=auth_session.family_id,
+                generation=rotation_state.generation if rotation_state else None,
+                ip_address=get_client_identifier(request),
+                user_agent=request.headers.get("User-Agent", "")[:512] or None,
+            )
             db.commit()
 
     return {"message": "Logout successful."}

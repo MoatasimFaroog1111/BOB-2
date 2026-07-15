@@ -1,4 +1,4 @@
-from collections.abc import Iterator
+from collections.abc import AsyncIterator
 from datetime import datetime
 
 from fastapi import Depends, HTTPException, Request, status
@@ -167,15 +167,16 @@ def _required_financial_permission(request: Request) -> str:
     return "create_entries"
 
 
-def enforce_financial_route_permission(
+async def enforce_financial_route_permission(
     request: Request,
     payload: dict = Depends(get_current_token_payload),
-) -> Iterator[dict]:
+) -> AsyncIterator[dict]:
     """Authorize and bind the financial request to its live database tenant.
 
-    The scope is released after the endpoint and all of its dependencies finish,
-    preventing tenant identity from leaking into another request served by the
-    same worker thread.
+    This is an async generator intentionally: FastAPI may run synchronous
+    endpoint functions in a worker thread with a copied context, while setup and
+    teardown of this dependency remain in the same async context. That preserves
+    ContextVar token ownership and prevents scope leakage between requests.
     """
 
     permission = _required_financial_permission(request)

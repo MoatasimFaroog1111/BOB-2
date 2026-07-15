@@ -11,7 +11,7 @@ REPO = ROOT.parent
 
 
 def read(relative: str) -> str:
-    return (ROOT / relative).read_text(encoding="utf-8")
+    return (ROOT / relative).read_text(encoding="utf-8-sig")
 
 
 def require(condition: bool, message: str) -> None:
@@ -34,7 +34,7 @@ def _is_one(node: ast.AST) -> bool:
 
 
 def _has_hardcoded_organization_one(path: Path) -> bool:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"), filename=str(path))
     for node in ast.walk(tree):
         if isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1:
             if isinstance(node.ops[0], (ast.Eq, ast.NotEq)) and (
@@ -59,8 +59,8 @@ discovery = read("app/erp/discovery.py")
 cache = read("app/erp/odoo_cache.py")
 partners = read("app/api/v1/erp_partners.py")
 router = read("app/api/v1/router.py")
-compose = (REPO / "docker-compose.yml").read_text(encoding="utf-8")
-secret_example = (REPO / ".env.secret-store.example").read_text(encoding="utf-8")
+compose = (REPO / "docker-compose.yml").read_text(encoding="utf-8-sig")
+secret_example = (REPO / ".env.secret-store.example").read_text(encoding="utf-8-sig")
 
 require(
     'payload.get("organization_id") != 1' not in dependencies,

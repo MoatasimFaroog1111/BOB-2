@@ -8,7 +8,6 @@ from app.api.v1.erp_monetary_legacy import (
     LegacyProposeTransactionRequest,
     _build_proposal,
 )
-from app.api.v1.router import api_router
 from app.core.money import parse_money
 
 
@@ -18,11 +17,19 @@ class ProposalERP:
         if model == "account.account" and method == "search_read":
             domain = args[0]
             account_type = next(
-                (item[2] for item in domain if isinstance(item, (list, tuple)) and item[0] == "account_type"),
+                (
+                    item[2]
+                    for item in domain
+                    if isinstance(item, (list, tuple)) and item[0] == "account_type"
+                ),
                 None,
             )
             name_filter = next(
-                (str(item[2]).lower() for item in domain if isinstance(item, (list, tuple)) and item[0] == "name"),
+                (
+                    str(item[2]).lower()
+                    for item in domain
+                    if isinstance(item, (list, tuple)) and item[0] == "name"
+                ),
                 None,
             )
             if account_type == "expense":
@@ -39,12 +46,12 @@ class ProposalERP:
         raise AssertionError(f"Unexpected ERP call: {model}.{method} {args} {kwargs}")
 
 
-def test_application_registers_only_decimal_safe_legacy_monetary_endpoints():
+def test_application_registers_only_decimal_safe_legacy_monetary_endpoints(client):
     paths = {
-        "/erp/propose-transaction": [],
-        "/erp/register-document": [],
+        "/api/v1/erp/propose-transaction": [],
+        "/api/v1/erp/register-document": [],
     }
-    for route in api_router.routes:
+    for route in client.app.routes:
         if isinstance(route, APIRoute) and route.path in paths:
             paths[route.path].append(route)
 

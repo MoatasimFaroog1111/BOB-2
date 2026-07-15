@@ -1,24 +1,32 @@
 import json
-import os
 import logging
+import os
+import tempfile
+from pathlib import Path
 from typing import Any
+
 from app.core.config import settings
 from app.erp.providers.odoo import OdooProvider
+from app.security.tenant_scope import current_organization_id
 
 logger = logging.getLogger(__name__)
 
-# Path to local knowledge base file
-STORAGE_DIR = str(settings.storage_path)
-KB_FILE_PATH = os.path.join(STORAGE_DIR, "financial_kb_org_1.json")
+STORAGE_DIR = settings.storage_path / "financial_kb"
+
+
+def _kb_file_path() -> Path:
+    organization_id = current_organization_id(required=True)
+    assert organization_id is not None
+    return STORAGE_DIR / f"organization_{organization_id}.json"
 
 
 def run_discovery_orchestrator(provider: OdooProvider) -> dict[str, Any]:
-    logger.info("Starting ERP Discovery Engine orchestrator...")
+    organization_id = current_organization_id(required=True)
+    assert organization_id is not None
+    logger.info("Starting tenant-scoped ERP Discovery Engine orchestrator.")
 
-    # Ensure storage directory exists
-    os.makedirs(STORAGE_DIR, exist_ok=True)
+    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Run Odoo discovery methods
     accounts = provider.discover_accounts()
     journals = provider.discover_journals()
     taxes = provider.discover_taxes()
@@ -27,13 +35,12 @@ def run_discovery_orchestrator(provider: OdooProvider) -> dict[str, Any]:
     products = provider.discover_products()
     employees = provider.discover_employees()
 
-    # Discovered metadata
     company_info_dict = provider.get_company_info()
     companies = company_info_dict.get("companies", [])
 
-    # Structure the Financial Knowledge Base
     kb_data = {
         "metadata": {
+            "organization_id": organization_id,
             "provider": "odoo",
             "url": provider.url,
             "db": provider.db,
@@ -48,14 +55,29 @@ def run_discovery_orchestrator(provider: OdooProvider) -> dict[str, Any]:
         "employees": employees,
     }
 
-    # Save to storage file
-    with open(KB_FILE_PATH, "w", encoding="utf-8") as f:
-        json.dump(kb_data, f, ensure_ascii=False, indent=2)
+    destination = _kb_file_path()
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=str(STORAGE_DIR),
+        prefix=f"organization_{organization_id}.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(kb_data, handle, ensure_ascii=False, indent=2)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_name, destination)
+    finally:
+        if os.path.exists(temporary_name):
+            os.unlink(temporary_name)
 
-    logger.info(f"Financial Knowledge Base stored successfully at {KB_FILE_PATH}")
-
+    logger.info(
+        "Tenant financial knowledge base stored successfully for organization %s.",
+        organization_id,
+    )
     return {
         "success": True,
+        "organization_id": organization_id,
         "counts": {
             "accounts": len(accounts),
             "journals": len(journals),
@@ -69,12 +91,24 @@ def run_discovery_orchestrator(provider: OdooProvider) -> dict[str, Any]:
 
 
 def load_financial_kb() -> dict[str, Any] | None:
-    if not os.path.exists(KB_FILE_PATH):
+    organization_id = current_organization_id(required=True)
+    path = _kb_file_path()
+    if not path.exists() or path.is_symlink():
         return None
 
     try:
-        with open(KB_FILE_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to read Financial Knowledge Base: {e}")
+        with path.open("r", encoding="utf-8") as handle:
+            data = json.load(handle)
+    except Exception as exc:
+        logger.error(
+            "Failed to read tenant financial knowledge base for organization %s: %s",
+            organization_id,
+            type(exc).__name__,
+        )
         return None
+
+    metadata = data.get("metadata") if isinstance(data, dict) else None
+    if not isinstance(metadata, dict) or metadata.get("organization_id") != organization_id:
+        logger.error("Tenant financial knowledge base identity mismatch.")
+        return None
+    return data

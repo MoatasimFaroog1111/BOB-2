@@ -13,6 +13,10 @@ from app.api.v1.chat_journal_lookup import router as chat_journal_lookup_router
 from app.api.v1.chat_spreadsheet_intent_guard import router as chat_spreadsheet_intent_guard_router
 from app.api.v1.communication_tools import router as communication_tools_router
 from app.api.v1.erp import router as erp_router
+from app.api.v1.erp_monetary_legacy import (
+    replace_unsafe_legacy_routes,
+    router as erp_monetary_legacy_router,
+)
 from app.api.v1.erp_partners import router as erp_partners_router
 from app.api.v1.journal import router as journal_router
 from app.api.v1.journal_entry_actions import router as journal_entry_actions_router
@@ -55,6 +59,11 @@ api_router.include_router(
     tags=["Communication Tools"],
 )
 
+# Remove the two historical float-based route objects before the broad ERP
+# router is copied into the application. Compatible tenant-scoped Decimal
+# replacements are included immediately after it.
+replace_unsafe_legacy_routes(erp_router)
+
 # The centralized dependency is method-aware: reads require view_financials,
 # mutations require create_entries by default, settings require manage_settings,
 # uploads require upload_documents, and ERP posting requires post_odoo_entries.
@@ -67,6 +76,12 @@ api_router.include_router(accounting_command_router, prefix="/erp", tags=["ERP A
 api_router.include_router(chat_spreadsheet_intent_guard_router, prefix="/erp", tags=["ERP Smart Chat Intent Guard"], dependencies=financial_access)
 api_router.include_router(chat_journal_lookup_router, prefix="/erp", tags=["ERP Smart Chat Journal Lookup"], dependencies=financial_access)
 api_router.include_router(erp_router, prefix="/erp", tags=["ERP"], dependencies=financial_access)
+api_router.include_router(
+    erp_monetary_legacy_router,
+    prefix="/erp",
+    tags=["ERP Fixed-Point Monetary Compatibility"],
+    dependencies=financial_access,
+)
 api_router.include_router(journal_entry_actions_router, prefix="/erp", tags=["ERP Journal Entry Actions"], dependencies=financial_access)
 api_router.include_router(bank_posting_v2_router, prefix="/erp", tags=["ERP Bank Posting"], dependencies=financial_access)
 api_router.include_router(accounting_ai_router, prefix="/accounting-ai", tags=["Accounting AI Matching"], dependencies=financial_access)

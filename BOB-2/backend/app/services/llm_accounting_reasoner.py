@@ -15,6 +15,7 @@ from app.services.external_llm_gateway import (
     ExternalLLMPolicyDenied,
     ExternalLLMProviderError,
     ExternalLLMRequestContext,
+    record_external_llm_event,
 )
 from app.services.secret_store import SecretNotConfigured, SecretStoreError, get_tenant_secret
 
@@ -63,8 +64,7 @@ class LLMAccountingReasoner:
     ) -> None:
         self.provider = (provider or settings.ACCOUNTING_LLM_PROVIDER).strip().lower()
         self.model = (model or settings.ACCOUNTING_LLM_MODEL).strip()
-        # Direct key injection exists only for isolated non-production tests. Production
-        # always resolves the current tenant's versioned Key Vault binding.
+        # Direct key injection exists only for isolated non-production tests.
         self.api_key = None if settings.is_production else api_key
         self.api_url = api_url
         self.gateway_factory = gateway_factory
@@ -99,6 +99,47 @@ class LLMAccountingReasoner:
                 error="External AI reasoning requires authenticated tenant context.",
             )
 
+        context = ExternalLLMRequestContext(
+            organization_id=organization_id,
+            user_id=user_id,
+            purpose="accounting_reasoning",
+            source_type=source_type,
+            request_id=request_id,
+        )
+        # A non-secret probe satisfies the gateway's final credential-presence check
+        # during policy preflight. No network call occurs in authorize(). This ensures
+        # kill-switch, tenant, purpose, provider/model, and DPA decisions are audited
+        # before the application asks Key Vault for a value.
+        gateway = self.gateway_factory(
+            db=db_session,
+            context=context,
+            provider=self.provider,
+            model=self.model,
+            api_key=self.api_key or "policy-preflight-only",
+            api_url=self.api_url,
+        )
+
+        try:
+            gateway.authorize()
+        except ExternalLLMPolicyDenied:
+            logger.info("External accounting reasoning blocked by tenant disclosure policy")
+            return LLMReasoningResult(
+                status="blocked_by_policy",
+                provider=self.provider,
+                model=self.model,
+                reasoning=None,
+                error="External AI processing is not authorized for this organization.",
+            )
+        except ExternalLLMAuditError:
+            logger.error("External accounting reasoning failed closed because audit persistence failed")
+            return LLMReasoningResult(
+                status="blocked_audit_unavailable",
+                provider=self.provider,
+                model=self.model,
+                reasoning=None,
+                error="External AI processing is unavailable because security auditing failed.",
+            )
+
         api_key = self.api_key
         if api_key is None:
             try:
@@ -108,6 +149,16 @@ class LLMAccountingReasoner:
                     purpose="external_llm_api_key",
                 )
             except SecretNotConfigured:
+                record_external_llm_event(
+                    db_session,
+                    context=context,
+                    action="external_llm_disclosure_blocked",
+                    details={
+                        "reason": "external_llm_tenant_credential_missing",
+                        "provider": self.provider,
+                        "model": self.model,
+                    },
+                )
                 return LLMReasoningResult(
                     status="blocked_secret_not_configured",
                     provider=self.provider,
@@ -116,6 +167,16 @@ class LLMAccountingReasoner:
                     error="The organization has no active external AI credential.",
                 )
             except SecretStoreError:
+                record_external_llm_event(
+                    db_session,
+                    context=context,
+                    action="external_llm_disclosure_blocked",
+                    details={
+                        "reason": "external_llm_secret_store_unavailable",
+                        "provider": self.provider,
+                        "model": self.model,
+                    },
+                )
                 logger.warning("External accounting reasoning secret resolution failed closed")
                 return LLMReasoningResult(
                     status="blocked_secret_store_unavailable",
@@ -125,27 +186,13 @@ class LLMAccountingReasoner:
                     error="External AI processing is unavailable because the secure credential store failed.",
                 )
 
+        gateway.api_key = api_key
         structured_payload = self._build_structured_payload(
             source_type=source_type,
             extracted_signals=extracted_signals,
             agent_findings=agent_findings,
             conflicts=conflicts,
             final_recommendation=final_recommendation,
-        )
-        context = ExternalLLMRequestContext(
-            organization_id=organization_id,
-            user_id=user_id,
-            purpose="accounting_reasoning",
-            source_type=source_type,
-            request_id=request_id,
-        )
-        gateway = self.gateway_factory(
-            db=db_session,
-            context=context,
-            provider=self.provider,
-            model=self.model,
-            api_key=api_key,
-            api_url=self.api_url,
         )
         try:
             response_payload = gateway.execute_chat_completion(

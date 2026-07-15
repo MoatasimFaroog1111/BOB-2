@@ -1,16 +1,9 @@
-"""Request-bound tenant isolation for legacy financial routes.
+"""Request-bound tenant isolation for financial ORM work.
 
-The authenticated financial dependency binds the current organization to a
-``ContextVar`` for the lifetime of the request. SQLAlchemy listeners then:
-
-* rewrite the historical ``organization_id == 1`` predicate to the current
-  organization before SQL compilation;
-* append a tenant criterion to ORM SELECT statements for every mapped model
-  that exposes an ``organization_id`` column;
-* tenant-bind new ORM objects and reject cross-tenant mutation/deletion.
-
-This is a compatibility boundary while legacy ERP modules are decomposed. It
-must never create a default tenant when no authenticated scope is present.
+Active routes must select their authenticated organization explicitly. The
+SQLAlchemy listeners below are defense in depth only: they add a current-tenant
+criterion and reject cross-tenant writes. They never reinterpret a legacy
+organization literal as another tenant.
 """
 
 from __future__ import annotations
@@ -21,8 +14,6 @@ from typing import Iterator
 
 from sqlalchemy import event
 from sqlalchemy.orm import Session, with_loader_criteria
-from sqlalchemy.sql import operators, visitors
-from sqlalchemy.sql.elements import BinaryExpression, BindParameter
 
 _current_organization_id: ContextVar[int | None] = ContextVar(
     "current_financial_organization_id",
@@ -60,44 +51,13 @@ def tenant_scope(organization_id: int) -> Iterator[int]:
 
 
 def _mapped_tenant_classes() -> tuple[type, ...]:
-    # Import lazily to avoid a database/model import cycle during application
-    # bootstrap. The registry contains all models imported by active routers.
     from app.db.database import Base
 
-    classes: list[type] = []
-    for mapper in tuple(Base.registry.mappers):
-        model = mapper.class_
-        if hasattr(model, "organization_id"):
-            classes.append(model)
-    return tuple(classes)
-
-
-def _rewrite_legacy_organization_literal(statement, organization_id: int):
-    """Replace only equality predicates on an organization_id column.
-
-    Existing ORM loader options are traversal boundaries. SQLAlchemy loader
-    criteria objects are intentionally slot-based and cannot be cloned by the
-    generic expression visitor; the WHERE expressions around them remain safe
-    to rewrite.
-    """
-
-    def replace(element):
-        if not isinstance(element, BinaryExpression) or element.operator is not operators.eq:
-            return None
-
-        left = element.left
-        right = element.right
-        if getattr(left, "name", None) == "organization_id":
-            if isinstance(right, BindParameter) and right.value == 1:
-                return left == organization_id
-        if getattr(right, "name", None) == "organization_id":
-            if isinstance(left, BindParameter) and left.value == 1:
-                return organization_id == right
-        return None
-
-    loader_options = tuple(getattr(statement, "_with_options", ()))
-    traversal_options = {"stop_on": loader_options} if loader_options else {}
-    return visitors.replacement_traverse(statement, traversal_options, replace)
+    return tuple(
+        mapper.class_
+        for mapper in tuple(Base.registry.mappers)
+        if hasattr(mapper.class_, "organization_id")
+    )
 
 
 @event.listens_for(Session, "do_orm_execute")
@@ -108,11 +68,7 @@ def _enforce_tenant_on_orm_execute(execute_state) -> None:
     if execute_state.execution_options.get(_TENANT_SCOPE_EXECUTION_OPTION):
         return
 
-    statement = _rewrite_legacy_organization_literal(
-        execute_state.statement,
-        organization_id,
-    )
-
+    statement = execute_state.statement
     if execute_state.is_select:
         for model in _mapped_tenant_classes():
             statement = statement.options(
@@ -144,7 +100,7 @@ def _enforce_tenant_on_flush(session: Session, _flush_context, _instances) -> No
         if not isinstance(obj, tenant_classes):
             continue
         existing = getattr(obj, "organization_id", None)
-        if existing in {None, 1, organization_id}:
+        if existing in {None, organization_id}:
             setattr(obj, "organization_id", organization_id)
             continue
         raise TenantScopeError("Cross-tenant object creation was denied.")
@@ -152,6 +108,5 @@ def _enforce_tenant_on_flush(session: Session, _flush_context, _instances) -> No
     for obj in tuple(session.dirty) + tuple(session.deleted):
         if not isinstance(obj, tenant_classes):
             continue
-        existing = getattr(obj, "organization_id", None)
-        if existing != organization_id:
+        if getattr(obj, "organization_id", None) != organization_id:
             raise TenantScopeError("Cross-tenant mutation was denied.")

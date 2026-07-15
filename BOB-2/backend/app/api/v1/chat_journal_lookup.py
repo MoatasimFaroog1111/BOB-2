@@ -11,6 +11,8 @@ from app.erp.factory import get_erp_provider
 from app.models.core import ERPConnection
 from app.security.encryption import decrypt_value
 
+from app.security.tenant_scope import current_organization_id
+
 router = APIRouter()
 
 MAX_ENTRY_REFERENCES_PER_REQUEST = 100
@@ -98,7 +100,7 @@ def _is_arabic(text: str) -> bool:
 
 def _read_saved_erp(db_session: Session):
     conn = db_session.query(ERPConnection).filter(
-        ERPConnection.organization_id == 1,
+        ERPConnection.organization_id == current_organization_id(required=True),
         ERPConnection.is_active == True,  # noqa: E712 - keep existing project style
     ).first()
 

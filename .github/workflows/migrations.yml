@@ -26,6 +26,7 @@ jobs:
       APP_ENV: test
       DATABASE_URL: sqlite:///./ci-migrations.db
       SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+      SECRET_STORE_PROVIDER: memory
       LOCAL_LLM_ENABLED: "false"
       EXTERNAL_LLM_ENABLED: "false"
     steps:
@@ -40,8 +41,8 @@ jobs:
       - name: Verify one Alembic head
         run: |
           test "$(alembic heads | grep -c '(head)')" -eq 1
-          alembic heads | grep '7a4c9e2d1f60'
-      - name: Upgrade to external LLM policy migration
+          alembic heads | grep '9c7f2a4b1d80'
+      - name: Upgrade to tenant secret metadata migration
         run: |
           rm -f ci-migrations.db
           alembic upgrade head
@@ -57,42 +58,59 @@ jobs:
                   )
               }
               assert "external_llm_policies" in tables
+              assert "tenant_secret_bindings" in tables
+              assert "tenant_secret_versions" in tables
               revision = connection.execute(
                   "SELECT version_num FROM alembic_version"
               ).fetchone()[0]
-              assert revision == "7a4c9e2d1f60"
-              columns = {
+              assert revision == "9c7f2a4b1d80"
+              binding_columns = {
                   row[1]
                   for row in connection.execute(
-                      "PRAGMA table_info(external_llm_policies)"
+                      "PRAGMA table_info(tenant_secret_bindings)"
                   )
               }
-              required = {
+              required_binding = {
                   "organization_id",
-                  "external_llm_enabled",
-                  "approved_provider",
-                  "approved_model",
-                  "allowed_purposes",
-                  "allow_redacted_document_text",
-                  "allow_financial_values",
-                  "max_redacted_text_chars",
-                  "dpa_version",
-                  "dpa_reference",
-                  "data_residency_region",
-                  "provider_retention_mode",
-                  "accepted_by_user_id",
-                  "accepted_at",
+                  "purpose",
+                  "provider",
+                  "secret_name",
+                  "current_version",
+                  "status",
+                  "fingerprint_sha256",
+                  "created_by_user_id",
+                  "rotated_by_user_id",
                   "revoked_by_user_id",
+                  "last_rotated_at",
                   "revoked_at",
-                  "policy_version",
               }
-              assert required.issubset(columns), required - columns
+              assert required_binding.issubset(binding_columns), required_binding - binding_columns
+              version_columns = {
+                  row[1]
+                  for row in connection.execute(
+                      "PRAGMA table_info(tenant_secret_versions)"
+                  )
+              }
+              required_version = {
+                  "binding_id",
+                  "organization_id",
+                  "purpose",
+                  "provider",
+                  "secret_name",
+                  "version",
+                  "fingerprint_sha256",
+                  "status",
+                  "created_by_user_id",
+                  "superseded_at",
+                  "revoked_at",
+              }
+              assert required_version.issubset(version_columns), required_version - version_columns
           finally:
               connection.close()
           PY
-      - name: Downgrade and verify policy table removal
+      - name: Downgrade and verify secret metadata removal
         run: |
-          alembic downgrade 5d2e8f1c3a70
+          alembic downgrade 7a4c9e2d1f60
           python - <<'PY'
           import sqlite3
 
@@ -104,15 +122,17 @@ jobs:
                       "SELECT name FROM sqlite_master WHERE type='table'"
                   )
               }
-              assert "external_llm_policies" not in tables
+              assert "tenant_secret_bindings" not in tables
+              assert "tenant_secret_versions" not in tables
+              assert "external_llm_policies" in tables
               revision = connection.execute(
                   "SELECT version_num FROM alembic_version"
               ).fetchone()[0]
-              assert revision == "5d2e8f1c3a70"
+              assert revision == "7a4c9e2d1f60"
           finally:
               connection.close()
           PY
-      - name: Re-upgrade and verify final head
+      - name: Re-upgrade and verify tenant uniqueness
         run: |
           alembic upgrade head
           python - <<'PY'
@@ -123,28 +143,25 @@ jobs:
               revision = connection.execute(
                   "SELECT version_num FROM alembic_version"
               ).fetchone()[0]
-              assert revision == "7a4c9e2d1f60"
+              assert revision == "9c7f2a4b1d80"
 
-              unique_on_organization = False
+              unique_binding = False
               for index_row in connection.execute(
-                  "PRAGMA index_list(external_llm_policies)"
+                  "PRAGMA index_list(tenant_secret_bindings)"
               ):
-                  index_name = index_row[1]
-                  is_unique = bool(index_row[2])
-                  if not is_unique:
+                  if not bool(index_row[2]):
                       continue
-                  indexed_columns = [
-                      column_row[2]
-                      for column_row in connection.execute(
+                  index_name = index_row[1]
+                  columns = [
+                      row[2]
+                      for row in connection.execute(
                           f"PRAGMA index_info('{index_name}')"
                       )
                   ]
-                  if indexed_columns == ["organization_id"]:
-                      unique_on_organization = True
+                  if columns == ["organization_id", "purpose"]:
+                      unique_binding = True
                       break
-              assert unique_on_organization, (
-                  "external_llm_policies.organization_id must remain unique"
-              )
+              assert unique_binding, "one secret binding per organization and purpose is required"
           finally:
               connection.close()
           PY

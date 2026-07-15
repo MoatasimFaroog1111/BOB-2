@@ -1,16 +1,20 @@
-"""Stage 11 regressions for request-bound financial tenant isolation."""
+"""Stage 11 and 12 regressions for financial tenant isolation."""
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
-from pathlib import Path
 
 from app.erp import discovery, odoo_cache
 from app.models.core import ERPConnection, Organization, User
 from app.security.auth import hash_password
-from app.security.tenant_scope import current_organization_id, tenant_scope
+from app.security.tenant_scope import (
+    TenantScopeError,
+    current_organization_id,
+    tenant_scope,
+)
 from app.services.secret_store import get_secret_provider
 
 

@@ -84,13 +84,23 @@ services:
       MAX_UPLOAD_SIZE_MB: "10"
       GUARDIAN_SEED_EMAIL: ""
       GUARDIAN_SEED_PASSWORD: ""
-      # Telegram remains hard-disabled until secret-store and remaining
-      # production hardening stages are complete.
+      # Secret values remain outside the container and database. The backend
+      # authenticates to Key Vault with its Azure Managed Identity.
+      SECRET_STORE_PROVIDER: "azure_key_vault"
+      AZURE_KEY_VAULT_URL: ${AZURE_KEY_VAULT_URL:?AZURE_KEY_VAULT_URL is required}
+      AZURE_MANAGED_IDENTITY_CLIENT_ID: ${AZURE_MANAGED_IDENTITY_CLIENT_ID:-}
+      SECRET_STORE_CONNECT_TIMEOUT_SECONDS: "5"
+      SECRET_STORE_READ_TIMEOUT_SECONDS: "15"
+      SECRET_STORE_MAX_REQUEST_BYTES: "262144"
+      SECRET_STORE_MAX_RESPONSE_BYTES: "1048576"
+      LEGACY_FINANCIAL_ORGANIZATION_ID: "1"
+      # Telegram remains hard-disabled. A future enablement must select exactly
+      # one tenant whose Key Vault token binding is used by the singleton poller.
       TELEGRAM_BOT_ENABLED: "false"
       TELEGRAM_BOT_PRODUCTION_READY: "false"
       TELEGRAM_ALLOW_GROUP_CHATS: "false"
+      TELEGRAM_RUNTIME_ORGANIZATION_ID: "0"
       TELEGRAM_APPROVAL_TTL_SECONDS: "600"
-      # Fixed bounded queue and strict pre-download/stream limits.
       TELEGRAM_INGESTION_WORKERS: "2"
       TELEGRAM_INGESTION_QUEUE_SIZE: "20"
       TELEGRAM_MAX_PENDING_PER_ACTOR: "1"
@@ -111,9 +121,8 @@ services:
       ERP_OUTBOUND_CONNECT_TIMEOUT_SECONDS: "10"
       ERP_OUTBOUND_READ_TIMEOUT_SECONDS: "30"
       ERP_OUTBOUND_MAX_RESPONSE_BYTES: "10485760"
-      # LLM execution remains hard-disabled in the production compose profile.
-      # A key alone must never enable disclosure. External enablement requires a
-      # separately reviewed deployment change plus a tenant DPA/consent policy.
+      # Model execution remains disabled. External enablement requires the tenant
+      # DPA policy plus a tenant Key Vault credential; environment keys stay empty.
       LOCAL_LLM_ENABLED: "false"
       EXTERNAL_LLM_ENABLED: "false"
       OLLAMA_BASE_URL: "http://127.0.0.1:11434"

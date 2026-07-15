@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import re
+import ast
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +17,39 @@ def read(relative: str) -> str:
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
+
+
+def _is_organization_id(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "organization_id"
+    ) or (
+        isinstance(node, ast.Name)
+        and node.id == "organization_id"
+    )
+
+
+def _is_one(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value == 1
+
+
+def _has_hardcoded_organization_one(path: Path) -> bool:
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare) and len(node.ops) == 1 and len(node.comparators) == 1:
+            if isinstance(node.ops[0], (ast.Eq, ast.NotEq)) and (
+                (_is_organization_id(node.left) and _is_one(node.comparators[0]))
+                or (_is_one(node.left) and _is_organization_id(node.comparators[0]))
+            ):
+                return True
+        if isinstance(node, ast.keyword) and node.arg == "organization_id" and _is_one(node.value):
+            return True
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            value = node.value
+            if value is not None and _is_one(value) and any(_is_organization_id(target) for target in targets):
+                return True
+    return False
 
 
 dependencies = read("app/security/dependencies.py")
@@ -37,12 +70,12 @@ require("with tenant_scope(organization_id)" in dependencies, "financial request
 require("yield payload" in dependencies, "tenant scope must cover endpoint execution and be released afterward")
 
 for marker in (
-    'ContextVar(',
-    'replacement_traverse',
-    'with_loader_criteria',
+    "ContextVar(",
+    "replacement_traverse",
+    "with_loader_criteria",
     '@event.listens_for(Session, "do_orm_execute")',
     '@event.listens_for(Session, "before_flush")',
-    'Cross-tenant mutation was denied',
+    "Cross-tenant mutation was denied",
 ):
     require(marker in tenant_scope, f"tenant ORM boundary is missing: {marker}")
 
@@ -58,19 +91,18 @@ require("LEGACY_FINANCIAL_ORGANIZATION_ID" not in compose, "production Compose m
 require("LEGACY_FINANCIAL_ORGANIZATION_ID" not in secret_example, "secret-store example must not define a default tenant")
 
 for include_line in (
-    "erp_partners_router, prefix=\"/erp\"",
-    "bank_reconciliation_hardening_router, prefix=\"/erp\"",
-    "bank_reconciliation_entry_suggestions_router, prefix=\"/erp\"",
-    "chat_journal_lookup_router, prefix=\"/erp\"",
-    "erp_router, prefix=\"/erp\"",
-    "journal_entry_actions_router, prefix=\"/erp\"",
-    "bank_posting_v2_router, prefix=\"/erp\"",
+    'erp_partners_router, prefix="/erp"',
+    'bank_reconciliation_hardening_router, prefix="/erp"',
+    'bank_reconciliation_entry_suggestions_router, prefix="/erp"',
+    'chat_journal_lookup_router, prefix="/erp"',
+    'erp_router, prefix="/erp"',
+    'journal_entry_actions_router, prefix="/erp"',
+    'bank_posting_v2_router, prefix="/erp"',
 ):
     require(include_line in router, f"financial router is missing from centralized access boundary: {include_line}")
 
 # Existing large legacy modules are quarantined behind the request tenant scope.
-# New hardcoded tenant literals anywhere else fail this guard.
-legacy_literal = re.compile(r"organization_id\s*(?:==|=)\s*1\b")
+# AST inspection ignores comments/docstrings and rejects new executable literals.
 allowed_legacy_files = {
     "app/api/v1/erp.py",
     "app/api/v1/journal_entry_actions.py",
@@ -82,7 +114,7 @@ allowed_legacy_files = {
 found: set[str] = set()
 for path in APP.rglob("*.py"):
     relative = path.relative_to(ROOT).as_posix()
-    if legacy_literal.search(path.read_text(encoding="utf-8")):
+    if _has_hardcoded_organization_one(path):
         found.add(relative)
 
 unexpected = found - allowed_legacy_files

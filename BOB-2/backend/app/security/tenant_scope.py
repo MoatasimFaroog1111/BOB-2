@@ -28,6 +28,7 @@ _current_organization_id: ContextVar[int | None] = ContextVar(
     "current_financial_organization_id",
     default=None,
 )
+_TENANT_SCOPE_EXECUTION_OPTION = "guardian_tenant_scope_applied"
 
 
 class TenantScopeError(RuntimeError):
@@ -74,9 +75,10 @@ def _mapped_tenant_classes() -> tuple[type, ...]:
 def _rewrite_legacy_organization_literal(statement, organization_id: int):
     """Replace only equality predicates on an organization_id column.
 
-    This deliberately does not replace arbitrary integer literals. The legacy
-    value ``1`` is rewritten only when it is directly compared with a column
-    named ``organization_id``.
+    Existing ORM loader options are traversal boundaries. SQLAlchemy loader
+    criteria objects are intentionally slot-based and cannot be cloned by the
+    generic expression visitor; the WHERE expressions around them remain safe
+    to rewrite.
     """
 
     def replace(element):
@@ -93,13 +95,17 @@ def _rewrite_legacy_organization_literal(statement, organization_id: int):
                 return organization_id == right
         return None
 
-    return visitors.replacement_traverse(statement, {}, replace)
+    loader_options = tuple(getattr(statement, "_with_options", ()))
+    traversal_options = {"stop_on": loader_options} if loader_options else {}
+    return visitors.replacement_traverse(statement, traversal_options, replace)
 
 
 @event.listens_for(Session, "do_orm_execute")
 def _enforce_tenant_on_orm_execute(execute_state) -> None:
     organization_id = current_organization_id(required=False)
     if organization_id is None:
+        return
+    if execute_state.execution_options.get(_TENANT_SCOPE_EXECUTION_OPTION):
         return
 
     statement = _rewrite_legacy_organization_literal(
@@ -122,7 +128,9 @@ def _enforce_tenant_on_orm_execute(execute_state) -> None:
         if organization_column is not None:
             statement = statement.where(organization_column == organization_id)
 
-    execute_state.statement = statement
+    execute_state.statement = statement.execution_options(
+        **{_TENANT_SCOPE_EXECUTION_OPTION: True}
+    )
 
 
 @event.listens_for(Session, "before_flush")

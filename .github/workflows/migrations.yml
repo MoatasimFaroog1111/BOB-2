@@ -41,11 +41,11 @@ jobs:
       - name: Verify one Alembic head
         run: |
           test "$(alembic heads | grep -c '(head)')" -eq 1
-          alembic heads | grep 'f3a9d2c7b410'
-      - name: Prepare pre-security-version schema and legacy session
+          alembic heads | grep 'a8c4e1f2d670'
+      - name: Prepare live-role schema and active pre-rotation session
         run: |
           rm -f ci-migrations.db
-          alembic upgrade e6b8c1d4a290
+          alembic upgrade f3a9d2c7b410
           python - <<'PY'
           import sqlite3
 
@@ -56,36 +56,40 @@ jobs:
                   INSERT INTO organizations
                       (id, name, legal_name, country, is_active, created_at, updated_at)
                   VALUES
-                      (999, 'Auth Migration', 'Auth Migration', 'SA', 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                      (999, 'Rotation Migration', 'Rotation Migration', 'SA', 1,
+                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                   """
               )
               connection.execute(
                   """
                   INSERT INTO users
-                      (id, organization_id, email, full_name, role, hashed_password, is_active, created_at, updated_at)
+                      (id, organization_id, email, full_name, role, hashed_password,
+                       is_active, security_version, security_changed_at, created_at, updated_at)
                   VALUES
-                      (999, 999, 'auth-migration@test.invalid', 'Auth Migration', 'owner', 'not-used', 1,
-                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                      (999, 999, 'rotation-migration@test.invalid', 'Rotation Migration',
+                       'owner', 'not-used', 1, 1, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                   """
               )
               connection.execute(
                   """
                   INSERT INTO auth_sessions
-                      (id, family_id, user_id, access_jti, refresh_jti, refresh_token_hash,
-                       expires_at, revoked_at, last_used_at, ip_address, user_agent,
+                      (id, family_id, user_id, organization_id, user_security_version,
+                       access_jti, refresh_jti, refresh_token_hash, expires_at, revoked_at,
+                       revocation_reason, last_used_at, ip_address, user_agent,
                        created_at, updated_at)
                   VALUES
-                      ('legacy-session', 'legacy-family', 999, 'legacy-access', 'legacy-refresh',
+                      ('pre-rotation-session', 'pre-rotation-family', 999, 999, 1,
+                       'pre-access', 'pre-refresh',
                        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-                       '2099-01-01 00:00:00', NULL, NULL, '127.0.0.1', 'migration-test',
-                       CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                       '2099-01-01 00:00:00', NULL, NULL, NULL, '127.0.0.1',
+                       'migration-test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                   """
               )
               connection.commit()
           finally:
               connection.close()
           PY
-      - name: Upgrade to live-role session security migration
+      - name: Upgrade to atomic refresh rotation migration
         run: |
           alembic upgrade head
           python - <<'PY'
@@ -96,118 +100,103 @@ jobs:
               revision = connection.execute(
                   "SELECT version_num FROM alembic_version"
               ).fetchone()[0]
-              assert revision == "f3a9d2c7b410"
+              assert revision == "a8c4e1f2d670"
 
-              user_columns = {
-                  row[1]: row[2].upper()
-                  for row in connection.execute("PRAGMA table_info(users)")
+              tables = {
+                  row[0]
+                  for row in connection.execute(
+                      "SELECT name FROM sqlite_master WHERE type='table'"
+                  )
               }
-              assert user_columns["security_version"] == "INTEGER"
-              assert user_columns["security_changed_at"] == "DATETIME"
+              assert "auth_session_rotation_states" in tables
+              assert "auth_session_security_events" in tables
+              assert "tenant_secret_bindings" in tables
+              assert "journal_entries" in tables
 
-              session_columns = {
-                  row[1]: row[2].upper()
-                  for row in connection.execute("PRAGMA table_info(auth_sessions)")
-              }
-              assert session_columns["organization_id"] == "INTEGER"
-              assert session_columns["user_security_version"] == "INTEGER"
-              assert session_columns["revocation_reason"].startswith("VARCHAR")
-
-              migrated = connection.execute(
+              state = connection.execute(
                   """
-                  SELECT organization_id, user_security_version, revoked_at, revocation_reason
-                    FROM auth_sessions
-                   WHERE id = 'legacy-session'
+                  SELECT family_id, generation, last_rotated_at
+                    FROM auth_session_rotation_states
+                   WHERE session_id = 'pre-rotation-session'
                   """
               ).fetchone()
-              assert migrated is not None
-              assert migrated[0] == 999
-              assert migrated[1] == 1
-              assert migrated[2] is not None
-              assert migrated[3] == "security_version_migration"
-
-              organization_index = False
-              for index_row in connection.execute("PRAGMA index_list(auth_sessions)"):
-                  columns = [
-                      row[2]
-                      for row in connection.execute(
-                          f"PRAGMA index_info('{index_row[1]}')"
-                      )
-                  ]
-                  if columns == ["organization_id"]:
-                      organization_index = True
-                      break
-              assert organization_index
-
-              journal_columns = {
-                  row[1]: row[2].upper()
-                  for row in connection.execute("PRAGMA table_info(journal_entries)")
-              }
-              assert journal_columns["total_debit"].startswith("NUMERIC(20, 2)")
-              assert journal_columns["total_credit"].startswith("NUMERIC(20, 2)")
-          finally:
-              connection.close()
-          PY
-      - name: Downgrade and verify security-version schema removal
-        run: |
-          alembic downgrade e6b8c1d4a290
-          python - <<'PY'
-          import sqlite3
-
-          connection = sqlite3.connect("ci-migrations.db")
-          try:
-              revision = connection.execute(
-                  "SELECT version_num FROM alembic_version"
-              ).fetchone()[0]
-              assert revision == "e6b8c1d4a290"
-
-              user_columns = {
-                  row[1]
-                  for row in connection.execute("PRAGMA table_info(users)")
-              }
-              assert "security_version" not in user_columns
-              assert "security_changed_at" not in user_columns
-
-              session_columns = {
-                  row[1]
-                  for row in connection.execute("PRAGMA table_info(auth_sessions)")
-              }
-              assert "organization_id" not in session_columns
-              assert "user_security_version" not in session_columns
-              assert "revocation_reason" not in session_columns
-          finally:
-              connection.close()
-          PY
-      - name: Re-upgrade and verify live-role session schema
-        run: |
-          alembic upgrade head
-          python - <<'PY'
-          import sqlite3
-
-          connection = sqlite3.connect("ci-migrations.db")
-          try:
-              revision = connection.execute(
-                  "SELECT version_num FROM alembic_version"
-              ).fetchone()[0]
-              assert revision == "f3a9d2c7b410"
-
-              user_version = connection.execute(
-                  "SELECT security_version FROM users WHERE id = 999"
-              ).fetchone()
-              assert user_version == (1,)
+              assert state == ('pre-rotation-family', 0, None)
 
               session = connection.execute(
                   """
-                  SELECT organization_id, user_security_version, revoked_at, revocation_reason
+                  SELECT revoked_at, revocation_reason
                     FROM auth_sessions
-                   WHERE id = 'legacy-session'
+                   WHERE id = 'pre-rotation-session'
                   """
               ).fetchone()
               assert session is not None
-              assert session[0] == 999
-              assert session[1] == 1
-              assert session[2] is not None
-              assert session[3] == "security_version_migration"
+              assert session[0] is not None
+              assert session[1] == 'atomic_rotation_migration'
+
+              event = connection.execute(
+                  """
+                  SELECT event_type, outcome, generation
+                    FROM auth_session_security_events
+                   WHERE session_id = 'pre-rotation-session'
+                  """
+              ).fetchone()
+              assert event == ('atomic_rotation_migration', 'revoked', 0)
+          finally:
+              connection.close()
+          PY
+      - name: Downgrade and verify rotation tables are removed
+        run: |
+          alembic downgrade f3a9d2c7b410
+          python - <<'PY'
+          import sqlite3
+
+          connection = sqlite3.connect("ci-migrations.db")
+          try:
+              revision = connection.execute(
+                  "SELECT version_num FROM alembic_version"
+              ).fetchone()[0]
+              assert revision == "f3a9d2c7b410"
+              tables = {
+                  row[0]
+                  for row in connection.execute(
+                      "SELECT name FROM sqlite_master WHERE type='table'"
+                  )
+              }
+              assert "auth_session_rotation_states" not in tables
+              assert "auth_session_security_events" not in tables
+              assert "auth_sessions" in tables
+          finally:
+              connection.close()
+          PY
+      - name: Re-upgrade and verify atomic rotation state
+        run: |
+          alembic upgrade head
+          python - <<'PY'
+          import sqlite3
+
+          connection = sqlite3.connect("ci-migrations.db")
+          try:
+              revision = connection.execute(
+                  "SELECT version_num FROM alembic_version"
+              ).fetchone()[0]
+              assert revision == "a8c4e1f2d670"
+              state = connection.execute(
+                  """
+                  SELECT family_id, generation
+                    FROM auth_session_rotation_states
+                   WHERE session_id = 'pre-rotation-session'
+                  """
+              ).fetchone()
+              assert state == ('pre-rotation-family', 0)
+              event_count = connection.execute(
+                  """
+                  SELECT COUNT(*)
+                    FROM auth_session_security_events
+                   WHERE session_id = 'pre-rotation-session'
+                     AND event_type = 'atomic_rotation_migration'
+                  """
+              ).fetchone()[0]
+              assert event_count == 1
           finally:
               connection.close()
           PY

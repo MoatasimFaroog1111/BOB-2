@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -6,10 +7,10 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
-    Float,
     ForeignKey,
     Integer,
     JSON,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -203,6 +204,10 @@ class JournalEntryRecord(Base, TimestampMixin):
     """Tenant-isolated, durable journal entry snapshot."""
 
     __tablename__ = "journal_entries"
+    __table_args__ = (
+        CheckConstraint("total_debit > 0", name="ck_journal_entries_positive_total"),
+        CheckConstraint("total_debit = total_credit", name="ck_journal_entries_balanced_totals"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id"), index=True, nullable=False)
@@ -212,8 +217,8 @@ class JournalEntryRecord(Base, TimestampMixin):
     memo: Mapped[str] = mapped_column(Text, default="", nullable=False)
     status: Mapped[str] = mapped_column(String(20), default="draft", index=True, nullable=False)
     lines: Mapped[list[dict]] = mapped_column(JSON, nullable=False)
-    total_debit: Mapped[float] = mapped_column(Float, nullable=False)
-    total_credit: Mapped[float] = mapped_column(Float, nullable=False)
+    total_debit: Mapped[Decimal] = mapped_column(Numeric(20, 2), nullable=False)
+    total_credit: Mapped[Decimal] = mapped_column(Numeric(20, 2), nullable=False)
 
 
 class VectorRecord(Base, TimestampMixin):

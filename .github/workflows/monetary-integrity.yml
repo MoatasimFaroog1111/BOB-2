@@ -1,0 +1,82 @@
+name: Monetary integrity
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monetary-integrity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixed-point-accounting:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: BOB-2/backend
+    env:
+      APP_ENV: test
+      DATABASE_URL: sqlite:///./ci-monetary-integrity.db
+      SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+      SECRET_STORE_PROVIDER: memory
+      LOCAL_LLM_ENABLED: "false"
+      EXTERNAL_LLM_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: BOB-2/backend/requirements.lock
+      - name: Install hash-locked dependencies
+        run: pip install --quiet --require-hashes -r requirements.lock
+      - name: Compile monetary paths
+        run: >-
+          python -m compileall -q
+          app/core/money.py
+          app/models/core.py
+          app/models/bank_reconciliation.py
+          app/api/v1/journal.py
+          app/api/v1/bank_posting_v2.py
+          app/api/v1/journal_entry_actions.py
+          app/api/v1/erp_monetary_legacy.py
+          app/api/v1/router.py
+          app/erp/bank_reconciliation.py
+          app/services/telegram_accounting_service.py
+          scripts/check_monetary_integrity.py
+          tests/test_monetary_integrity.py
+          tests/test_erp_monetary_route_replacement.py
+      - name: Enforce fixed-point source boundaries
+        run: |
+          set +e
+          python scripts/check_monetary_integrity.py > monetary-source-check.log 2>&1
+          status=$?
+          cat monetary-source-check.log
+          exit "$status"
+      - name: Upload source-check failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: monetary-source-check-${{ github.run_id }}
+          path: BOB-2/backend/monetary-source-check.log
+          if-no-files-found: error
+          retention-days: 3
+      - name: Run fixed-point regression tests
+        run: >-
+          pytest -q
+          tests/test_monetary_integrity.py
+          tests/test_erp_monetary_route_replacement.py
+      - name: Run posting, reconciliation, and Telegram approval regressions
+        run: >-
+          pytest -q
+          tests/test_bank_reconciliation.py
+          tests/test_bank_reconciliation_full.py
+          tests/test_bank_reconciliation_hardening.py
+          tests/test_telegram_accounting_approvals.py

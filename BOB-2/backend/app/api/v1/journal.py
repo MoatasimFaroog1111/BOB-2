@@ -1,10 +1,18 @@
 from datetime import date
+from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.core.money import (
+    MoneyValidationError,
+    NonNegativeMoney,
+    canonical_money_lines,
+    money_to_str,
+    validate_balanced_lines,
+)
 from app.db.database import get_db
 from app.models.core import AuditLog, JournalEntryRecord, User
 from app.security.dependencies import require_permission
@@ -14,8 +22,8 @@ router = APIRouter()
 
 class JournalLine(BaseModel):
     account: str = Field(..., min_length=1, max_length=255)
-    debit: float = Field(default=0, ge=0)
-    credit: float = Field(default=0, ge=0)
+    debit: NonNegativeMoney = Decimal("0.00")
+    credit: NonNegativeMoney = Decimal("0.00")
     description: str = Field(default="", max_length=1000)
 
 
@@ -34,8 +42,8 @@ class JournalEntryResponse(BaseModel):
     memo: str
     status: str
     lines: list[dict]
-    total_debit: float
-    total_credit: float
+    total_debit: str
+    total_credit: str
 
 
 def _resolve_user(db: Session, current_user: dict) -> User:
@@ -60,8 +68,8 @@ def _serialize(entry: JournalEntryRecord) -> JournalEntryResponse:
         memo=entry.memo,
         status=entry.status,
         lines=entry.lines,
-        total_debit=entry.total_debit,
-        total_credit=entry.total_credit,
+        total_debit=money_to_str(entry.total_debit),
+        total_credit=money_to_str(entry.total_credit),
     )
 
 
@@ -89,26 +97,15 @@ def create_journal_entry(
     db: Session = Depends(get_db),
 ):
     user = _resolve_user(db, current_user)
-
-    for line in payload.lines:
-        if line.debit > 0 and line.credit > 0:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="A journal line cannot contain both debit and credit.",
-            )
-        if line.debit == 0 and line.credit == 0:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Every journal line must contain a debit or credit amount.",
-            )
-
-    total_debit = round(sum(line.debit for line in payload.lines), 2)
-    total_credit = round(sum(line.credit for line in payload.lines), 2)
-    if total_debit <= 0 or total_debit != total_credit:
+    raw_lines = [line.model_dump() for line in payload.lines]
+    try:
+        total_debit, total_credit = validate_balanced_lines(raw_lines)
+        stored_lines = canonical_money_lines(raw_lines)
+    except MoneyValidationError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Journal entry must be balanced and greater than zero.",
-        )
+            detail=str(exc),
+        ) from exc
 
     entry = JournalEntryRecord(
         organization_id=user.organization_id,
@@ -117,7 +114,7 @@ def create_journal_entry(
         reference=payload.reference.strip(),
         memo=payload.memo.strip(),
         status="draft",
-        lines=[line.model_dump() for line in payload.lines],
+        lines=stored_lines,
         total_debit=total_debit,
         total_credit=total_credit,
     )
@@ -132,9 +129,10 @@ def create_journal_entry(
             entity_id=str(entry.id),
             details={
                 "reference": entry.reference,
-                "total_debit": total_debit,
-                "total_credit": total_credit,
+                "total_debit": money_to_str(total_debit),
+                "total_credit": money_to_str(total_credit),
                 "status": entry.status,
+                "money_scale": 2,
             },
         )
     )

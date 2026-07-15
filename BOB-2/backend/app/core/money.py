@@ -1,6 +1,6 @@
 """Canonical fixed-point monetary primitives.
 
-All accounting arithmetic is performed with :class:`decimal.Decimal`.  Binary
+All accounting arithmetic is performed with :class:`decimal.Decimal`. Binary
 floating point is allowed only at a documented external-system boundary after
 an exact, fixed-scale value has already been validated.
 """
@@ -11,6 +11,8 @@ from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Annotated, Any, Iterable, Mapping
 
 from pydantic import Field
+from sqlalchemy import JSON
+from sqlalchemy.types import TypeDecorator
 
 MONEY_PRECISION = 20
 MONEY_SCALE = 2
@@ -41,22 +43,12 @@ def parse_money(
     allow_zero: bool = True,
     reject_excess_scale: bool = False,
 ) -> Decimal:
-    """Parse and quantize a monetary value without binary-float arithmetic.
-
-    Incoming JSON numbers may already have been decoded as ``float`` by a
-    framework.  Converting through ``str`` avoids importing the float's binary
-    expansion into Decimal.  When ``reject_excess_scale`` is true, callers must
-    provide no more than two fractional digits instead of relying on rounding.
-    """
+    """Parse and quantize a monetary value without binary-float arithmetic."""
 
     if isinstance(value, bool) or value is None:
         raise MoneyValidationError(f"{field_name} is not a valid monetary value")
 
-    if isinstance(value, str):
-        normalized = value.strip().replace(",", "")
-    else:
-        normalized = str(value)
-
+    normalized = value.strip().replace(",", "") if isinstance(value, str) else str(value)
     if not normalized:
         raise MoneyValidationError(f"{field_name} is not a valid monetary value")
 
@@ -76,7 +68,9 @@ def parse_money(
 
     quantized = amount.quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
     if reject_excess_scale and quantized != amount:
-        raise MoneyValidationError(f"{field_name} supports at most {MONEY_SCALE} decimal places")
+        raise MoneyValidationError(
+            f"{field_name} supports at most {MONEY_SCALE} decimal places"
+        )
     return quantized
 
 
@@ -88,24 +82,46 @@ def money_sum(values: Iterable[Any], *, field_name: str = "amount") -> Decimal:
 
 
 def money_to_str(value: Any) -> str:
-    """Return a canonical JSON/audit/idempotency representation."""
+    """Return a canonical JSON, audit, and idempotency representation."""
 
     return format(parse_money(value), f".{MONEY_SCALE}f")
 
 
 def money_to_erp_float(value: Any) -> float:
-    """Convert validated money at the final XML-RPC boundary only.
-
-    Odoo's XML-RPC API expects a numeric value and does not support Decimal.
-    The round-trip assertion guarantees the boundary conversion still denotes
-    the exact application-scale amount.
-    """
+    """Convert validated money at the final XML-RPC boundary only."""
 
     amount = parse_money(value)
     external_value = float(money_to_str(amount))
     if parse_money(str(external_value)) != amount:
         raise MoneyValidationError("external ERP conversion changed the monetary value")
     return external_value
+
+
+def money_json_safe(value: Any) -> Any:
+    """Recursively convert Decimal values to fixed-scale strings for JSON storage."""
+
+    if isinstance(value, Decimal):
+        return money_to_str(value)
+    if isinstance(value, Mapping):
+        return {str(key): money_json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [money_json_safe(item) for item in value]
+    return value
+
+
+class FixedPointJSON(TypeDecorator):
+    """SQLAlchemy JSON type that never passes raw Decimal objects to json.dumps."""
+
+    impl = JSON
+    cache_ok = True
+
+    def process_bind_param(self, value: Any, dialect) -> Any:
+        del dialect
+        return money_json_safe(value)
+
+    def process_result_value(self, value: Any, dialect) -> Any:
+        del dialect
+        return value
 
 
 def validate_balanced_lines(

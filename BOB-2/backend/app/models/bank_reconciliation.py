@@ -1,4 +1,6 @@
-from sqlalchemy import Float, Integer, JSON, String, Text
+from decimal import Decimal
+
+from sqlalchemy import Integer, JSON, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -26,9 +28,9 @@ class BankReconciliationAuditLog(Base, TimestampMixin):
     statement_file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     date_from: Mapped[str | None] = mapped_column(String(20), nullable=True)
     date_to: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    statement_total: Mapped[float | None] = mapped_column(Float, nullable=True)
-    ledger_total: Mapped[float | None] = mapped_column(Float, nullable=True)
-    difference: Mapped[float | None] = mapped_column(Float, nullable=True)
+    statement_total: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), nullable=True)
+    ledger_total: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), nullable=True)
+    difference: Mapped[Decimal | None] = mapped_column(Numeric(20, 2), nullable=True)
     statement_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ledger_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     matched_count: Mapped[int | None] = mapped_column(Integer, nullable=True)

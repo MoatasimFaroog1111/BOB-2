@@ -516,12 +516,22 @@ def test_external_response_declared_and_streamed_size_are_bounded(monkeypatch):
 
 def test_policy_admin_requires_current_dpa_and_never_returns_api_key(client, auth_headers, monkeypatch):
     monkeypatch.setattr(settings, "EXTERNAL_LLM_ENABLED", False)
-    monkeypatch.setattr(settings, "ACCOUNTING_LLM_API_KEY", "super-secret-key")
+    tenant_key = "tenant-external-key-that-must-never-return"
+    credential_response = client.put(
+        "/api/v1/llm/credential",
+        headers=auth_headers,
+        json={"api_key": tenant_key},
+    )
+    assert credential_response.status_code == 200, credential_response.text
+    assert credential_response.json()["configured"] is True
+    assert tenant_key not in credential_response.text
+    assert "secret_name" not in credential_response.text
+
     get_response = client.get("/api/v1/llm/policy", headers=auth_headers)
     assert get_response.status_code == 200
     assert get_response.json()["policy"] is None
     assert get_response.json()["api_key_configured"] is True
-    assert "super-secret-key" not in get_response.text
+    assert tenant_key not in get_response.text
 
     no_accept = client.put(
         "/api/v1/llm/policy",
@@ -552,7 +562,7 @@ def test_policy_admin_requires_current_dpa_and_never_returns_api_key(client, aut
     assert body["policy"]["external_llm_enabled"] is True
     assert body["effective_enabled"] is False
     assert body["policy"]["accepted_by_user_id"] == 1
-    assert "super-secret-key" not in accepted.text
+    assert tenant_key not in accepted.text
 
 
 def test_policy_admin_is_tenant_scoped_and_disclosure_list_excludes_other_tenant(
@@ -650,3 +660,4 @@ def test_accounting_reasoner_has_no_direct_http_client():
     assert "ExternalLLMGateway" in source
     assert "raw_document_text=text" in source
     assert "db_session" in source
+    assert "get_tenant_secret" in source

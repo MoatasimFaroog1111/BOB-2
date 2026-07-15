@@ -16,8 +16,8 @@ class AuthSessionRotationState(Base, TimestampMixin):
     )
 
     session_id: Mapped[str] = mapped_column(
-        ForeignKey("auth_sessions.id", ondelete="CASCADE"),
         String(64),
+        ForeignKey("auth_sessions.id", ondelete="CASCADE"),
         primary_key=True,
     )
     family_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)

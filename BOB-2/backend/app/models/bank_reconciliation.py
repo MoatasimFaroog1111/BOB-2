@@ -1,8 +1,9 @@
 from decimal import Decimal
 
-from sqlalchemy import Integer, JSON, Numeric, String, Text
+from sqlalchemy import Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from app.core.money import FixedPointJSON
 from app.db.database import Base
 from app.models.mixins import TimestampMixin
 
@@ -10,10 +11,8 @@ from app.models.mixins import TimestampMixin
 class BankReconciliationAuditLog(Base, TimestampMixin):
     """Immutable audit evidence for each bank reconciliation run.
 
-    The record stores totals, counts, selected Odoo bank journal metadata, a
-    SHA-256 hash of the uploaded statement, and the generated report payload.
-    It intentionally stores no ERP credentials and does not represent an ERP
-    posting instruction.
+    Monetary columns are NUMERIC(20,2). The report payload uses FixedPointJSON,
+    which converts Decimal values to fixed-scale strings before persistence.
     """
 
     __tablename__ = "bank_reconciliation_audit_logs"
@@ -38,7 +37,7 @@ class BankReconciliationAuditLog(Base, TimestampMixin):
     statement_only_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     ledger_only_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     odoo_raw_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    result_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result_json: Mapped[dict | None] = mapped_column(FixedPointJSON(), nullable=True)
     status: Mapped[str] = mapped_column(String(50), default="generated", nullable=False, index=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)

@@ -1,0 +1,128 @@
+name: Monetary integrity
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monetary-integrity-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fixed-point-accounting:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: BOB-2/backend
+    env:
+      APP_ENV: test
+      DATABASE_URL: sqlite:///./ci-monetary-integrity.db
+      SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+      SECRET_STORE_PROVIDER: memory
+      LOCAL_LLM_ENABLED: "false"
+      EXTERNAL_LLM_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: BOB-2/backend/requirements.lock
+      - name: Install hash-locked dependencies
+        run: pip install --quiet --require-hashes -r requirements.lock
+      - name: Compile monetary paths
+        run: >-
+          python -m compileall -q
+          app/core/money.py
+          app/models/core.py
+          app/models/bank_reconciliation.py
+          app/api/v1/journal.py
+          app/api/v1/bank_posting_v2.py
+          app/erp/bank_reconciliation.py
+          app/services/telegram_accounting_service.py
+          tests/test_monetary_integrity.py
+      - name: Enforce fixed-point source boundaries
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          money = Path("app/core/money.py").read_text(encoding="utf-8")
+          core = Path("app/models/core.py").read_text(encoding="utf-8")
+          bank_model = Path("app/models/bank_reconciliation.py").read_text(encoding="utf-8")
+          journal = Path("app/api/v1/journal.py").read_text(encoding="utf-8")
+          posting = Path("app/api/v1/bank_posting_v2.py").read_text(encoding="utf-8")
+          reconciliation = Path("app/erp/bank_reconciliation.py").read_text(encoding="utf-8")
+          telegram = Path("app/services/telegram_accounting_service.py").read_text(encoding="utf-8")
+
+          required_money = (
+              'Decimal("0.01")',
+              "ROUND_HALF_UP",
+              "parse_money",
+              "money_to_str",
+              "money_to_erp_float",
+              "validate_balanced_lines",
+              "FixedPointJSON",
+          )
+          missing = [item for item in required_money if item not in money]
+          assert not missing, f"Monetary primitives missing: {missing}"
+
+          assert "Numeric(20, 2)" in core
+          assert "ck_journal_entries_balanced_totals" in core
+          assert "ck_journal_entries_positive_total" in core
+          assert "Numeric(20, 2)" in bank_model
+          assert "FixedPointJSON" in bank_model
+          assert "mapped_column(Float" not in core
+          assert "mapped_column(Float" not in bank_model
+
+          for source_name, source in (
+              ("journal", journal),
+              ("bank posting", posting),
+              ("bank reconciliation", reconciliation),
+              ("Telegram accounting", telegram),
+          ):
+              assert "round(sum(float" not in source, f"Float summation returned in {source_name}"
+              assert "math.isfinite" not in source, f"Float validity check returned in {source_name}"
+
+          assert "NonNegativeMoney" in journal
+          assert "validate_balanced_lines" in journal
+          assert "canonical_money_lines" in journal
+          assert "money_to_str" in journal
+
+          assert "NonNegativeMoney" in posting
+          assert "money_to_erp_float" in posting
+          assert "money_to_str(payload.amount)" in posting
+          assert "float(payload.amount" not in posting
+          assert "float(line.debit" not in posting
+          assert "float(line.credit" not in posting
+
+          assert "amount: Money" in reconciliation
+          assert "statement_total: Money" in reconciliation
+          assert "money_sum" in reconciliation
+          assert "statement_txn.amount == ledger_txn.amount" in reconciliation
+          assert "abs(s_txn.amount - l_txn.amount) < 0.01" not in reconciliation
+          assert "def _parse_number(value: str) -> Optional[Decimal]" in reconciliation
+
+          assert "canonical_money_lines" in telegram
+          assert "validate_balanced_lines" in telegram
+          assert "money_to_erp_float" in telegram
+          assert 'normalized["amount"] = money_to_str(amount)' in telegram
+          assert '"money_scale": 2' in telegram
+          assert "float(line.get(\"debit\"" not in telegram
+          assert "abs(debit_total - credit_total)" not in telegram
+          PY
+      - name: Run fixed-point regression tests
+        run: pytest -q tests/test_monetary_integrity.py
+      - name: Run posting, reconciliation, and Telegram approval regressions
+        run: >-
+          pytest -q
+          tests/test_bank_reconciliation.py
+          tests/test_bank_reconciliation_full.py
+          tests/test_bank_reconciliation_hardening.py
+          tests/test_telegram_accounting_approvals.py

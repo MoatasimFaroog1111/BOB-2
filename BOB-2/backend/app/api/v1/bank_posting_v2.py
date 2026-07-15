@@ -2,12 +2,21 @@ import hashlib
 import json
 import re
 from datetime import datetime
+from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.money import (
+    Money,
+    MoneyValidationError,
+    NonNegativeMoney,
+    money_to_erp_float,
+    money_to_str,
+    validate_balanced_lines,
+)
 from app.db.database import get_db
 from app.erp.factory import get_erp_provider
 from app.models.core import AuditLog, ERPConnection, User
@@ -21,8 +30,8 @@ class BankPostingLineV2(BaseModel):
     account_id: int
     account_name: str = ""
     account_code: str = ""
-    debit: float = 0.0
-    credit: float = 0.0
+    debit: NonNegativeMoney = Decimal("0.00")
+    credit: NonNegativeMoney = Decimal("0.00")
     name: str
     partner_id: Optional[int] = None
     partner_name: str = ""
@@ -37,7 +46,7 @@ class BankPostingRequestV2(BaseModel):
     date: str = ""
     ref: str = ""
     filename: str = "bank_statement_reconciliation"
-    amount: float = 0.0
+    amount: Money = Decimal("0.00")
     partner_name: str = ""
     statement_ref: str = ""
     row_number: Optional[int] = None
@@ -97,13 +106,15 @@ def first_line_description(payload: BankPostingRequestV2) -> str:
 def build_idempotency_key(organization_id: int, company_id: int, payload: BankPostingRequestV2) -> str:
     if payload.idempotency_key.strip():
         return payload.idempotency_key.strip()
-    description_hash = hashlib.sha256(normalize_text(first_line_description(payload)).encode("utf-8")).hexdigest()[:24]
+    description_hash = hashlib.sha256(
+        normalize_text(first_line_description(payload)).encode("utf-8")
+    ).hexdigest()[:24]
     raw = "|".join(
         [
             str(organization_id),
             str(company_id),
             safe_date(payload.date),
-            f"{float(payload.amount or 0.0):.2f}",
+            money_to_str(payload.amount),
             normalize_text(payload.statement_ref or payload.ref),
             str(payload.row_number or ""),
             description_hash,
@@ -193,7 +204,12 @@ def attach_document_to_move(erp, move_id: int, payload: BankPostingRequestV2) ->
 
 
 def read_company_id_from_odoo_user(erp, username: str) -> int:
-    users = erp.execute_kw("res.users", "search_read", [[["login", "=", username]]], {"fields": ["company_id"], "limit": 1})
+    users = erp.execute_kw(
+        "res.users",
+        "search_read",
+        [[['login', '=', username]]],
+        {"fields": ["company_id"], "limit": 1},
+    )
     company_value = users[0]["company_id"] if users and users[0].get("company_id") else None
     if not company_value:
         raise ValueError("Unable to resolve Odoo company for the current ERP user.")
@@ -283,20 +299,23 @@ def register_bank_reconciliation_entry_v2(
     token_payload: dict = Depends(require_permission("post_odoo_entries")),
 ):
     user = get_authenticated_user(db_session, token_payload)
-    if not payload.lines or len(payload.lines) < 2:
-        raise HTTPException(status_code=400, detail="At least two journal lines are required.")
     if (payload.approval_status or "").strip().lower() != "approved":
         raise HTTPException(status_code=403, detail="Entry must be approved before posting to Odoo.")
 
-    total_debit = round(sum(float(line.debit or 0.0) for line in payload.lines), 2)
-    total_credit = round(sum(float(line.credit or 0.0) for line in payload.lines), 2)
-    if total_debit != total_credit:
-        raise HTTPException(status_code=400, detail=f"Journal entry is not balanced: debit={total_debit}, credit={total_credit}")
+    try:
+        total_debit, total_credit = validate_balanced_lines(
+            [line.model_dump() for line in payload.lines]
+        )
+    except MoneyValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     try:
         conn = (
             db_session.query(ERPConnection)
-            .filter(ERPConnection.organization_id == int(user.organization_id), ERPConnection.is_active.is_(True))
+            .filter(
+                ERPConnection.organization_id == int(user.organization_id),
+                ERPConnection.is_active.is_(True),
+            )
             .first()
         )
         if not conn:
@@ -311,7 +330,13 @@ def register_bank_reconciliation_entry_v2(
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to decrypt connection credentials.")
 
-        erp = get_erp_provider(provider=conn.provider, url=conn.base_url, db=conn.database_name or "", username=username, password=password)
+        erp = get_erp_provider(
+            provider=conn.provider,
+            url=conn.base_url,
+            db=conn.database_name or "",
+            username=username,
+            password=password,
+        )
         company_id = int(payload.company_id or read_company_id_from_odoo_user(erp, username))
         posting_date = safe_date(payload.date)
         idempotency_key = build_idempotency_key(int(user.organization_id), company_id, payload)
@@ -333,7 +358,12 @@ def register_bank_reconciliation_entry_v2(
                 result="duplicate_prevented",
                 request=request,
                 entity_id=str(move.get("id")),
-                details={"idempotency_key": idempotency_key, "ref": full_ref},
+                details={
+                    "idempotency_key": idempotency_key,
+                    "ref": full_ref,
+                    "total_debit": money_to_str(total_debit),
+                    "total_credit": money_to_str(total_credit),
+                },
             )
             return {
                 "status": "duplicate_prevented",
@@ -356,8 +386,8 @@ def register_bank_reconciliation_entry_v2(
             vals = {
                 "account_id": int(line.account_id),
                 "name": line.name or payload.ref or "Bank reconciliation entry",
-                "debit": float(line.debit or 0.0),
-                "credit": float(line.credit or 0.0),
+                "debit": money_to_erp_float(line.debit),
+                "credit": money_to_erp_float(line.credit),
             }
             if line.partner_id:
                 vals["partner_id"] = int(line.partner_id)
@@ -401,6 +431,8 @@ def register_bank_reconciliation_entry_v2(
                 "company_id": company_id,
                 "journal_id": journal_id,
                 "move_name": move_name,
+                "total_debit": money_to_str(total_debit),
+                "total_credit": money_to_str(total_credit),
                 "attachment_id": attachment_id,
                 "attachment_error": attachment_error,
             },

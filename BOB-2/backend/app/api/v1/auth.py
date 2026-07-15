@@ -284,7 +284,6 @@ def refresh_access_token(
         db.rollback()
         revoke_family(
             db,
-            family_id=family_id,
             reason="refresh_replay_or_expiry",
             event_type="refresh_replay_detected",
             generation=presented_generation,
@@ -299,7 +298,6 @@ def refresh_access_token(
         db.rollback()
         revoke_family(
             db,
-            family_id=family_id,
             reason="refresh_device_changed",
             event_type="refresh_device_changed",
             generation=presented_generation,
@@ -324,7 +322,6 @@ def refresh_access_token(
         db.rollback()
         revoke_family(
             db,
-            family_id=family_id,
             reason="user_security_state_changed",
             event_type="refresh_security_state_changed",
             generation=presented_generation,
@@ -364,7 +361,6 @@ def refresh_access_token(
         db.rollback()
         revoke_family(
             db,
-            family_id=family_id,
             reason="concurrent_refresh_replay",
             event_type="concurrent_refresh_replay",
             generation=presented_generation,

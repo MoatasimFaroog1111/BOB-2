@@ -1,5 +1,4 @@
 import logging
-import os
 
 from sqlalchemy.orm import Session
 
@@ -12,10 +11,9 @@ logger = logging.getLogger(__name__)
 
 
 def _default_organization_names() -> tuple[str, str]:
-    name = os.getenv("GUARDIAN_DEFAULT_ORG_NAME", "").strip() or "Default Organization"
+    name = settings.GUARDIAN_DEFAULT_ORG_NAME.strip() or "Default Organization"
     legal_name = (
-        os.getenv("GUARDIAN_DEFAULT_ORG_LEGAL_NAME", "").strip()
-        or "Default Organization"
+        settings.GUARDIAN_DEFAULT_ORG_LEGAL_NAME.strip() or "Default Organization"
     )
     return name, legal_name
 

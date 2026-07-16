@@ -1,0 +1,3 @@
+Railway backend deployment trigger.
+
+This file intentionally lives under backend/ so services using backend-scoped watch paths redeploy when container or Railway configuration changes outside that path.

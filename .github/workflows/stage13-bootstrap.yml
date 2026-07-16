@@ -26,6 +26,37 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Exclude workflow files from the one-shot app commit
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/stage13_immutable_audit.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              '    write(REPO / ".github" / "workflows" / "immutable-audit-chain.yml", WORKFLOW)\n',
+              '',
+          )
+          text = text.replace(
+              '    write(REPO / ".github" / "workflows" / "migrations.yml", MIGRATION_WORKFLOW)\n',
+              '',
+          )
+          text = text.replace(
+              '    bootstrap = REPO / ".github" / "workflows" / "stage13-bootstrap.yml"\n'
+              '    if bootstrap.exists():\n'
+              '        bootstrap.unlink()\n',
+              '',
+          )
+          text = text.replace(
+              '    Path(__file__).unlink()\n',
+              '    bootstrap_log = REPO / "stage13-bootstrap.log"\n'
+              '    if bootstrap_log.exists():\n'
+              '        bootstrap_log.unlink()\n'
+              '    Path(__file__).unlink()\n',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
       - name: Apply immutable audit implementation
         shell: bash
         run: |

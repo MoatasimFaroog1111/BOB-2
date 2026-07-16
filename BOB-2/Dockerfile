@@ -19,14 +19,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd -r guardian && useradd -r -g guardian -m guardian
 WORKDIR /app
 
-# The full dependency lock contains optional local embedding/transformer packages
-# and multi-gigabyte CUDA artifacts. Railway only needs the web/runtime profile;
-# accounting_ai.py already falls back to the deterministic CPU-safe embedding
-# implementation when sentence-transformers is unavailable.
-COPY backend/requirements.txt ./requirements.txt
-RUN grep -vE '^(pytest|sentence-transformers|transformers)==' requirements.txt \
-        > requirements.runtime.txt \
-    && pip install --no-cache-dir --no-compile -r requirements.runtime.txt \
+# Railway installs only the reviewed CPU-safe runtime profile. Every transitive
+# dependency and artifact hash is fixed by pip-compile.
+COPY backend/requirements.runtime.lock ./requirements.runtime.lock
+RUN pip install --no-cache-dir --no-compile --require-hashes \
+        -r requirements.runtime.lock \
     && pip check
 
 COPY backend/ ./

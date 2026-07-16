@@ -9,6 +9,11 @@ import { MainNavigation } from "@/components/layout/MainNavigation";
 import { CompanyProvider } from "@/lib/CompanyContext";
 import { LanguageProvider } from "@/lib/LanguageContext";
 
+const localFontVariables = {
+  "--font-cairo": "Tahoma, Arial, sans-serif",
+  "--font-outfit": '"Segoe UI", Arial, sans-serif',
+} as React.CSSProperties;
+
 export default async function RootLayout({
   children,
 }: Readonly<{
@@ -19,7 +24,7 @@ export default async function RootLayout({
   await connection();
 
   return (
-    <html lang="ar" dir="rtl">
+    <html lang="ar" dir="rtl" style={localFontVariables}>
       <body className="h-screen overflow-hidden">
         <LanguageProvider>
           <AuthGate>

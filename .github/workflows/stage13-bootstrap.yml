@@ -1,0 +1,28 @@
+name: Stage 13 immutable audit bootstrap
+
+on:
+  push:
+    branches:
+      - agent/immutable-audit-chain
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stage13-immutable-audit-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  implement:
+    if: ${{ github.actor != 'guardian-stage13-bot' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/immutable-audit-chain
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Apply immutable audit implementation and remove bootstrap
+        run: python .github/stage13_immutable_audit.py

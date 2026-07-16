@@ -1,3 +1,5 @@
+import base64
+import binascii
 import ipaddress
 import secrets
 from pathlib import Path
@@ -29,10 +31,11 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str = ""
 
-    # Secret values never belong in the database, local storage, or ordinary
-    # production environment variables. Production uses Azure Key Vault via
-    # Managed Identity. The memory provider exists only for tests/development.
+    # Production may use Azure Key Vault or an AES-256-GCM encrypted database
+    # provider. The encryption key is always external to the database. The
+    # memory provider exists only for tests/development.
     SECRET_STORE_PROVIDER: str = "disabled"
+    SECRET_STORE_ENCRYPTION_KEY: str = ""
     AZURE_KEY_VAULT_URL: str = ""
     AZURE_MANAGED_IDENTITY_CLIENT_ID: str = ""
     SECRET_STORE_CONNECT_TIMEOUT_SECONDS: int = 5
@@ -48,6 +51,8 @@ class Settings(BaseSettings):
     LOGIN_LOCKOUT_MINUTES: int = 30
     REQUIRE_HTTPS: bool = False
 
+    GUARDIAN_DEFAULT_ORG_NAME: str = "Default Organization"
+    GUARDIAN_DEFAULT_ORG_LEGAL_NAME: str = "Default Organization"
     GUARDIAN_SEED_EMAIL: str = ""
     GUARDIAN_SEED_PASSWORD: str = ""
 
@@ -104,7 +109,7 @@ class Settings(BaseSettings):
     LOCAL_LLM_MAX_RESPONSE_BYTES: int = 1_048_576
 
     # External LLM is protected by the global kill switch, tenant policy, and
-    # a tenant-scoped Key Vault secret binding.
+    # a tenant-scoped secure secret binding.
     EXTERNAL_LLM_ENABLED: bool = False
     EXTERNAL_LLM_REQUIRED_DPA_VERSION: str = "2026-07-v1"
     EXTERNAL_LLM_ALLOWED_PROVIDERS: str = "deepseek"
@@ -115,7 +120,7 @@ class Settings(BaseSettings):
     EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS: int = 4_000
 
     # Deprecated compatibility inputs. Production validation requires both to
-    # remain empty; external provider credentials are resolved from Key Vault.
+    # remain empty; external provider credentials are resolved from secret storage.
     DEEPSEEK_API_KEY: str = ""
     ACCOUNTING_LLM_PROVIDER: str = "deepseek"
     ACCOUNTING_LLM_MODEL: str = "deepseek-chat"
@@ -174,12 +179,30 @@ class Settings(BaseSettings):
                 "Generate one with: openssl rand -hex 64"
             )
 
+    def _validate_encrypted_db_key(self, errors: list[str]) -> None:
+        raw = self.SECRET_STORE_ENCRYPTION_KEY.strip()
+        if not raw:
+            errors.append("SECRET_STORE_ENCRYPTION_KEY is required for encrypted_db")
+            return
+        try:
+            decoded = base64.b64decode(raw, validate=True)
+        except (binascii.Error, ValueError):
+            errors.append("SECRET_STORE_ENCRYPTION_KEY must be valid base64")
+            return
+        if len(decoded) != 32:
+            errors.append("SECRET_STORE_ENCRYPTION_KEY must decode to exactly 32 bytes")
+
     def _validate_secret_store_configuration(self, errors: list[str]) -> None:
         provider = self.SECRET_STORE_PROVIDER.strip().lower()
-        if provider not in {"disabled", "memory", "azure_key_vault"}:
+        allowed = {"disabled", "memory", "azure_key_vault", "encrypted_db"}
+        if provider not in allowed:
             errors.append("SECRET_STORE_PROVIDER is invalid")
-        if self.is_production and provider != "azure_key_vault":
-            errors.append("SECRET_STORE_PROVIDER must be azure_key_vault in production")
+        if self.is_production and provider not in {"azure_key_vault", "encrypted_db"}:
+            errors.append(
+                "SECRET_STORE_PROVIDER must be azure_key_vault or encrypted_db in production"
+            )
+        if provider == "encrypted_db":
+            self._validate_encrypted_db_key(errors)
         if provider == "azure_key_vault":
             try:
                 vault = urlsplit(self.AZURE_KEY_VAULT_URL)
@@ -307,8 +330,10 @@ class Settings(BaseSettings):
                 errors.append("EXTERNAL_LLM_ALLOWED_HOSTS requires exact hosts")
             if not self.EXTERNAL_LLM_REQUIRED_DPA_VERSION.strip():
                 errors.append("EXTERNAL_LLM_REQUIRED_DPA_VERSION is required")
-            if self.SECRET_STORE_PROVIDER.strip().lower() != "azure_key_vault":
-                errors.append("External LLM requires the Azure Key Vault secret provider")
+            if self.SECRET_STORE_PROVIDER.strip().lower() not in {"azure_key_vault", "encrypted_db"}:
+                errors.append(
+                    "External LLM requires Azure Key Vault or encrypted_db secret provider"
+                )
             try:
                 endpoint = urlsplit(self.ACCOUNTING_LLM_API_URL)
             except ValueError:

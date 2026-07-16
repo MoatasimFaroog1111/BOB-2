@@ -23,6 +23,7 @@ from app.models.core import (
 from app.models.encrypted_secret import EncryptedSecretVersion
 from app.models.external_llm import ExternalLLMPolicy
 from app.models.tenant_secret import TenantSecretBinding, TenantSecretVersion
+from app.models.user_mfa import UserMFASetting
 
 __all__ = [
     "AIAccountingSuggestion",
@@ -46,5 +47,6 @@ __all__ = [
     "TenantSecretBinding",
     "TenantSecretVersion",
     "User",
+    "UserMFASetting",
     "VectorRecord",
 ]

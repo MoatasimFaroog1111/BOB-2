@@ -63,20 +63,27 @@ jobs:
 
       - name: Capture container diagnostics
         if: always()
-        run: docker logs bob2-railway-test > railway-container.log 2>&1 || true
+        run: |
+          docker inspect --format 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{.State.Error}} finished_at={{.State.FinishedAt}}' \
+            bob2-railway-test > railway-container-state.txt 2>&1 || true
+          docker logs bob2-railway-test > railway-container.log 2>&1 || true
 
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: railway-backend-failure-${{ github.run_id }}
-          path: railway-container.log
+          path: |
+            railway-container.log
+            railway-container-state.txt
           if-no-files-found: error
           retention-days: 3
 
-      - name: Show container logs on failure
+      - name: Show container diagnostics on failure
         if: failure()
-        run: cat railway-container.log || true
+        run: |
+          cat railway-container-state.txt || true
+          cat railway-container.log || true
 
       - name: Stop test container
         if: always()

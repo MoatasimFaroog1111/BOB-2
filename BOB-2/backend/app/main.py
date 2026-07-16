@@ -17,6 +17,7 @@ from app.middleware.request_size import RequestSizeLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.security.document_processing_guard import install_document_processing_guard
 from app.security.ocr_guard import install_ocr_guard
+from app.services.readiness import readiness_snapshot
 from app.services.telegram_runtime import (
     install_runtime_guard,
     start_telegram_bot,
@@ -195,6 +196,16 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.get("/ready")
+def readiness_check():
+    """Dependency-aware readiness without exposing credentials or error details."""
+    snapshot = readiness_snapshot()
+    return JSONResponse(
+        status_code=200 if snapshot["status"] == "ready" else 503,
+        content=snapshot,
+    )
 
 
 app.include_router(api_router, prefix="/api/v1")

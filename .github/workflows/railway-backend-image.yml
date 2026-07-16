@@ -8,7 +8,7 @@ on:
       - "BOB-2/Dockerfile"
       - "BOB-2/railway.toml"
       - "BOB-2/backend/requirements.txt"
-      - "BOB-2/backend/app/main.py"
+      - "BOB-2/backend/app/**"
       - ".github/workflows/railway-backend-image.yml"
   pull_request:
     branches:
@@ -17,7 +17,7 @@ on:
       - "BOB-2/Dockerfile"
       - "BOB-2/railway.toml"
       - "BOB-2/backend/requirements.txt"
-      - "BOB-2/backend/app/main.py"
+      - "BOB-2/backend/app/**"
       - ".github/workflows/railway-backend-image.yml"
 
 permissions:
@@ -51,20 +51,20 @@ jobs:
             bob2-railway:test \
             -c 'from app.main import _is_railway_runtime, _validate_startup_security; assert _is_railway_runtime(); _validate_startup_security(); print("railway-production-policy-ok")'
 
-      - name: Verify migrations inside the image
+      - name: Verify Railway pre-deploy bootstrap
         run: |
           set +e
-          docker run --name bob2-migration-test \
+          docker run --name bob2-predeploy-test \
             --env APP_ENV=test \
-            --env DATABASE_URL=sqlite:////app/storage/railway-migration.db \
+            --env DATABASE_URL=sqlite:////app/storage/railway-predeploy.db \
             --env SECRET_KEY=ci-only-secret-key-that-is-longer-than-thirty-two-characters \
             --env SECRET_STORE_PROVIDER=memory \
             --env LOCAL_LLM_ENABLED=false \
             --env EXTERNAL_LLM_ENABLED=false \
             bob2-railway:test \
-            alembic upgrade head > railway-migration.log 2>&1
+            python -m app.predeploy > railway-predeploy.log 2>&1
           exit_code=$?
-          cat railway-migration.log
+          cat railway-predeploy.log
           exit "$exit_code"
 
       - name: Start the backend container
@@ -94,12 +94,45 @@ jobs:
           done
           exit 1
 
+      - name: Start production container with unavailable database
+        run: |
+          docker run --detach --name bob2-railway-prod-test \
+            --publish 8001:8001 \
+            --env APP_ENV=production \
+            --env PORT=8001 \
+            --env RAILWAY_ENVIRONMENT_ID=ci-railway-environment \
+            --env RAILWAY_SERVICE_ID=ci-railway-service \
+            --env DATABASE_URL=postgresql://guardian:strong-password@127.0.0.1:9/guardianai \
+            --env SECRET_KEY=ci-only-secret-key-that-is-longer-than-thirty-two-characters \
+            --env FRONTEND_ORIGIN=https://frontend.example.test \
+            --env TELEGRAM_BOT_ENABLED=false \
+            --env LOCAL_LLM_ENABLED=false \
+            --env EXTERNAL_LLM_ENABLED=false \
+            bob2-railway:test
+
+      - name: Verify production liveness is database-independent
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8001/health >/dev/null 2>&1; then
+              curl --fail --silent --show-error http://127.0.0.1:8001/health
+              exit 0
+            fi
+            if ! docker inspect --format '{{.State.Running}}' bob2-railway-prod-test | grep -q true; then
+              exit 1
+            fi
+            sleep 2
+          done
+          exit 1
+
       - name: Capture container diagnostics
         if: always()
         run: |
           docker inspect --format 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{.State.Error}} finished_at={{.State.FinishedAt}}' \
             bob2-railway-test > railway-container-state.txt 2>&1 || true
           docker logs bob2-railway-test > railway-container.log 2>&1 || true
+          docker inspect --format 'status={{.State.Status}} exit_code={{.State.ExitCode}} oom_killed={{.State.OOMKilled}} error={{.State.Error}} finished_at={{.State.FinishedAt}}' \
+            bob2-railway-prod-test > railway-production-state.txt 2>&1 || true
+          docker logs bob2-railway-prod-test > railway-production.log 2>&1 || true
 
       - name: Upload failure diagnostics
         if: failure()
@@ -107,21 +140,26 @@ jobs:
         with:
           name: railway-backend-failure-${{ github.run_id }}
           path: |
-            railway-migration.log
+            railway-predeploy.log
             railway-container.log
             railway-container-state.txt
+            railway-production.log
+            railway-production-state.txt
           if-no-files-found: warn
           retention-days: 3
 
       - name: Show container diagnostics on failure
         if: failure()
         run: |
-          cat railway-migration.log || true
+          cat railway-predeploy.log || true
           cat railway-container-state.txt || true
           cat railway-container.log || true
+          cat railway-production-state.txt || true
+          cat railway-production.log || true
 
       - name: Stop test containers
         if: always()
         run: |
           docker rm --force bob2-railway-test || true
-          docker rm --force bob2-migration-test || true
+          docker rm --force bob2-railway-prod-test || true
+          docker rm --force bob2-predeploy-test || true

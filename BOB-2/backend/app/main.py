@@ -43,7 +43,9 @@ _RAILWAY_DELEGATED_SECURITY_ERRORS = {
     "TRUSTED_PROXY_IPS is required",
     "REQUIRE_HTTPS must be true",
     "REDIS_URL is required for shared authentication rate limiting",
+    "FRONTEND_ORIGIN must use https",
     "REQUIRE_MALWARE_SCAN must be true",
+    "CLAMAV_HOST is required when malware scanning is enabled",
     "SECRET_STORE_PROVIDER must be azure_key_vault in production",
     "ERP_OUTBOUND_ALLOWED_HOSTS is required",
 }
@@ -169,11 +171,10 @@ app.add_middleware(
 )
 
 if settings.is_production:
-    # An empty host list is safer than installing TrustedHostMiddleware with no
-    # accepted hosts, which would reject Railway's own health checks. Railway's
-    # edge already routes requests to the selected service. Explicit host lists
-    # are still enforced when configured.
-    if settings.trusted_host_list:
+    # Railway's edge owns host routing and its internal health probe may use a
+    # service-local Host value that is intentionally different from the public
+    # domain. Outside Railway, explicit production host validation is preserved.
+    if settings.trusted_host_list and not _is_railway_runtime():
         app.add_middleware(
             TrustedHostMiddleware,
             allowed_hosts=settings.trusted_host_list,

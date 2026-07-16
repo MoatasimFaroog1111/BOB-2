@@ -9,6 +9,8 @@ from app.models.core import AuditLog
 from app.security.audit_chain import AuditLogMutationError, GENESIS_HASH
 from app.services.audit_integrity import verify_tenant_audit_chain
 
+SEED_USER_ID = 1
+
 
 def _event(organization_id: int, action: str, user_id: int | None = None) -> AuditLog:
     return AuditLog(
@@ -23,8 +25,8 @@ def _event(organization_id: int, action: str, user_id: int | None = None) -> Aud
 
 
 def test_audit_events_are_chained_per_tenant(db, seeded_user):
-    first = _event(1, "audit-first", seeded_user["id"])
-    second = _event(1, "audit-second", seeded_user["id"])
+    first = _event(1, "audit-first", SEED_USER_ID)
+    second = _event(1, "audit-second", SEED_USER_ID)
     db.add_all([first, second])
     db.commit()
     db.refresh(first)
@@ -115,7 +117,7 @@ def test_database_triggers_block_direct_update_and_delete(db):
 
 
 def test_integrity_endpoint_is_permission_and_tenant_scoped(client, seeded_user, db):
-    event = _event(1, "integrity-endpoint", seeded_user["id"])
+    event = _event(1, "integrity-endpoint", SEED_USER_ID)
     db.add(event)
     db.commit()
 
@@ -146,7 +148,8 @@ def test_verifier_detects_out_of_band_chain_corruption(db):
     db.commit()
 
     # Drop the local SQLite trigger only inside this isolated test to emulate a
-    # privileged out-of-band actor. Verification must still detect the change.
+    # privileged out-of-band actor. The database fixture recreates the complete
+    # schema and triggers before the next test.
     if db.bind.dialect.name != "sqlite":
         return
     db.execute(text("DROP TRIGGER trg_audit_logs_no_update"))

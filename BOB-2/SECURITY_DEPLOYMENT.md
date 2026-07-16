@@ -109,6 +109,13 @@ Alert on:
 
 Retain audit and security logs in append-only or centrally controlled storage with access restricted to authorized administrators and auditors.
 
+The central `audit_logs` table is database-enforced append-only after migration
+`b4e2c7d9f130` and uses an independent tamper-evident SHA-256 chain per
+organization. Authorized auditors can verify the current tenant at
+`GET /api/v1/system/audit-integrity`. Export or checkpoint the resulting chain
+head to independently controlled WORM storage because a database superuser is
+outside the in-database trust boundary.
+
 ## 8. Telegram production shutdown control
 
 Until every later Telegram hardening stage is completed, production must keep:

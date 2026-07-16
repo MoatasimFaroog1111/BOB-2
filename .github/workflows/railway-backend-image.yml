@@ -1,0 +1,71 @@
+name: Railway backend image
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "BOB-2/Dockerfile"
+      - "BOB-2/railway.toml"
+      - "BOB-2/backend/requirements.txt"
+      - ".github/workflows/railway-backend-image.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "BOB-2/Dockerfile"
+      - "BOB-2/railway.toml"
+      - "BOB-2/backend/requirements.txt"
+      - ".github/workflows/railway-backend-image.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-backend-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the Railway backend image
+        run: docker build --file BOB-2/Dockerfile --tag bob2-railway:test BOB-2
+
+      - name: Start the backend container
+        run: |
+          docker run --detach --name bob2-railway-test \
+            --publish 8000:8000 \
+            --env APP_ENV=test \
+            --env PORT=8000 \
+            --env DATABASE_URL=sqlite:///./railway-smoke.db \
+            --env SECRET_KEY=ci-only-secret-key-that-is-longer-than-thirty-two-characters \
+            --env SECRET_STORE_PROVIDER=memory \
+            --env LOCAL_LLM_ENABLED=false \
+            --env EXTERNAL_LLM_ENABLED=false \
+            bob2-railway:test
+
+      - name: Verify the Railway health endpoint
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:8000/health; then
+              exit 0
+            fi
+            if ! docker inspect --format '{{.State.Running}}' bob2-railway-test | grep -q true; then
+              docker logs bob2-railway-test
+              exit 1
+            fi
+            sleep 2
+          done
+          docker logs bob2-railway-test
+          exit 1
+
+      - name: Show container logs on failure
+        if: failure()
+        run: docker logs bob2-railway-test || true
+
+      - name: Stop test container
+        if: always()
+        run: docker rm --force bob2-railway-test || true

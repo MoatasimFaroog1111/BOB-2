@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,33 +10,30 @@ REPLACEMENT = "datetime.now(timezone.utc).replace(tzinfo=None)"
 
 
 def ensure_timezone_import(content: str) -> str:
-    single = re.compile(r"^from datetime import ([^\n(]+)$", re.MULTILINE)
-    match = single.search(content)
-    if match:
-        names = [part.strip() for part in match.group(1).split(",")]
-        if "timezone" not in names:
-            names.append("timezone")
-        replacement = "from datetime import " + ", ".join(names)
-        return content[: match.start()] + replacement + content[match.end() :]
+    if "from datetime import timezone" in content:
+        return content
 
-    multiline = re.compile(
-        r"^from datetime import \((?P<body>.*?)^\)",
-        re.MULTILINE | re.DOTALL,
-    )
-    match = multiline.search(content)
-    if match:
-        body = match.group("body")
-        imported = {
-            item.strip()
-            for item in body.replace("\n", "").split(",")
-            if item.strip()
-        }
-        if "timezone" in imported:
-            return content
-        replacement = "from datetime import (" + body + "    timezone,\n)"
-        return content[: match.start()] + replacement + content[match.end() :]
+    future_line = "from __future__ import annotations\n"
+    if future_line in content:
+        return content.replace(
+            future_line,
+            future_line + "\nfrom datetime import timezone\n",
+            1,
+        )
 
-    raise RuntimeError("datetime.utcnow usage without supported datetime import")
+    # A second import from the same module is valid and avoids rewriting
+    # parenthesized or aliased import statements.
+    if content.startswith(('"""', "'''")):
+        quote = content[:3]
+        closing = content.find(quote, 3)
+        if closing >= 0:
+            insertion = closing + 3
+            return (
+                content[:insertion]
+                + "\n\nfrom datetime import timezone"
+                + content[insertion:]
+            )
+    return "from datetime import timezone\n\n" + content
 
 
 def migrate(path: Path) -> bool:
@@ -52,6 +48,7 @@ def migrate(path: Path) -> bool:
     )
     if "datetime.utcnow" in content:
         raise RuntimeError(f"Unmigrated datetime.utcnow reference in {path}")
+    compile(content, str(path), "exec")
     path.write_text(content, encoding="utf-8")
     return True
 

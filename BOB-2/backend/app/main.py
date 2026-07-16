@@ -11,6 +11,7 @@ from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.logging import configure_logging
+from app.core.runtime_security import validate_runtime_security as validate_runtime_environment
 from app.middleware.audit import AuditLogMiddleware
 from app.middleware.request_size import RequestSizeLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
@@ -68,7 +69,7 @@ def _validate_startup_security() -> None:
         )
 
     try:
-        settings.validate_runtime_security()
+        validate_runtime_environment(settings)
     except ValueError as exc:
         if not _is_railway_runtime():
             raise

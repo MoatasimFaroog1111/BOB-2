@@ -55,17 +55,28 @@ jobs:
               exit 0
             fi
             if ! docker inspect --format '{{.State.Running}}' bob2-railway-test | grep -q true; then
-              docker logs bob2-railway-test
               exit 1
             fi
             sleep 2
           done
-          docker logs bob2-railway-test
           exit 1
+
+      - name: Capture container diagnostics
+        if: always()
+        run: docker logs bob2-railway-test > railway-container.log 2>&1 || true
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: railway-backend-failure-${{ github.run_id }}
+          path: railway-container.log
+          if-no-files-found: error
+          retention-days: 3
 
       - name: Show container logs on failure
         if: failure()
-        run: docker logs bob2-railway-test || true
+        run: cat railway-container.log || true
 
       - name: Stop test container
         if: always()

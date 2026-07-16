@@ -1,4 +1,5 @@
 import logging
+import os
 
 from sqlalchemy.orm import Session
 
@@ -8,6 +9,15 @@ from app.models.core import Organization, User
 from app.security.auth import hash_password, validate_password_strength
 
 logger = logging.getLogger(__name__)
+
+
+def _default_organization_names() -> tuple[str, str]:
+    name = os.getenv("GUARDIAN_DEFAULT_ORG_NAME", "").strip() or "Default Organization"
+    legal_name = (
+        os.getenv("GUARDIAN_DEFAULT_ORG_LEGAL_NAME", "").strip()
+        or "Default Organization"
+    )
+    return name, legal_name
 
 
 def seed_db(db: Session) -> None:
@@ -20,10 +30,11 @@ def seed_db(db: Session) -> None:
     org = db.query(Organization).filter(Organization.id == 1).first()
     if not org:
         logger.info("Seeding default organization...")
+        org_name, org_legal_name = _default_organization_names()
         org = Organization(
             id=1,
-            name="GTC International",
-            legal_name="GTC International Co.",
+            name=org_name,
+            legal_name=org_legal_name,
             country="Saudi Arabia",
             is_active=True,
         )

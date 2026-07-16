@@ -36,6 +36,7 @@ jobs:
       DATABASE_URL: postgresql+psycopg2://guardian:guardian-ci-strong-password@127.0.0.1:5432/guardianai_test
       SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
       SECRET_STORE_PROVIDER: memory
+      SECRET_STORE_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       LOCAL_LLM_ENABLED: "false"
       EXTERNAL_LLM_ENABLED: "false"
       PGPASSWORD: guardian-ci-strong-password
@@ -54,7 +55,11 @@ jobs:
           test "$heads" -eq 1
       - name: Apply migrations to PostgreSQL
         run: alembic upgrade head
-      - name: Run PostgreSQL security integration tests
+      - name: Exercise encrypted secrets and tenant isolation on PostgreSQL
+        env:
+          SECRET_STORE_PROVIDER: encrypted_db
+        run: python scripts/postgresql_release_check.py
+      - name: Run security regression tests
         run: >-
           python -m pytest -q --tb=short
           tests/test_production_security_config.py
@@ -78,7 +83,7 @@ jobs:
           finally:
               db.close()
           PY
-      - name: Create encrypted-at-rest handoff backup artifact
+      - name: Create restore verification backup
         run: |
           pg_dump \
             --host=127.0.0.1 --username=guardian --dbname=guardianai_test \

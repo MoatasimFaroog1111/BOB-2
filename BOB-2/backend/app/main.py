@@ -11,7 +11,6 @@ from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.logging import configure_logging
-from app.db.seed import run_seed
 from app.middleware.audit import AuditLogMiddleware
 from app.middleware.request_size import RequestSizeLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
@@ -88,50 +87,34 @@ def _validate_startup_security() -> None:
         )
 
 
-def _run_migrations() -> None:
-    """Run Alembic migrations to ensure the database schema is up to date."""
-    try:
-        from alembic import command
-        from alembic.config import Config
-
-        alembic_ini = os.path.join(os.path.dirname(__file__), "..", "alembic.ini")
-        alembic_cfg = Config(alembic_ini)
-        alembic_cfg.set_main_option(
-            "script_location",
-            os.path.join(os.path.dirname(__file__), "..", "migrations"),
-        )
-        alembic_cfg.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-        command.upgrade(alembic_cfg, "head")
-        logger.info("Database migrations applied successfully.")
-    except Exception as exc:
-        logger.error("Failed to run migrations: %s", exc)
-        raise
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """Initialize only non-blocking runtime guards.
+
+    Database migrations and baseline seeding run through Railway's pre-deploy
+    command. They must not block Uvicorn from binding to PORT, otherwise Railway
+    can only report a generic network healthcheck failure.
+    """
     _validate_startup_security()
     install_ocr_guard()
     install_document_processing_guard()
-    _run_migrations()
-    run_seed()
-
-    # Install the compatibility patch before any legacy ERP endpoint can import
-    # the Telegram start/stop functions. All runtime entry points are therefore
-    # governed by the same fail-closed policy.
     install_runtime_guard()
-    try:
-        start_telegram_bot()
-    except Exception:
-        logger.exception("Telegram bot startup failed safely")
+
+    telegram_started = False
+    if settings.TELEGRAM_BOT_ENABLED:
+        try:
+            telegram_started = start_telegram_bot()
+        except Exception:
+            logger.exception("Telegram bot startup failed safely")
 
     try:
         yield
     finally:
-        try:
-            stop_telegram_bot(reason="application_shutdown")
-        except Exception:
-            logger.exception("Telegram bot shutdown failed")
+        if settings.TELEGRAM_BOT_ENABLED or telegram_started:
+            try:
+                stop_telegram_bot(reason="application_shutdown")
+            except Exception:
+                logger.exception("Telegram bot shutdown failed")
 
 
 app = FastAPI(
@@ -171,9 +154,8 @@ app.add_middleware(
 )
 
 if settings.is_production:
-    # Railway's edge owns host routing and its internal health probe may use a
-    # service-local Host value that is intentionally different from the public
-    # domain. Outside Railway, explicit production host validation is preserved.
+    # Railway's healthcheck uses healthcheck.railway.app and the platform owns
+    # host routing. Outside Railway, explicit production host validation remains.
     if settings.trusted_host_list and not _is_railway_runtime():
         app.add_middleware(
             TrustedHostMiddleware,
@@ -181,8 +163,7 @@ if settings.is_production:
         )
 
     # Railway terminates public TLS before forwarding traffic to the container.
-    # App-level redirect middleware would redirect the platform's HTTP health
-    # probe forever, so HTTPS enforcement is delegated to Railway there.
+    # App-level redirect middleware would redirect its HTTP health probe.
     if settings.REQUIRE_HTTPS and not _is_railway_runtime():
         app.add_middleware(HTTPSRedirectMiddleware)
 

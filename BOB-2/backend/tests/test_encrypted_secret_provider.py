@@ -4,6 +4,7 @@ import base64
 import os
 
 import pytest
+from sqlalchemy.orm import sessionmaker
 
 from app.core.config import Settings, settings
 from app.models.encrypted_secret import EncryptedSecretVersion
@@ -14,6 +15,15 @@ from app.services.secret_provider_types import SecretStoreError
 
 def _key() -> str:
     return base64.b64encode(os.urandom(32)).decode("ascii")
+
+
+def _bind_provider_to_fixture(db, monkeypatch) -> None:
+    factory = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=db.get_bind(),
+    )
+    monkeypatch.setattr(provider_module, "SessionLocal", factory)
 
 
 def test_production_accepts_encrypted_db_with_exact_32_byte_key():
@@ -62,9 +72,7 @@ def test_production_rejects_invalid_encrypted_db_key(key):
 
 
 def test_encrypt_decrypt_wrong_key_and_tenant_metadata(db, monkeypatch):
-    from tests.conftest import TestingSession
-
-    monkeypatch.setattr(provider_module, "SessionLocal", TestingSession)
+    _bind_provider_to_fixture(db, monkeypatch)
     first_key = _key()
     monkeypatch.setattr(settings, "SECRET_STORE_ENCRYPTION_KEY", first_key)
     provider = EncryptedDatabaseSecretProvider()
@@ -88,9 +96,7 @@ def test_encrypt_decrypt_wrong_key_and_tenant_metadata(db, monkeypatch):
 
 
 def test_authenticated_metadata_tampering_is_rejected(db, monkeypatch):
-    from tests.conftest import TestingSession
-
-    monkeypatch.setattr(provider_module, "SessionLocal", TestingSession)
+    _bind_provider_to_fixture(db, monkeypatch)
     monkeypatch.setattr(settings, "SECRET_STORE_ENCRYPTION_KEY", _key())
     provider = EncryptedDatabaseSecretProvider()
     remote = provider.set_secret(

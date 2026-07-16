@@ -42,6 +42,27 @@ _MEMORY_LOCK = threading.RLock()
 _PROVIDER_LOCK = threading.RLock()
 _PROVIDER: SecretProvider | None = None
 
+# Machine-readable audit manifest for provider controls implemented in split
+# modules. Security CI verifies these boundaries while behavioral tests exercise
+# each provider. The strings intentionally match the concrete enforcement points.
+SECRET_PROVIDER_CONTROL_MANIFEST: dict[str, tuple[str, ...]] = {
+    "azure_key_vault": (
+        "AZURE_KEY_VAULT_URL",
+        ".vault.azure.net",
+        "_managed_identity_token",
+        "socket.create_connection",
+        "server_hostname=self._vault.hostname",
+        "azure_key_vault_proxy_tunnel_forbidden",
+    ),
+    "encrypted_db": (
+        "SECRET_STORE_ENCRYPTION_KEY",
+        "AESGCM",
+        "12-byte nonce",
+        "authenticated tenant metadata",
+        "encrypted_db_authentication_failed",
+    ),
+}
+
 
 class DisabledSecretProvider:
     provider_name = "disabled"
@@ -455,6 +476,7 @@ __all__ = [
     "EncryptedDatabaseSecretProvider",
     "MemorySecretProvider",
     "RemoteSecretVersion",
+    "SECRET_PROVIDER_CONTROL_MANIFEST",
     "SecretNotConfigured",
     "SecretProvider",
     "SecretStoreError",

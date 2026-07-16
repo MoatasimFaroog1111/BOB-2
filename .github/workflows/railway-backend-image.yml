@@ -39,7 +39,7 @@ jobs:
           set +e
           docker run --name bob2-migration-test \
             --env APP_ENV=test \
-            --env DATABASE_URL=sqlite:///./railway-migration.db \
+            --env DATABASE_URL=sqlite:////app/storage/railway-migration.db \
             --env SECRET_KEY=ci-only-secret-key-that-is-longer-than-thirty-two-characters \
             --env SECRET_STORE_PROVIDER=memory \
             --env LOCAL_LLM_ENABLED=false \
@@ -56,7 +56,7 @@ jobs:
             --publish 8000:8000 \
             --env APP_ENV=test \
             --env PORT=8000 \
-            --env DATABASE_URL=sqlite:///./railway-smoke.db \
+            --env DATABASE_URL=sqlite:////app/storage/railway-smoke.db \
             --env SECRET_KEY=ci-only-secret-key-that-is-longer-than-thirty-two-characters \
             --env SECRET_STORE_PROVIDER=memory \
             --env LOCAL_LLM_ENABLED=false \

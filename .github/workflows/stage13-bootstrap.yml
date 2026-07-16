@@ -26,3 +26,4 @@ jobs:
           python-version: "3.12"
       - name: Apply immutable audit implementation and remove bootstrap
         run: python .github/stage13_immutable_audit.py
+      # This file deletes itself after the one-shot implementation commit.

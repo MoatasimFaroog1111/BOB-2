@@ -20,6 +20,7 @@ from app.models.core import (
     User,
     VectorRecord,
 )
+from app.models.encrypted_secret import EncryptedSecretVersion
 from app.models.external_llm import ExternalLLMPolicy
 from app.models.tenant_secret import TenantSecretBinding, TenantSecretVersion
 
@@ -35,6 +36,7 @@ __all__ = [
     "AuthSession",
     "Document",
     "ERPConnection",
+    "EncryptedSecretVersion",
     "ExternalLLMPolicy",
     "ExtractedFinancialObject",
     "JournalEntryRecord",

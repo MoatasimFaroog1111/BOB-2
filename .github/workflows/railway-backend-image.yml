@@ -6,8 +6,9 @@ on:
       - main
     paths:
       - "BOB-2/Dockerfile"
+      - "BOB-2/docker-entrypoint.sh"
       - "BOB-2/railway.toml"
-      - "BOB-2/backend/requirements.txt"
+      - "BOB-2/backend/requirements*.txt"
       - "BOB-2/backend/app/**"
       - ".github/workflows/railway-backend-image.yml"
   pull_request:
@@ -15,8 +16,9 @@ on:
       - main
     paths:
       - "BOB-2/Dockerfile"
+      - "BOB-2/docker-entrypoint.sh"
       - "BOB-2/railway.toml"
-      - "BOB-2/backend/requirements.txt"
+      - "BOB-2/backend/requirements*.txt"
       - "BOB-2/backend/app/**"
       - ".github/workflows/railway-backend-image.yml"
 
@@ -42,8 +44,14 @@ jobs:
             --env APP_ENV=production \
             --env RAILWAY_ENVIRONMENT_ID=ci-railway-environment \
             --env RAILWAY_SERVICE_ID=ci-railway-service \
+            --env RAILWAY_VOLUME_MOUNT_PATH=/data \
+            --env STORAGE_DIR=/data/storage \
             --env DATABASE_URL=postgresql://guardian:strong-password@database.internal:5432/guardianai \
+            --env REDIS_URL=redis://:strong-password@redis.internal:6379/0 \
             --env SECRET_KEY=ci-only-secret-key-that-is-longer-than-thirty-two-characters \
+            --env SECRET_STORE_PROVIDER=azure_key_vault \
+            --env AZURE_KEY_VAULT_URL=https://guardian-production.vault.azure.net \
+            --env ERP_OUTBOUND_ALLOWED_HOSTS=odoo.example.test \
             --env FRONTEND_ORIGIN=https://frontend.example.test \
             --env LOCAL_LLM_ENABLED=false \
             --env EXTERNAL_LLM_ENABLED=false \
@@ -56,7 +64,8 @@ jobs:
           set +e
           docker run --name bob2-predeploy-test \
             --env APP_ENV=test \
-            --env DATABASE_URL=sqlite:////app/storage/railway-predeploy.db \
+            --env STORAGE_DIR=/data/storage \
+            --env DATABASE_URL=sqlite:////data/storage/railway-predeploy.db \
             --env SECRET_KEY=ci-only-secret-key-that-is-longer-than-thirty-two-characters \
             --env SECRET_STORE_PROVIDER=memory \
             --env LOCAL_LLM_ENABLED=false \
@@ -73,7 +82,8 @@ jobs:
             --publish 8000:8000 \
             --env APP_ENV=test \
             --env PORT=8000 \
-            --env DATABASE_URL=sqlite:////app/storage/railway-smoke.db \
+            --env STORAGE_DIR=/data/storage \
+            --env DATABASE_URL=sqlite:////data/storage/railway-smoke.db \
             --env SECRET_KEY=ci-only-secret-key-that-is-longer-than-thirty-two-characters \
             --env SECRET_STORE_PROVIDER=memory \
             --env LOCAL_LLM_ENABLED=false \
@@ -102,8 +112,14 @@ jobs:
             --env PORT=8001 \
             --env RAILWAY_ENVIRONMENT_ID=ci-railway-environment \
             --env RAILWAY_SERVICE_ID=ci-railway-service \
+            --env RAILWAY_VOLUME_MOUNT_PATH=/data \
+            --env STORAGE_DIR=/data/storage \
             --env DATABASE_URL=postgresql://guardian:strong-password@127.0.0.1:9/guardianai \
+            --env REDIS_URL=redis://:strong-password@127.0.0.1:9/0 \
             --env SECRET_KEY=ci-only-secret-key-that-is-longer-than-thirty-two-characters \
+            --env SECRET_STORE_PROVIDER=azure_key_vault \
+            --env AZURE_KEY_VAULT_URL=https://guardian-production.vault.azure.net \
+            --env ERP_OUTBOUND_ALLOWED_HOSTS=odoo.example.test \
             --env FRONTEND_ORIGIN=https://frontend.example.test \
             --env TELEGRAM_BOT_ENABLED=false \
             --env LOCAL_LLM_ENABLED=false \

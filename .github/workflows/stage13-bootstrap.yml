@@ -17,7 +17,6 @@ concurrency:
 
 jobs:
   implement:
-    if: ${{ github.actor != 'guardian-stage13-bot' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -27,5 +26,20 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Apply immutable audit implementation and remove bootstrap
-        run: python .github/stage13_immutable_audit.py
+      - name: Apply immutable audit implementation and capture failures
+        shell: bash
+        run: |
+          set +e
+          python .github/stage13_immutable_audit.py > /tmp/stage13-bootstrap.log 2>&1
+          status=$?
+          cat /tmp/stage13-bootstrap.log
+          if [ "$status" -ne 0 ]; then
+            git reset --hard HEAD
+            cp /tmp/stage13-bootstrap.log .github/stage13-bootstrap-error.txt
+            git config user.name guardian-stage13-bot
+            git config user.email guardian-stage13-bot@users.noreply.github.com
+            git add .github/stage13-bootstrap-error.txt
+            git commit -m "record stage 13 bootstrap failure"
+            git push origin HEAD:agent/immutable-audit-chain
+            exit "$status"
+          fi

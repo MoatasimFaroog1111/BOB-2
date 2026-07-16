@@ -8,6 +8,7 @@ from app.models.bank_reconciliation import BankReconciliationAuditLog
 from app.models.core import (
     ApprovalRequest,
     AuditLog,
+    AuditLogChainHead,
     AuthSession,
     Document,
     ERPConnection,
@@ -30,6 +31,7 @@ __all__ = [
     "BankReconciliationAuditLog",
     "ApprovalRequest",
     "AuditLog",
+    "AuditLogChainHead",
     "AuthSession",
     "Document",
     "ERPConnection",

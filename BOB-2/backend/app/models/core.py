@@ -16,13 +16,24 @@ from sqlalchemy import (
     UniqueConstraint,
     event,
     inspect,
+    insert,
     select,
+    text,
     update,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.db.database import Base
 from app.models.mixins import TimestampMixin
+from app.security.audit_chain import (
+    AUDIT_EVENT_VERSION,
+    GENESIS_HASH,
+    AuditLogMutationError,
+    advisory_lock_id,
+    audit_scope_key,
+    compute_audit_event_hash,
+    utc_naive,
+)
 
 
 class Organization(Base, TimestampMixin):
@@ -173,8 +184,21 @@ class Document(Base, TimestampMixin):
     classification: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
+class AuditLogChainHead(Base):
+    __tablename__ = "audit_log_chain_heads"
+
+    scope_key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    last_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    last_hash: Mapped[str] = mapped_column(String(64), nullable=False, default=GENESIS_HASH)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class AuditLog(Base, TimestampMixin):
     __tablename__ = "audit_logs"
+    __table_args__ = (
+        UniqueConstraint("scope_key", "sequence_number", name="uq_audit_logs_scope_sequence"),
+        UniqueConstraint("event_hash", name="uq_audit_logs_event_hash"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     organization_id: Mapped[int | None] = mapped_column(ForeignKey("organizations.id"), nullable=True)
@@ -184,6 +208,11 @@ class AuditLog(Base, TimestampMixin):
     entity_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
     ip_address: Mapped[str | None] = mapped_column(String(100), nullable=True)
     details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    scope_key: Mapped[str] = mapped_column(String(80), index=True, nullable=False)
+    sequence_number: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    previous_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    event_hash: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    event_version: Mapped[int] = mapped_column(Integer, nullable=False, default=AUDIT_EVENT_VERSION)
 
 
 class ApprovalRequest(Base, TimestampMixin):
@@ -252,6 +281,136 @@ class VectorRecord(Base, TimestampMixin):
     document: Mapped[str] = mapped_column(Text, nullable=False)
     record_metadata: Mapped[dict] = mapped_column(JSON, nullable=False)
     embedding: Mapped[list[float]] = mapped_column(JSON, nullable=False)
+
+
+def _create_audit_append_only_triggers(target, connection, **_kwargs) -> None:
+    if connection.dialect.name == "sqlite":
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_audit_logs_no_update
+            BEFORE UPDATE ON audit_logs
+            BEGIN
+                SELECT RAISE(ABORT, 'audit_logs is append-only');
+            END
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER IF NOT EXISTS trg_audit_logs_no_delete
+            BEFORE DELETE ON audit_logs
+            BEGIN
+                SELECT RAISE(ABORT, 'audit_logs is append-only');
+            END
+            """
+        )
+    elif connection.dialect.name == "postgresql":
+        connection.exec_driver_sql(
+            """
+            CREATE OR REPLACE FUNCTION guardian_prevent_audit_log_mutation()
+            RETURNS trigger AS $$
+            BEGIN
+                RAISE EXCEPTION 'audit_logs is append-only';
+            END;
+            $$ LANGUAGE plpgsql
+            """
+        )
+        connection.exec_driver_sql("DROP TRIGGER IF EXISTS trg_audit_logs_no_update ON audit_logs")
+        connection.exec_driver_sql("DROP TRIGGER IF EXISTS trg_audit_logs_no_delete ON audit_logs")
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER trg_audit_logs_no_update
+            BEFORE UPDATE ON audit_logs
+            FOR EACH ROW EXECUTE FUNCTION guardian_prevent_audit_log_mutation()
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            CREATE TRIGGER trg_audit_logs_no_delete
+            BEFORE DELETE ON audit_logs
+            FOR EACH ROW EXECUTE FUNCTION guardian_prevent_audit_log_mutation()
+            """
+        )
+
+
+event.listen(AuditLog.__table__, "after_create", _create_audit_append_only_triggers)
+
+
+@event.listens_for(Session, "before_flush")
+def _seal_and_protect_audit_events(session: Session, _flush_context, _instances) -> None:
+    for obj in tuple(session.deleted):
+        if isinstance(obj, AuditLog):
+            raise AuditLogMutationError("Audit events are append-only and cannot be deleted.")
+    for obj in tuple(session.dirty):
+        if isinstance(obj, AuditLog) and session.is_modified(obj, include_collections=True):
+            raise AuditLogMutationError("Audit events are append-only and cannot be updated.")
+
+    pending = [obj for obj in tuple(session.new) if isinstance(obj, AuditLog)]
+    if not pending:
+        return
+
+    grouped: dict[str, list[AuditLog]] = {}
+    for audit_event in pending:
+        scope_key = audit_scope_key(audit_event.organization_id)
+        grouped.setdefault(scope_key, []).append(audit_event)
+
+    connection = session.connection()
+    head_table = AuditLogChainHead.__table__
+    for scope_key in sorted(grouped):
+        if connection.dialect.name == "postgresql":
+            connection.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                {"lock_id": advisory_lock_id(scope_key)},
+            )
+
+        head = connection.execute(
+            select(head_table.c.last_sequence, head_table.c.last_hash)
+            .where(head_table.c.scope_key == scope_key)
+            .with_for_update()
+        ).first()
+        sequence = int(head.last_sequence) if head else 0
+        previous_hash = head.last_hash if head else GENESIS_HASH
+        now = utc_naive()
+
+        for audit_event in grouped[scope_key]:
+            sequence += 1
+            created_at = utc_naive(audit_event.created_at or now)
+            audit_event.created_at = created_at
+            audit_event.updated_at = audit_event.updated_at or created_at
+            audit_event.scope_key = scope_key
+            audit_event.sequence_number = sequence
+            audit_event.previous_hash = previous_hash
+            audit_event.event_version = AUDIT_EVENT_VERSION
+            audit_event.event_hash = compute_audit_event_hash(
+                scope_key=scope_key,
+                sequence_number=sequence,
+                previous_hash=previous_hash,
+                organization_id=audit_event.organization_id,
+                user_id=audit_event.user_id,
+                action=audit_event.action,
+                entity_type=audit_event.entity_type,
+                entity_id=audit_event.entity_id,
+                ip_address=audit_event.ip_address,
+                details=audit_event.details,
+                created_at=created_at,
+                event_version=AUDIT_EVENT_VERSION,
+            )
+            previous_hash = audit_event.event_hash
+
+        if head:
+            connection.execute(
+                update(head_table)
+                .where(head_table.c.scope_key == scope_key)
+                .values(last_sequence=sequence, last_hash=previous_hash, updated_at=now)
+            )
+        else:
+            connection.execute(
+                insert(head_table).values(
+                    scope_key=scope_key,
+                    last_sequence=sequence,
+                    last_hash=previous_hash,
+                    updated_at=now,
+                )
+            )
 
 
 _USER_SECURITY_FIELDS = (

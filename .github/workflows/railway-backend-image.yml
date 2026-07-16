@@ -34,6 +34,22 @@ jobs:
       - name: Build the Railway backend image
         run: docker build --quiet --file BOB-2/Dockerfile --tag bob2-railway:test BOB-2
 
+      - name: Verify migrations inside the image
+        run: |
+          set +e
+          docker run --name bob2-migration-test \
+            --env APP_ENV=test \
+            --env DATABASE_URL=sqlite:///./railway-migration.db \
+            --env SECRET_KEY=ci-only-secret-key-that-is-longer-than-thirty-two-characters \
+            --env SECRET_STORE_PROVIDER=memory \
+            --env LOCAL_LLM_ENABLED=false \
+            --env EXTERNAL_LLM_ENABLED=false \
+            bob2-railway:test \
+            alembic upgrade head > railway-migration.log 2>&1
+          exit_code=$?
+          cat railway-migration.log
+          exit "$exit_code"
+
       - name: Start the backend container
         run: |
           docker run --detach --name bob2-railway-test \
@@ -74,17 +90,21 @@ jobs:
         with:
           name: railway-backend-failure-${{ github.run_id }}
           path: |
+            railway-migration.log
             railway-container.log
             railway-container-state.txt
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 3
 
       - name: Show container diagnostics on failure
         if: failure()
         run: |
+          cat railway-migration.log || true
           cat railway-container-state.txt || true
           cat railway-container.log || true
 
-      - name: Stop test container
+      - name: Stop test containers
         if: always()
-        run: docker rm --force bob2-railway-test || true
+        run: |
+          docker rm --force bob2-railway-test || true
+          docker rm --force bob2-migration-test || true

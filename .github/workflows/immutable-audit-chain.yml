@@ -38,8 +38,29 @@ jobs:
       - name: Install hash-locked dependencies
         run: pip install --quiet --require-hashes -r requirements.lock
       - name: Compile immutable audit paths
-        run: python -m compileall -q app/security/audit_chain.py app/services/audit_integrity.py app/models/core.py tests/test_immutable_audit_chain.py
+        run: |
+          python -m compileall -q \
+            app/security/audit_chain.py \
+            app/services/audit_integrity.py \
+            app/models/core.py \
+            scripts/check_immutable_audit_chain.py \
+            tests/test_immutable_audit_chain.py
       - name: Enforce immutable audit source boundaries
         run: python scripts/check_immutable_audit_chain.py
       - name: Run immutable audit regressions
-        run: pytest -q tests/test_immutable_audit_chain.py tests/test_security.py tests/test_tenant_isolation_completion.py
+        shell: bash
+        run: |
+          set -o pipefail
+          pytest -q \
+            tests/test_immutable_audit_chain.py \
+            tests/test_security.py \
+            tests/test_tenant_isolation_completion.py \
+            2>&1 | tee immutable-audit-pytest.log
+      - name: Upload immutable audit failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: immutable-audit-failure-${{ github.run_id }}
+          path: BOB-2/backend/immutable-audit-pytest.log
+          if-no-files-found: warn
+          retention-days: 3

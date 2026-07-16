@@ -58,7 +58,12 @@ jobs:
       - name: Exercise encrypted secrets and tenant isolation on PostgreSQL
         env:
           SECRET_STORE_PROVIDER: encrypted_db
-        run: python scripts/postgresql_release_check.py
+        run: |
+          set +e
+          python scripts/postgresql_release_check.py > /tmp/postgresql-release-check.log 2>&1
+          status=$?
+          cat /tmp/postgresql-release-check.log
+          exit "$status"
       - name: Run security regression tests
         run: >-
           python -m pytest -q --tb=short
@@ -106,11 +111,13 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg2://guardian:guardian-ci-strong-password@127.0.0.1:5432/guardianai_restored
         run: python scripts/check_immutable_audit_chain.py
-      - name: Upload backup checksum only
+      - name: Upload PostgreSQL verification evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: postgresql-backup-verification-${{ github.run_id }}
-          path: /tmp/guardianai.backup.sha256
-          if-no-files-found: error
+          path: |
+            /tmp/postgresql-release-check.log
+            /tmp/guardianai.backup.sha256
+          if-no-files-found: warn
           retention-days: 7

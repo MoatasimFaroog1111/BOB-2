@@ -23,7 +23,11 @@ def replace_function(
     if replacement.strip() in content:
         return
     pattern = re.compile(rf"(?ms)^{start_pattern}.*?(?=^{end_pattern})")
-    updated, count = pattern.subn(replacement.rstrip() + "\n\n", content, count=1)
+    updated, count = pattern.subn(
+        lambda _match: replacement.rstrip() + "\n\n",
+        content,
+        count=1,
+    )
     if count != 1:
         raise RuntimeError(f"Expected function boundary not found in {path}: {start_pattern}")
     compile(updated, str(path), "exec")

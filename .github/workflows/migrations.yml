@@ -41,7 +41,7 @@ jobs:
       - name: Verify one Alembic head
         run: |
           test "$(alembic heads | grep -c '(head)')" -eq 1
-          alembic heads | grep 'e8b3c0f6a142'
+          alembic heads | grep 'f9c4d1a7b253'
       - name: Prepare parent schema with legacy audit data
         run: |
           rm -f ci-migrations.db
@@ -205,7 +205,7 @@ jobs:
           finally:
               connection.close()
           PY
-      - name: Re-upgrade through encrypted secrets and MFA
+      - name: Re-upgrade through encrypted secrets, MFA and offboarding
         run: |
           alembic upgrade head
           python - <<'PY'
@@ -215,7 +215,7 @@ jobs:
           try:
               assert connection.execute(
                   "SELECT version_num FROM alembic_version"
-              ).fetchone()[0] == "e8b3c0f6a142"
+              ).fetchone()[0] == "f9c4d1a7b253"
               tables = {
                   row[0]
                   for row in connection.execute(
@@ -227,6 +227,7 @@ jobs:
                   "encrypted_secret_versions",
                   "user_mfa_settings",
                   "mfa_challenges",
+                  "organization_offboarding_cases",
               } <= tables
               event = connection.execute(
                   """

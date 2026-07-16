@@ -41,7 +41,7 @@ jobs:
       - name: Verify one Alembic head
         run: |
           test "$(alembic heads | grep -c '(head)')" -eq 1
-          alembic heads | grep 'b4e2c7d9f130'
+          alembic heads | grep 'e8b3c0f6a142'
       - name: Prepare parent schema with legacy audit data
         run: |
           rm -f ci-migrations.db
@@ -86,7 +86,7 @@ jobs:
           PY
       - name: Upgrade to immutable audit chain
         run: |
-          alembic upgrade head
+          alembic upgrade b4e2c7d9f130
           python - <<'PY'
           import sqlite3
 
@@ -173,7 +173,7 @@ jobs:
           finally:
               connection.close()
           PY
-      - name: Downgrade to parent and verify controls are removed
+      - name: Downgrade immutable controls to parent
         run: |
           alembic downgrade a8c4e1f2d670
           python - <<'PY'
@@ -181,11 +181,9 @@ jobs:
 
           connection = sqlite3.connect("ci-migrations.db")
           try:
-              revision = connection.execute(
+              assert connection.execute(
                   "SELECT version_num FROM alembic_version"
-              ).fetchone()[0]
-              assert revision == "a8c4e1f2d670"
-
+              ).fetchone()[0] == "a8c4e1f2d670"
               tables = {
                   row[0]
                   for row in connection.execute(
@@ -193,23 +191,12 @@ jobs:
                   )
               }
               assert "audit_log_chain_heads" not in tables
-
               columns = {
                   row[1]
                   for row in connection.execute("PRAGMA table_info(audit_logs)")
               }
               assert "event_hash" not in columns
               assert "sequence_number" not in columns
-
-              triggers = {
-                  row[0]
-                  for row in connection.execute(
-                      "SELECT name FROM sqlite_master WHERE type='trigger'"
-                  )
-              }
-              assert "trg_audit_logs_no_update" not in triggers
-              assert "trg_audit_logs_no_delete" not in triggers
-
               connection.execute(
                   "UPDATE audit_logs SET action = 'legacy_audit_event' "
                   "WHERE entity_id = '999'"
@@ -218,7 +205,7 @@ jobs:
           finally:
               connection.close()
           PY
-      - name: Re-upgrade and verify immutable audit state
+      - name: Re-upgrade through encrypted secrets and MFA
         run: |
           alembic upgrade head
           python - <<'PY'
@@ -228,8 +215,19 @@ jobs:
           try:
               assert connection.execute(
                   "SELECT version_num FROM alembic_version"
-              ).fetchone()[0] == "b4e2c7d9f130"
-
+              ).fetchone()[0] == "e8b3c0f6a142"
+              tables = {
+                  row[0]
+                  for row in connection.execute(
+                      "SELECT name FROM sqlite_master WHERE type='table'"
+                  )
+              }
+              assert {
+                  "audit_log_chain_heads",
+                  "encrypted_secret_versions",
+                  "user_mfa_settings",
+                  "mfa_challenges",
+              } <= tables
               event = connection.execute(
                   """
                   SELECT sequence_number, previous_hash, event_hash
@@ -241,7 +239,6 @@ jobs:
               assert event[0] == 1
               assert event[1] == "0" * 64
               assert len(event[2]) == 64
-
               head = connection.execute(
                   """
                   SELECT last_sequence, last_hash

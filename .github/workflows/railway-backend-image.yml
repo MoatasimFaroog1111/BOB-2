@@ -8,6 +8,7 @@ on:
       - "BOB-2/Dockerfile"
       - "BOB-2/railway.toml"
       - "BOB-2/backend/requirements.txt"
+      - "BOB-2/backend/app/main.py"
       - ".github/workflows/railway-backend-image.yml"
   pull_request:
     branches:
@@ -16,6 +17,7 @@ on:
       - "BOB-2/Dockerfile"
       - "BOB-2/railway.toml"
       - "BOB-2/backend/requirements.txt"
+      - "BOB-2/backend/app/main.py"
       - ".github/workflows/railway-backend-image.yml"
 
 permissions:
@@ -33,6 +35,21 @@ jobs:
 
       - name: Build the Railway backend image
         run: docker build --quiet --file BOB-2/Dockerfile --tag bob2-railway:test BOB-2
+
+      - name: Verify Railway production startup policy
+        run: |
+          docker run --rm \
+            --env APP_ENV=production \
+            --env RAILWAY_ENVIRONMENT_ID=ci-railway-environment \
+            --env RAILWAY_SERVICE_ID=ci-railway-service \
+            --env DATABASE_URL=postgresql://guardian:strong-password@database.internal:5432/guardianai \
+            --env SECRET_KEY=ci-only-secret-key-that-is-longer-than-thirty-two-characters \
+            --env FRONTEND_ORIGIN=https://frontend.example.test \
+            --env LOCAL_LLM_ENABLED=false \
+            --env EXTERNAL_LLM_ENABLED=false \
+            --entrypoint python \
+            bob2-railway:test \
+            -c 'from app.main import _is_railway_runtime, _validate_startup_security; assert _is_railway_runtime(); _validate_startup_security(); print("railway-production-policy-ok")'
 
       - name: Verify migrations inside the image
         run: |

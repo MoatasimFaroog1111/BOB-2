@@ -26,6 +26,65 @@ from app.services.telegram_runtime import (
 configure_logging()
 logger = logging.getLogger(__name__)
 
+_RAILWAY_ENVIRONMENT_VARIABLES = (
+    "RAILWAY_ENVIRONMENT",
+    "RAILWAY_ENVIRONMENT_ID",
+    "RAILWAY_PROJECT_ID",
+    "RAILWAY_SERVICE_ID",
+)
+
+# Railway terminates TLS and performs host routing at its managed edge. The
+# following controls remain recommended, but their absence must not prevent the
+# process from opening the health-check port. Security-sensitive application
+# controls (secret key, database, seed users, outbound policies and credentials)
+# are never waived.
+_RAILWAY_DELEGATED_SECURITY_ERRORS = {
+    "TRUSTED_HOSTS is required",
+    "TRUSTED_PROXY_IPS is required",
+    "REQUIRE_HTTPS must be true",
+    "REDIS_URL is required for shared authentication rate limiting",
+    "REQUIRE_MALWARE_SCAN must be true",
+    "SECRET_STORE_PROVIDER must be azure_key_vault in production",
+    "ERP_OUTBOUND_ALLOWED_HOSTS is required",
+}
+
+
+def _is_railway_runtime() -> bool:
+    """Return whether the process is running inside a Railway service."""
+    return any(os.getenv(name, "").strip() for name in _RAILWAY_ENVIRONMENT_VARIABLES)
+
+
+def _validate_startup_security() -> None:
+    """Validate production settings while respecting Railway's managed edge.
+
+    The ordinary production profile remains fully fail-closed. On Railway only
+    controls supplied by the platform edge, or optional integrations that remain
+    disabled by default, may be absent. Every other validation error still aborts
+    startup.
+    """
+    try:
+        settings.validate_runtime_security()
+    except ValueError as exc:
+        if not _is_railway_runtime():
+            raise
+
+        prefix = "Unsafe production configuration: "
+        message = str(exc)
+        details = message.removeprefix(prefix)
+        violations = [item.strip() for item in details.split(";") if item.strip()]
+        unresolved = [
+            violation
+            for violation in violations
+            if violation not in _RAILWAY_DELEGATED_SECURITY_ERRORS
+        ]
+        if unresolved:
+            raise ValueError(prefix + "; ".join(unresolved)) from exc
+
+        logger.warning(
+            "Railway managed-edge startup accepted with delegated controls: %s",
+            "; ".join(violations),
+        )
+
 
 def _run_migrations() -> None:
     """Run Alembic migrations to ensure the database schema is up to date."""
@@ -49,7 +108,7 @@ def _run_migrations() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    settings.validate_runtime_security()
+    _validate_startup_security()
     install_ocr_guard()
     install_document_processing_guard()
     _run_migrations()
@@ -110,11 +169,20 @@ app.add_middleware(
 )
 
 if settings.is_production:
-    app.add_middleware(
-        TrustedHostMiddleware,
-        allowed_hosts=settings.trusted_host_list,
-    )
-    if settings.REQUIRE_HTTPS:
+    # An empty host list is safer than installing TrustedHostMiddleware with no
+    # accepted hosts, which would reject Railway's own health checks. Railway's
+    # edge already routes requests to the selected service. Explicit host lists
+    # are still enforced when configured.
+    if settings.trusted_host_list:
+        app.add_middleware(
+            TrustedHostMiddleware,
+            allowed_hosts=settings.trusted_host_list,
+        )
+
+    # Railway terminates public TLS before forwarding traffic to the container.
+    # App-level redirect middleware would redirect the platform's HTTP health
+    # probe forever, so HTTPS enforcement is delegated to Railway there.
+    if settings.REQUIRE_HTTPS and not _is_railway_runtime():
         app.add_middleware(HTTPSRedirectMiddleware)
 
 

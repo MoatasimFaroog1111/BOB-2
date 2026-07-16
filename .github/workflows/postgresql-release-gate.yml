@@ -60,7 +60,7 @@ jobs:
           SECRET_STORE_PROVIDER: encrypted_db
         run: |
           set +e
-          python scripts/postgresql_release_check.py > /tmp/postgresql-release-check.log 2>&1
+          python -m scripts.postgresql_release_check > /tmp/postgresql-release-check.log 2>&1
           status=$?
           cat /tmp/postgresql-release-check.log
           exit "$status"

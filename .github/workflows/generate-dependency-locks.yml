@@ -1,0 +1,49 @@
+name: Generate dependency locks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "BOB-2/backend/requirements.txt"
+      - "BOB-2/backend/requirements.runtime.txt"
+      - ".github/workflows/generate-dependency-locks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: BOB-2/backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install pip-tools
+        run: python -m pip install --upgrade pip pip-tools
+      - name: Generate hash-locked dependency files
+        run: |
+          pip-compile --allow-unsafe --generate-hashes --output-file=requirements.lock requirements.txt
+          pip-compile --allow-unsafe --generate-hashes --output-file=requirements.runtime.lock requirements.runtime.txt
+      - name: Verify clean installs
+        run: |
+          python -m venv /tmp/guardian-full
+          /tmp/guardian-full/bin/pip install --require-hashes -r requirements.lock
+          /tmp/guardian-full/bin/pip check
+          python -m venv /tmp/guardian-runtime
+          /tmp/guardian-runtime/bin/pip install --require-hashes -r requirements.runtime.lock
+          /tmp/guardian-runtime/bin/pip check
+      - name: Upload generated locks
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-python-locks
+          path: |
+            BOB-2/backend/requirements.lock
+            BOB-2/backend/requirements.runtime.lock
+          if-no-files-found: error
+          retention-days: 3

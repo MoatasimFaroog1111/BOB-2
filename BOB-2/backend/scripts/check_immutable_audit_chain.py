@@ -28,7 +28,7 @@ for marker in (
     "previous_hash",
     "event_hash",
     "event_version",
-    "@event.listens_for(Session, "before_flush")",
+    '@event.listens_for(Session, "before_flush")',
     "AuditLogMutationError",
     "pg_advisory_xact_lock",
     "trg_audit_logs_no_update",
@@ -49,7 +49,10 @@ require('@router.get("/audit-integrity")' in system, "Audit-integrity endpoint m
 require('require_permission("view_audit_logs")' in system, "Audit-integrity endpoint permission missing")
 require('revision = "b4e2c7d9f130"' in migration, "Audit migration revision changed")
 require('down_revision = "a8c4e1f2d670"' in migration, "Audit migration parent changed")
-require("UPDATE audit_logs" in migration and "DELETE ON audit_logs" in migration, "Append-only migration triggers missing")
+require(
+    "UPDATE audit_logs" in migration and "DELETE ON audit_logs" in migration,
+    "Append-only migration triggers missing",
+)
 for marker in (
     "test_database_triggers_block_direct_update_and_delete",
     "test_verifier_detects_out_of_band_chain_corruption",

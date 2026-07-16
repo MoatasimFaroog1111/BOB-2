@@ -53,7 +53,7 @@ jobs:
           set -o pipefail
           pytest -q \
             tests/test_immutable_audit_chain.py \
-            tests/test_security.py \
+            tests/test_auth.py \
             tests/test_tenant_isolation_completion.py \
             2>&1 | tee immutable-audit-pytest.log
       - name: Upload immutable audit failure report

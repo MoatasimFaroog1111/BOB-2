@@ -29,33 +29,36 @@ jobs:
       - name: Exclude workflow files from the one-shot app commit
         shell: bash
         run: |
-          python - <<'PY'
+          set -o pipefail
+          python - <<'PY' 2>&1 | tee stage13-prepatch.log
           from pathlib import Path
 
-          path = Path('.github/stage13_immutable_audit.py')
-          text = path.read_text(encoding='utf-8')
-          text = text.replace(
-              '    write(REPO / ".github" / "workflows" / "immutable-audit-chain.yml", WORKFLOW)\n',
-              '',
-          )
-          text = text.replace(
-              '    write(REPO / ".github" / "workflows" / "migrations.yml", MIGRATION_WORKFLOW)\n',
-              '',
-          )
-          text = text.replace(
-              '    bootstrap = REPO / ".github" / "workflows" / "stage13-bootstrap.yml"\n'
-              '    if bootstrap.exists():\n'
-              '        bootstrap.unlink()\n',
-              '',
-          )
-          text = text.replace(
-              '    Path(__file__).unlink()\n',
-              '    bootstrap_log = REPO / "stage13-bootstrap.log"\n'
-              '    if bootstrap_log.exists():\n'
-              '        bootstrap_log.unlink()\n'
-              '    Path(__file__).unlink()\n',
-          )
-          path.write_text(text, encoding='utf-8')
+          path = Path(".github/stage13_immutable_audit.py")
+          lines = path.read_text(encoding="utf-8").splitlines()
+          output = []
+          index = 0
+          while index < len(lines):
+              line = lines[index]
+              if "immutable-audit-chain.yml" in line and "write(REPO" in line:
+                  index += 1
+                  continue
+              if "workflows\" / \"migrations.yml" in line and "write(REPO" in line:
+                  index += 1
+                  continue
+              if "bootstrap = REPO" in line and "stage13-bootstrap.yml" in line:
+                  index += 3
+                  continue
+              if line.strip() == "Path(__file__).unlink()":
+                  output.extend(
+                      [
+                          '    bootstrap_log = REPO / "stage13-bootstrap.log"',
+                          "    if bootstrap_log.exists():",
+                          "        bootstrap_log.unlink()",
+                      ]
+                  )
+              output.append(line)
+              index += 1
+          path.write_text("\n".join(output) + "\n", encoding="utf-8")
           PY
       - name: Apply immutable audit implementation
         shell: bash
@@ -67,6 +70,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: stage13-bootstrap-error-${{ github.run_id }}
-          path: stage13-bootstrap.log
-          if-no-files-found: error
+          path: |
+            stage13-prepatch.log
+            stage13-bootstrap.log
+          if-no-files-found: warn
           retention-days: 3

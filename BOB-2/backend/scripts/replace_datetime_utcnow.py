@@ -11,14 +11,33 @@ REPLACEMENT = "datetime.now(timezone.utc).replace(tzinfo=None)"
 
 
 def ensure_timezone_import(content: str) -> str:
-    pattern = re.compile(r"^from datetime import ([^\n]+)$", re.MULTILINE)
-    match = pattern.search(content)
-    if not match:
-        raise RuntimeError("datetime.utcnow usage without from datetime import")
-    names = [part.strip() for part in match.group(1).split(",")]
-    if "timezone" not in names:
-        names.append("timezone")
-    return content[: match.start()] + "from datetime import " + ", ".join(names) + content[match.end() :]
+    single = re.compile(r"^from datetime import ([^\n(]+)$", re.MULTILINE)
+    match = single.search(content)
+    if match:
+        names = [part.strip() for part in match.group(1).split(",")]
+        if "timezone" not in names:
+            names.append("timezone")
+        replacement = "from datetime import " + ", ".join(names)
+        return content[: match.start()] + replacement + content[match.end() :]
+
+    multiline = re.compile(
+        r"^from datetime import \((?P<body>.*?)^\)",
+        re.MULTILINE | re.DOTALL,
+    )
+    match = multiline.search(content)
+    if match:
+        body = match.group("body")
+        imported = {
+            item.strip()
+            for item in body.replace("\n", "").split(",")
+            if item.strip()
+        }
+        if "timezone" in imported:
+            return content
+        replacement = "from datetime import (" + body + "    timezone,\n)"
+        return content[: match.start()] + replacement + content[match.end() :]
+
+    raise RuntimeError("datetime.utcnow usage without supported datetime import")
 
 
 def migrate(path: Path) -> bool:

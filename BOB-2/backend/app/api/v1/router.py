@@ -21,6 +21,7 @@ from app.api.v1.erp_partners import router as erp_partners_router
 from app.api.v1.journal import router as journal_router
 from app.api.v1.journal_entry_actions import router as journal_entry_actions_router
 from app.api.v1.llm_admin import router as llm_admin_router
+from app.api.v1.mfa import router as mfa_router
 from app.api.v1.system import router as system_router
 from app.api.v1.telegram_admin import router as telegram_admin_router
 from app.api.v1.telegram_approvals import router as telegram_approvals_router
@@ -32,6 +33,7 @@ financial_access = [Depends(enforce_financial_route_permission)]
 
 api_router.include_router(system_router, prefix="/system", tags=["System"])
 api_router.include_router(auth_router, prefix="/auth", tags=["Security"])
+api_router.include_router(mfa_router, prefix="/auth", tags=["Multi-Factor Authentication"])
 api_router.include_router(journal_router, prefix="/journal", tags=["Journal Entries"])
 api_router.include_router(
     telegram_admin_router,

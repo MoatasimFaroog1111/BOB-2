@@ -1,5 +1,5 @@
 import hmac
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -11,10 +11,16 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.database import get_db
 from app.models.core import AuditLog, AuthSession, Organization, User
+from app.models.mfa_challenge import MFAChallenge
 from app.models.session_security import AuthSessionRotationState
+from app.models.user_mfa import UserMFASetting
+from app.security.audit_chain import utc_naive
 from app.security.auth import (
+    MFA_PENDING_EXPIRE_MINUTES,
     create_access_token,
+    create_mfa_pending_token,
     create_refresh_token,
+    decode_mfa_pending_token,
     decode_refresh_token,
     hash_password,
     hash_token,
@@ -29,9 +35,9 @@ from app.security.rate_limiter import (
     login_rate_limiter,
 )
 from app.security.roles import UserRole, role_has_permission
+from app.services.auth_session_issuer import issue_full_session
 from app.services.refresh_token_rotation import (
     claim_refresh_generation,
-    create_rotation_state,
     load_rotation_state_for_update,
     record_session_event,
     revoke_family,
@@ -59,11 +65,13 @@ class LoginRequest(BaseModel):
 
 
 class LoginResponse(BaseModel):
-    access_token: str
-    refresh_token: str
+    access_token: str | None = None
+    refresh_token: str | None = None
     token_type: str = "bearer"
     role: str
     expires_in: int
+    mfa_required: bool = False
+    mfa_token: str | None = None
 
 
 class RefreshTokenRequest(BaseModel):
@@ -119,7 +127,10 @@ def _record_attempts(identifiers: list[str], success: bool) -> None:
         login_rate_limiter.record_attempt(identifier, success=success)
 
 
-def _active_organization(db: Session, organization_id: int | None) -> Organization | None:
+def _active_organization(
+    db: Session,
+    organization_id: int | None,
+) -> Organization | None:
     if organization_id is None:
         return None
     return (
@@ -129,6 +140,57 @@ def _active_organization(db: Session, organization_id: int | None) -> Organizati
             Organization.is_active.is_(True),
         )
         .first()
+    )
+
+
+def _create_mfa_challenge(
+    db: Session,
+    *,
+    request: Request,
+    user: User,
+    organization: Organization,
+) -> LoginResponse:
+    security_version = int(user.security_version or 1)
+    token = create_mfa_pending_token(
+        subject=user.email,
+        role=user.role,
+        user_id=user.id,
+        organization_id=organization.id,
+        security_version=security_version,
+    )
+    token_data = decode_mfa_pending_token(token)
+    db.query(MFAChallenge).filter(
+        MFAChallenge.user_id == user.id,
+        MFAChallenge.consumed_at.is_(None),
+    ).delete(synchronize_session=False)
+    db.add(
+        MFAChallenge(
+            jti_hash=hash_token(token_data["jti"]),
+            user_id=user.id,
+            organization_id=organization.id,
+            security_version=security_version,
+            device_hash=get_device_identifier(request),
+            expires_at=utc_naive()
+            + timedelta(minutes=MFA_PENDING_EXPIRE_MINUTES),
+        )
+    )
+    db.add(
+        AuditLog(
+            organization_id=organization.id,
+            user_id=user.id,
+            action="mfa_challenge_created",
+            entity_type="user_security",
+            entity_id=str(user.id),
+            ip_address=get_client_identifier(request),
+            details={"expires_in_seconds": MFA_PENDING_EXPIRE_MINUTES * 60},
+        )
+    )
+    db.commit()
+    return LoginResponse(
+        role=user.role,
+        expires_in=MFA_PENDING_EXPIRE_MINUTES * 60,
+        mfa_required=True,
+        mfa_token=token,
     )
 
 
@@ -153,65 +215,30 @@ def login(
         raise _invalid_credentials()
 
     _record_attempts(identifiers, success=True)
-
-    security_version = int(user.security_version or 1)
-    session_id = new_token_id()
-    family_id = new_token_id()
-    access_jti = new_token_id()
-    refresh_jti = new_token_id()
-    request_ip = get_client_identifier(request)
-    request_user_agent = request.headers.get("User-Agent", "")[:512] or None
-
-    access_token = create_access_token(
-        subject=user.email,
-        role=user.role,
-        session_id=session_id,
-        jti=access_jti,
-        security_version=security_version,
+    mfa = (
+        db.query(UserMFASetting)
+        .filter(
+            UserMFASetting.user_id == user.id,
+            UserMFASetting.organization_id == organization.id,
+            UserMFASetting.enabled.is_(True),
+        )
+        .first()
     )
-    refresh_token = create_refresh_token(
-        subject=user.email,
-        session_id=session_id,
-        family_id=family_id,
-        jti=refresh_jti,
-        security_version=security_version,
-        rotation_generation=0,
-    )
-
-    auth_session = AuthSession(
-        id=session_id,
-        family_id=family_id,
-        user_id=user.id,
-        organization_id=organization.id,
-        user_security_version=security_version,
-        access_jti=access_jti,
-        refresh_jti=refresh_jti,
-        refresh_token_hash=hash_token(refresh_token),
-        expires_at=datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
-        ip_address=request_ip,
-        user_agent=request_user_agent,
-    )
-    db.add(auth_session)
-    create_rotation_state(db, session_id=session_id, family_id=family_id)
-    record_session_event(
-        db,
-        event_type="session_created",
-        outcome="success",
-        organization_id=organization.id,
-        user_id=user.id,
-        session_id=session_id,
-        family_id=family_id,
-        generation=0,
-        ip_address=request_ip,
-        user_agent=request_user_agent,
-    )
-    db.commit()
+    if mfa is not None:
+        return _create_mfa_challenge(
+            db,
+            request=request,
+            user=user,
+            organization=organization,
+        )
 
     return LoginResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
-        role=user.role,
-        expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        **issue_full_session(
+            db,
+            request=request,
+            user=user,
+            organization=organization,
+        )
     )
 
 
@@ -278,7 +305,7 @@ def refresh_access_token(
 
     if (
         auth_session.revoked_at is not None
-        or auth_session.expires_at <= datetime.utcnow()
+        or auth_session.expires_at <= utc_naive()
         or not token_matches
     ):
         db.rollback()
@@ -331,7 +358,7 @@ def refresh_access_token(
         )
         raise _invalid_refresh()
 
-    now = datetime.utcnow()
+    now = utc_naive()
     new_generation = presented_generation + 1
     new_access_jti = new_token_id()
     new_refresh_jti = new_token_id()
@@ -471,7 +498,7 @@ def logout(
     if session_id:
         auth_session = db.query(AuthSession).filter(AuthSession.id == session_id).first()
         if auth_session and auth_session.revoked_at is None:
-            auth_session.revoked_at = datetime.utcnow()
+            auth_session.revoked_at = utc_naive()
             auth_session.revocation_reason = "user_logout"
             rotation_state = db.query(AuthSessionRotationState).filter(
                 AuthSessionRotationState.session_id == session_id

@@ -19,6 +19,8 @@ def main() -> None:
     dependencies = source("app/security/dependencies.py")
     token_security = source("app/security/auth.py")
     auth_api = source("app/api/v1/auth.py")
+    session_issuer = source("app/services/auth_session_issuer.py")
+    auth_flow = auth_api + "\n" + session_issuer
     models = source("app/models/core.py")
     migration = source(
         "migrations/versions/f3a9d2c7b410_add_live_role_session_security.py"
@@ -65,8 +67,8 @@ def main() -> None:
 
     require(
         "login snapshots organization and security version",
-        "organization_id=organization.id" in auth_api
-        and "user_security_version=security_version" in auth_api,
+        "organization_id=organization.id" in auth_flow
+        and "user_security_version=security_version" in auth_flow,
     )
     require(
         "refresh validates current security state",

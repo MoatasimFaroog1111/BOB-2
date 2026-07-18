@@ -80,6 +80,39 @@ def test_production_rejects_missing_security_control(field, value, expected):
         settings.validate_runtime_security()
 
 
+def test_railway_without_production_env_refuses_startup(monkeypatch):
+    from app import main as main_module
+
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT", "production")
+    monkeypatch.setattr(main_module.settings, "APP_ENV", "local")
+
+    with pytest.raises(ValueError, match="APP_ENV=production"):
+        main_module._validate_startup_security()
+
+
+def test_railway_without_redis_refuses_startup(monkeypatch):
+    from app import main as main_module
+
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_ID", "railway-production")
+    monkeypatch.setattr(main_module, "settings", _production_settings(REDIS_URL=""))
+
+    with pytest.raises(ValueError, match="REDIS_URL"):
+        main_module._validate_startup_security()
+
+
+def test_railway_only_delegates_managed_edge_and_temporary_clamav_controls():
+    from app import main as main_module
+
+    assert main_module._RAILWAY_DELEGATED_SECURITY_ERRORS == {
+        "TRUSTED_HOSTS is required",
+        "TRUSTED_PROXY_IPS is required",
+        "REQUIRE_HTTPS must be true",
+        "FRONTEND_ORIGIN must use https",
+        "REQUIRE_MALWARE_SCAN must be true",
+        "CLAMAV_HOST is required when malware scanning is enabled",
+    }
+
+
 def test_production_rejects_non_loopback_local_llm():
     settings = _production_settings(
         LOCAL_LLM_ENABLED=True,

@@ -11,11 +11,13 @@ from starlette.middleware.httpsredirect import HTTPSRedirectMiddleware
 from app.api.v1.router import api_router
 from app.core.config import settings
 from app.core.logging import configure_logging
+from app.core.runtime_security import validate_runtime_security as validate_runtime_environment
 from app.middleware.audit import AuditLogMiddleware
 from app.middleware.request_size import RequestSizeLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.security.document_processing_guard import install_document_processing_guard
 from app.security.ocr_guard import install_ocr_guard
+from app.services.readiness import readiness_snapshot
 from app.services.telegram_runtime import (
     install_runtime_guard,
     start_telegram_bot,
@@ -32,21 +34,19 @@ _RAILWAY_ENVIRONMENT_VARIABLES = (
     "RAILWAY_SERVICE_ID",
 )
 
-# Railway terminates TLS and performs host routing at its managed edge. The
-# following controls remain recommended, but their absence must not prevent the
-# process from opening the health-check port. Security-sensitive application
-# controls (secret key, database, seed users, outbound policies and credentials)
-# are never waived.
+# Railway terminates TLS and performs host routing at its managed edge. Only
+# controls that are genuinely supplied by that edge may be delegated. Redis,
+# secret storage, database, ERP egress and all other application controls stay
+# fail-closed on Railway exactly as they do on every other production runtime.
 _RAILWAY_DELEGATED_SECURITY_ERRORS = {
     "TRUSTED_HOSTS is required",
     "TRUSTED_PROXY_IPS is required",
     "REQUIRE_HTTPS must be true",
-    "REDIS_URL is required for shared authentication rate limiting",
     "FRONTEND_ORIGIN must use https",
+    # TODO(security): remove both malware-scanning exceptions when the Railway
+    # ClamAV private service is deployed and verified by the release workflow.
     "REQUIRE_MALWARE_SCAN must be true",
     "CLAMAV_HOST is required when malware scanning is enabled",
-    "SECRET_STORE_PROVIDER must be azure_key_vault in production",
-    "ERP_OUTBOUND_ALLOWED_HOSTS is required",
 }
 
 
@@ -59,12 +59,18 @@ def _validate_startup_security() -> None:
     """Validate production settings while respecting Railway's managed edge.
 
     The ordinary production profile remains fully fail-closed. On Railway only
-    controls supplied by the platform edge, or optional integrations that remain
-    disabled by default, may be absent. Every other validation error still aborts
-    startup.
+    controls supplied by the platform edge, or the explicitly documented
+    temporary malware-scanning integration, may be absent. Every other
+    validation error still aborts startup.
     """
+    if _is_railway_runtime() and not settings.is_production:
+        raise ValueError(
+            "Railway runtime requires APP_ENV=production; refusing to start "
+            "with development security defaults."
+        )
+
     try:
-        settings.validate_runtime_security()
+        validate_runtime_environment(settings)
     except ValueError as exc:
         if not _is_railway_runtime():
             raise
@@ -190,6 +196,16 @@ def health_check():
         "status": "healthy",
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@app.get("/ready")
+def readiness_check():
+    """Dependency-aware readiness without exposing credentials or error details."""
+    snapshot = readiness_snapshot()
+    return JSONResponse(
+        status_code=200 if snapshot["status"] == "ready" else 503,
+        content=snapshot,
+    )
 
 
 app.include_router(api_router, prefix="/api/v1")

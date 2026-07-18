@@ -1,5 +1,4 @@
 import "./globals.css";
-import { Cairo, Outfit } from "next/font/google";
 import { connection } from "next/server";
 
 import AuthGate from "@/components/auth/AuthGate";
@@ -10,17 +9,10 @@ import { MainNavigation } from "@/components/layout/MainNavigation";
 import { CompanyProvider } from "@/lib/CompanyContext";
 import { LanguageProvider } from "@/lib/LanguageContext";
 
-const cairo = Cairo({
-  subsets: ["arabic"],
-  weight: ["300", "400", "600", "700", "800"],
-  variable: "--font-cairo",
-});
-
-const outfit = Outfit({
-  subsets: ["latin"],
-  weight: ["300", "400", "600", "700", "800"],
-  variable: "--font-outfit",
-});
+const localFontVariables = {
+  "--font-cairo": "Tahoma, Arial, sans-serif",
+  "--font-outfit": '"Segoe UI", Arial, sans-serif',
+} as React.CSSProperties;
 
 export default async function RootLayout({
   children,
@@ -32,7 +24,7 @@ export default async function RootLayout({
   await connection();
 
   return (
-    <html lang="ar" dir="rtl" className={`${cairo.variable} ${outfit.variable}`}>
+    <html lang="ar" dir="rtl" style={localFontVariables}>
       <body className="h-screen overflow-hidden">
         <LanguageProvider>
           <AuthGate>

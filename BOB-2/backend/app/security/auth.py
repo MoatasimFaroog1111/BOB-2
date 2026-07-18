@@ -12,6 +12,7 @@ from app.core.config import settings
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
+MFA_PENDING_EXPIRE_MINUTES = 5
 
 
 def validate_password_strength(password: str) -> tuple[bool, str]:
@@ -127,6 +128,30 @@ def create_refresh_token(
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
 
 
+def create_mfa_pending_token(
+    *,
+    subject: str,
+    role: str,
+    user_id: int,
+    organization_id: int,
+    security_version: int,
+) -> str:
+    now = datetime.now(timezone.utc)
+    payload: dict[str, object] = {
+        "sub": subject,
+        "role": role,
+        "uid": int(user_id),
+        "oid": int(organization_id),
+        "sv": int(security_version),
+        "exp": now + timedelta(minutes=MFA_PENDING_EXPIRE_MINUTES),
+        "iat": now,
+        "nbf": now,
+        "jti": new_token_id(),
+        "type": "mfa_pending",
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
+
+
 def _decode_token(token: str, expected_type: str) -> dict:
     try:
         payload = jwt.decode(
@@ -160,3 +185,16 @@ def decode_access_token(token: str) -> dict:
 
 def decode_refresh_token(token: str) -> dict:
     return _decode_token(token, "refresh")
+
+
+def decode_mfa_pending_token(token: str) -> dict:
+    payload = _decode_token(token, "mfa_pending")
+    for claim in ("uid", "oid", "sv"):
+        try:
+            value = int(payload.get(claim))
+        except (TypeError, ValueError) as exc:
+            raise PyJWTError(f"Invalid {claim} claim") from exc
+        if value <= 0:
+            raise PyJWTError(f"Invalid {claim} claim")
+        payload[claim] = value
+    return payload

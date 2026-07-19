@@ -52,7 +52,7 @@ jobs:
           SECRET_STORE_PROVIDER: memory
         run: >-
           python -m pytest -q --tb=short
-          tests/test_file_validation.py
+          tests/test_security_hardening.py
           tests/test_bank_reconciliation.py
           tests/test_bank_reconciliation_full.py
           tests/test_bank_reconciliation_hardening.py

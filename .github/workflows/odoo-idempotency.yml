@@ -1,0 +1,48 @@
+name: Odoo posting idempotency
+
+on:
+  pull_request:
+    paths:
+      - "BOB-2/backend/app/api/v1/bank_posting_v2.py"
+      - "BOB-2/backend/tests/test_bank_posting_idempotency.py"
+      - "BOB-2/backend/requirements.lock"
+      - ".github/workflows/odoo-idempotency.yml"
+  push:
+    branches: [main]
+    paths:
+      - "BOB-2/backend/app/api/v1/bank_posting_v2.py"
+      - "BOB-2/backend/tests/test_bank_posting_idempotency.py"
+      - "BOB-2/backend/requirements.lock"
+      - ".github/workflows/odoo-idempotency.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: odoo-idempotency-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: BOB-2/backend
+    env:
+      APP_ENV: test
+      DATABASE_URL: sqlite:///./idempotency-ci.db
+      SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+      SECRET_STORE_PROVIDER: memory
+      LOCAL_LLM_ENABLED: "false"
+      EXTERNAL_LLM_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: BOB-2/backend/requirements.lock
+      - name: Install hash-locked dependencies
+        run: pip install --quiet --require-hashes -r requirements.lock
+      - name: Prove retry idempotency contract without Odoo
+        run: pytest -q tests/test_bank_posting_idempotency.py

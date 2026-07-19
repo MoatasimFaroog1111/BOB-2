@@ -75,15 +75,15 @@ Copy `.env.example` to `.env` in the project root and configure:
 
 > **Security note:** In production, always set `SECRET_KEY` to a strong random value. Generate one with: `openssl rand -hex 64`
 
-## Default Seed User
+## Initial Owner Provisioning
 
-On first startup the backend seeds a default owner account:
+Production does **not** create a default owner account and the application does
+not ship with a default password. Provision the first owner through the approved
+deployment procedure and secret store. Keep `GUARDIAN_SEED_EMAIL` and
+`GUARDIAN_SEED_PASSWORD` empty in production after provisioning.
 
-- **Email:** `owner@guardian.local`
-- **Password:** value of `GUARDIAN_SEED_PASSWORD` env var, or `Owner@Seed#2026!`
-- **Role:** `owner`
-
-Change this password immediately after first login.
+Never publish seed credentials in documentation, source control, images, or
+deployment logs.
 
 ## Features
 
@@ -137,7 +137,7 @@ This creates:
 
 ```bash
 cd BOB-2/backend
-DATABASE_URL="sqlite:///./local_accounting_ai.db" SECRET_KEY="local-secret-key-for-dev-1234567890abcdef" python -m uvicorn app.main:app --reload --port 8000
+APP_ENV=local DATABASE_URL="sqlite:///./local_accounting_ai.db" SECRET_KEY="local-secret-key-for-dev-1234567890abcdef" python -m uvicorn app.main:app --reload --port 8000
 ```
 
 ### Run frontend
@@ -148,6 +148,20 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 npm run dev
 ```
 
 Open `/accounting-ai`, paste extracted OCR/accounting text, choose the source type, and run analysis. The page shows document classification, semantic matches, a draft journal-entry suggestion, confidence scores, explanations, and approve/reject buttons. Approval only stores review status; it does not post entries to ERP automatically.
+
+## Product Boundaries
+
+- GuardianAI assists authorized finance professionals; it does not replace
+  accounting judgment or customer approval controls.
+- The current production integration target is Odoo. SAP and Oracle are not
+  advertised as supported until dedicated connectors pass integration testing.
+- The current release is not an independently certified ZATCA e-invoicing
+  solution.
+- Production financial posting requires an authorized human approval and an
+  approved customer UAT sign-off.
+- Closed-source commercial release remains blocked until the third-party PDF
+  dependency licensing finding in `release/THIRD_PARTY_LICENSE_REVIEW.md` is
+  resolved with retained evidence.
 
 ### Test the AI matching flow
 

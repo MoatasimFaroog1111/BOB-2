@@ -47,7 +47,7 @@ def replace_once(path: Path, old: str, new: str) -> None:
 
 def migrate_requirements(path: Path) -> None:
     content = path.read_text(encoding="utf-8")
-    replacement = "pypdf==6.14.2\npdfplumber==0.11.10\npypdfium2==5.12.0"
+    replacement = "pypdf==6.14.2\npdfplumber==0.11.10\npypdfium2==5.12.1"
     if replacement in content and "PyMuPDF==" not in content:
         return
     if "PyMuPDF==1.28.0" not in content:

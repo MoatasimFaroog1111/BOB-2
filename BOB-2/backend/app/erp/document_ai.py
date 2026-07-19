@@ -23,34 +23,36 @@ class GuardianDocumentAI:
 
     def _extract_pdf_text(self, path: Path) -> str:
         try:
-            import fitz
+            from pypdf import PdfReader
 
-            text_parts = []
-            doc = fitz.open(str(path))
-
-            for page in doc:
-                text_parts.append(page.get_text())
-
+            reader = PdfReader(str(path), strict=True)
+            if reader.is_encrypted:
+                return "OCR_ERROR: encrypted PDF is not supported"
+            text_parts = [(page.extract_text() or "") for page in reader.pages]
             text = "\n".join(text_parts).strip()
-
             if text:
                 return text
 
-            # Scanned PDF fallback: Render pages to images and run OCR
-            import io
-            from PIL import Image
-            
+            import pypdfium2 as pdfium
+
             ocr_parts = []
-            for page in doc:
-                try:
-                    pix = page.get_pixmap(dpi=150)
-                    img_data = pix.tobytes("png")
-                    img = Image.open(io.BytesIO(img_data))
-                    page_text = self._ocr_image(img)
-                    ocr_parts.append(page_text)
-                except Exception as page_err:
-                    print(f"Error OCR on page: {page_err}")
-            
+            document = pdfium.PdfDocument(str(path))
+            try:
+                for page_index in range(len(document)):
+                    page = document[page_index]
+                    bitmap = None
+                    try:
+                        bitmap = page.render(scale=150 / 72)
+                        image = bitmap.to_pil()
+                        ocr_parts.append(self._ocr_image(image))
+                    except Exception as page_err:
+                        print(f"Error OCR on page: {page_err}")
+                    finally:
+                        if bitmap is not None:
+                            bitmap.close()
+                        page.close()
+            finally:
+                document.close()
             return "\n".join(ocr_parts).strip()
 
         except Exception as e:

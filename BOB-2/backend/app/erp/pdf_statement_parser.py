@@ -108,28 +108,32 @@ def _line_cells(line: list[tuple[float, float, str]]) -> dict:
 
 def _group_pdf_lines(doc) -> list[tuple[int, float, list[tuple[float, float, str]]]]:
     lines: list[tuple[int, float, list[tuple[float, float, str]]]] = []
-    for page_no, page in enumerate(doc, 1):
-        words = page.get_text("words", sort=True) or []
+    for page_no, page in enumerate(doc.pages, 1):
+        words = page.extract_words(
+            x_tolerance=1,
+            y_tolerance=4.5,
+            keep_blank_chars=False,
+            use_text_flow=False,
+        ) or []
         current: list[tuple[float, float, str]] = []
         current_y: Optional[float] = None
-        for item in words:
-            if len(item) < 5:
-                continue
-            x0, y0, x1, _y1, text = item[:5]
-            text = _digits(str(text or "")).strip()
+        for word in words:
+            text = _digits(str(word.get("text", ""))).strip()
             if not text:
                 continue
-            if current_y is None or abs(float(y0) - current_y) <= 4.5:
-                current.append((float(x0), float(x1), text))
-                current_y = float(y0) if current_y is None else current_y
+            x0 = float(word.get("x0", 0.0))
+            x1 = float(word.get("x1", x0))
+            y0 = float(word.get("top", 0.0))
+            if current_y is None or abs(y0 - current_y) <= 4.5:
+                current.append((x0, x1, text))
+                current_y = y0 if current_y is None else current_y
             else:
                 lines.append((page_no, current_y, sorted(current, key=lambda item: item[0])))
-                current = [(float(x0), float(x1), text)]
-                current_y = float(y0)
+                current = [(x0, x1, text)]
+                current_y = y0
         if current:
             lines.append((page_no, current_y or 0.0, sorted(current, key=lambda item: item[0])))
     return lines
-
 
 def _is_summary_or_header(text: str) -> bool:
     if any(word in text for word in SUMMARY_WORDS):
@@ -209,9 +213,9 @@ def _build_transaction(current: dict, row_number: int, make_txn: Callable):
 
 
 def parse_pdf_statement(file_path: str, make_txn: Callable, ocr_image_to_text: Callable) -> List[object]:
-    import fitz
+    import pdfplumber
 
-    doc = fitz.open(file_path)
+    doc = pdfplumber.open(file_path)
     transactions: list[object] = []
     current: Optional[dict] = None
     pending_balance: Optional[float] = None

@@ -135,23 +135,21 @@ def validate_xlsx_archive(content: bytes) -> None:
 
 def validate_pdf(content: bytes) -> None:
     try:
-        import fitz
+        from pypdf import PdfReader
 
-        document = fitz.open(stream=content, filetype="pdf")
-        try:
-            if document.is_encrypted:
-                raise FileValidationError("Encrypted PDF files are not accepted")
-            if document.page_count > settings.MAX_PDF_PAGES:
-                raise FileValidationError(
-                    f"PDF exceeds the maximum of {settings.MAX_PDF_PAGES} pages"
-                )
-        finally:
-            document.close()
+        reader = PdfReader(io.BytesIO(content), strict=True)
+        if reader.is_encrypted:
+            raise FileValidationError("Encrypted PDF files are not accepted")
+        if len(reader.pages) > settings.MAX_PDF_PAGES:
+            raise FileValidationError(
+                f"PDF exceeds the maximum of {settings.MAX_PDF_PAGES} pages"
+            )
+        for page in reader.pages:
+            _ = page.mediabox
     except FileValidationError:
         raise
     except Exception as exc:
         raise FileValidationError("Invalid or corrupted PDF file") from exc
-
 
 def validate_image(content: bytes) -> None:
     try:

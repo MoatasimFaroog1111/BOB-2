@@ -20,7 +20,7 @@ jobs:
         working-directory: BOB-2/backend
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -39,7 +39,7 @@ jobs:
           /tmp/guardian-runtime/bin/pip install --require-hashes -r requirements.runtime.lock
           /tmp/guardian-runtime/bin/pip check
       - name: Upload generated locks
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: generated-python-locks
           path: |

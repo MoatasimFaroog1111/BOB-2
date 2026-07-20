@@ -30,7 +30,7 @@ jobs:
       EXTERNAL_LLM_ENABLED: "false"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -58,7 +58,7 @@ jobs:
             2>&1 | tee immutable-audit-pytest.log
       - name: Upload immutable audit failure report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: immutable-audit-failure-${{ github.run_id }}
           path: BOB-2/backend/immutable-audit-pytest.log

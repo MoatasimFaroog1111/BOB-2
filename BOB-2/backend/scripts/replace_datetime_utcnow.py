@@ -37,7 +37,7 @@ def ensure_timezone_import(content: str) -> str:
 
 
 def migrate(path: Path) -> bool:
-    content = path.read_text(encoding="utf-8")
+    content = path.read_text(encoding="utf-8").lstrip("\ufeff")
     if "datetime.utcnow" not in content:
         return False
     content = ensure_timezone_import(content)
@@ -45,6 +45,10 @@ def migrate(path: Path) -> bool:
     content = content.replace(
         "default=datetime.utcnow",
         f"default=lambda: {REPLACEMENT}",
+    )
+    content = content.replace(
+        "onupdate=datetime.utcnow",
+        f"onupdate=lambda: {REPLACEMENT}",
     )
     if "datetime.utcnow" in content:
         raise RuntimeError(f"Unmigrated datetime.utcnow reference in {path}")

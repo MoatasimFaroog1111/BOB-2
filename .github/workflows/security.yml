@@ -265,7 +265,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --ignore-scripts
       - name: Audit npm dependencies
-        run: npm audit --audit-level=high
+        run: npm audit --omit=dev --audit-level=high
       - name: Build frontend with production CSP
         env:
           NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid

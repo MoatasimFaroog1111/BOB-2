@@ -1,3 +1,5 @@
+from datetime import timezone
+
 from collections.abc import AsyncIterator
 from datetime import datetime
 
@@ -29,7 +31,7 @@ def _revoke_invalid_session(
 ) -> None:
     if auth_session is None or auth_session.revoked_at is not None:
         return
-    auth_session.revoked_at = datetime.utcnow()
+    auth_session.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
     auth_session.revocation_reason = reason[:100]
     db.commit()
 
@@ -66,7 +68,7 @@ def get_current_token_payload(
     if (
         not auth_session
         or auth_session.revoked_at is not None
-        or auth_session.expires_at <= datetime.utcnow()
+        or auth_session.expires_at <= datetime.now(timezone.utc).replace(tzinfo=None)
     ):
         raise _unauthorized()
 

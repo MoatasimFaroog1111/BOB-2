@@ -1,3 +1,5 @@
+from datetime import timezone
+
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier
@@ -121,7 +123,7 @@ def test_compare_and_swap_allows_only_one_concurrent_generation_claim(tmp_path: 
                 session_id="race-session",
                 family_id="race-family",
                 expected_generation=0,
-                rotated_at=__import__("datetime").datetime.utcnow(),
+                rotated_at=__import__("datetime").datetime.now(timezone.utc).replace(tzinfo=None),
             )
             db.commit()
             return claimed

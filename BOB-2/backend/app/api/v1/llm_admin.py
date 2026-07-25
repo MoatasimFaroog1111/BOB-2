@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timezone
+
 from datetime import datetime
 from typing import Any
 
@@ -330,7 +332,7 @@ def update_external_llm_policy(
     organization_id, user_id = _organization_context(db, token_payload)
     policy = db.query(ExternalLLMPolicy).filter(ExternalLLMPolicy.organization_id == organization_id).first()
     material_change = _validate_enable_request(db, organization_id, payload, policy)
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     created = policy is None
     if policy is None:
         policy = ExternalLLMPolicy(organization_id=organization_id, policy_version=1, allowed_purposes=[])

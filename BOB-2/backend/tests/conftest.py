@@ -80,7 +80,11 @@ def seeded_user(db):
     )
     db.add(user)
     db.commit()
-    return {"email": "test@guardian-ai.com", "password": password}
+    return {
+        "email": "test@guardian-ai.com",
+        "password": password,
+        "organization_id": org.id,
+    }
 
 
 @pytest.fixture()

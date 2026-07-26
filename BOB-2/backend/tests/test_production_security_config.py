@@ -29,12 +29,12 @@ def _production_settings(**overrides) -> Settings:
         "LOCAL_LLM_ENABLED": False,
         "EXTERNAL_LLM_ENABLED": False,
         "EXTERNAL_LLM_REQUIRED_DPA_VERSION": "2026-07-v1",
-        "EXTERNAL_LLM_ALLOWED_PROVIDERS": "deepseek",
-        "EXTERNAL_LLM_ALLOWED_MODELS": "deepseek:deepseek-chat",
-        "EXTERNAL_LLM_ALLOWED_HOSTS": "api.deepseek.com",
-        "ACCOUNTING_LLM_API_URL": "https://api.deepseek.com/chat/completions",
+        "EXTERNAL_LLM_ALLOWED_PROVIDERS": "anthropic",
+        "EXTERNAL_LLM_ALLOWED_MODELS": "anthropic:claude-sonnet-4-20250514",
+        "EXTERNAL_LLM_ALLOWED_HOSTS": "api.anthropic.com",
+        "ACCOUNTING_LLM_API_URL": "https://api.anthropic.com/v1/messages",
         "ACCOUNTING_LLM_API_KEY": "",
-        "DEEPSEEK_API_KEY": "",
+        "ANTHROPIC_API_KEY": "",
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)
@@ -71,7 +71,7 @@ def test_complete_production_security_configuration_is_accepted():
         ("EXTERNAL_LLM_MAX_RESPONSE_BYTES", 1, "EXTERNAL_LLM_MAX_RESPONSE_BYTES"),
         ("EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS", 9000, "EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS"),
         ("ACCOUNTING_LLM_API_KEY", "forbidden-environment-value", "environment variables"),
-        ("DEEPSEEK_API_KEY", "forbidden-environment-value", "environment variables"),
+        ("ANTHROPIC_API_KEY", "forbidden-environment-value", "environment variables"),
     ],
 )
 def test_production_rejects_missing_security_control(field, value, expected):
@@ -130,11 +130,11 @@ def test_production_rejects_non_loopback_local_llm():
         ({"EXTERNAL_LLM_ALLOWED_HOSTS": "*"}, "exact hosts"),
         ({"EXTERNAL_LLM_REQUIRED_DPA_VERSION": ""}, "DPA_VERSION"),
         (
-            {"ACCOUNTING_LLM_API_URL": "http://api.deepseek.com/chat/completions"},
+            {"ACCOUNTING_LLM_API_URL": "http://api.anthropic.com/v1/messages"},
             "approved HTTPS",
         ),
         (
-            {"ACCOUNTING_LLM_API_URL": "https://evil.example/chat/completions"},
+            {"ACCOUNTING_LLM_API_URL": "https://evil.example/v1/messages"},
             "approved HTTPS",
         ),
         ({"SECRET_STORE_PROVIDER": "disabled"}, "Azure Key Vault"),

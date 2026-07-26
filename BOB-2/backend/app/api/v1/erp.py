@@ -2771,7 +2771,7 @@ def chat_spreadsheet(payload: ChatSpreadsheetRequest, db_session: Session = Depe
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI provider is not configured. Please set DEEPSEEK_API_KEY or start Ollama locally.",
+            detail="AI provider is not configured. Please set ANTHROPIC_API_KEY or start Ollama locally.",
         )
 
     content = result
@@ -2913,7 +2913,7 @@ def parse_manual_text(payload: ParseManualTextRequest, db_session: Session = Dep
     if result is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI provider is not configured. Please set DEEPSEEK_API_KEY or start Ollama locally.",
+            detail="AI provider is not configured. Please set ANTHROPIC_API_KEY or start Ollama locally.",
         )
 
     content = result

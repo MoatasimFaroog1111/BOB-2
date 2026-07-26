@@ -21,7 +21,7 @@ def _production_settings(**overrides):
         "SECRET_STORE_PROVIDER": "azure_key_vault",
         "AZURE_KEY_VAULT_URL": "https://guardian-app.vault.azure.net",
         "ACCOUNTING_LLM_API_KEY": "",
-        "DEEPSEEK_API_KEY": "",
+        "ANTHROPIC_API_KEY": "",
     }
     values.update(overrides)
     return Settings(**values)

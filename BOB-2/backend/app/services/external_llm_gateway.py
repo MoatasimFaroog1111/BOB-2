@@ -432,7 +432,7 @@ def _validate_external_endpoint(raw_url: str) -> _ExternalEndpoint:
         raise ExternalLLMProviderError("external_llm_endpoint_port_forbidden")
     path = parsed.path or "/"
     if (
-        not path.endswith("/chat/completions")
+        not path.endswith("/v1/messages")
         or ".." in path
         or "\\" in path
         or "%" in path
@@ -554,8 +554,8 @@ class ExternalLLMGateway:
         self.transport = transport or self._post_json
 
     def _resolve_api_key(self) -> str:
-        if self.provider == "deepseek":
-            return settings.ACCOUNTING_LLM_API_KEY or settings.DEEPSEEK_API_KEY
+        if self.provider == "anthropic":
+            return settings.ACCOUNTING_LLM_API_KEY or settings.ANTHROPIC_API_KEY
         return settings.ACCOUNTING_LLM_API_KEY
 
     def _deny(
@@ -651,17 +651,20 @@ class ExternalLLMGateway:
         )
         request_payload: dict[str, Any] = {
             "model": self.model,
+            "max_tokens": 1024,
             "temperature": temperature,
+            "system": system_prompt,
             "messages": [
-                {"role": "system", "content": system_prompt},
                 {
                     "role": "user",
                     "content": json.dumps(sanitized.payload, ensure_ascii=False),
                 },
             ],
         }
-        if response_format:
-            request_payload["response_format"] = response_format
+        # Anthropic does not accept OpenAI's response_format field. The existing
+        # system prompts already require JSON-only output, so keep this argument
+        # for caller compatibility without forwarding an unsupported parameter.
+        _ = response_format
         request_bytes = json.dumps(
             request_payload,
             ensure_ascii=False,
@@ -751,7 +754,8 @@ class ExternalLLMGateway:
                 endpoint.path,
                 body=body,
                 headers={
-                    "Authorization": f"Bearer {api_key}",
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                     "Accept-Encoding": "identity",
@@ -774,7 +778,7 @@ def current_policy_effective_enabled(policy: ExternalLLMPolicy | None) -> bool:
     model = (policy.approved_model or "").strip()
     return bool(
         settings.EXTERNAL_LLM_ENABLED
-        and (settings.ACCOUNTING_LLM_API_KEY or settings.DEEPSEEK_API_KEY)
+        and (settings.ACCOUNTING_LLM_API_KEY or settings.ANTHROPIC_API_KEY)
         and policy.external_llm_enabled
         and provider in set(_csv_items(settings.EXTERNAL_LLM_ALLOWED_PROVIDERS))
         and f"{provider}:{model}".lower()

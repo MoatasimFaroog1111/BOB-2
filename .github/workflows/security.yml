@@ -151,9 +151,9 @@ jobs:
 
           legacy_llm = Path("app/services/llm_service.py").read_text(encoding="utf-8")
           forbidden_legacy_external = (
-              "_call_deepseek",
-              "DEEPSEEK_API_URL",
-              "api.deepseek.com",
+              "_call_anthropic",
+              "ANTHROPIC_API_URL",
+              "api.anthropic.com",
               "urllib.request",
           )
           legacy_violations = [item for item in forbidden_legacy_external if item in legacy_llm]
@@ -206,7 +206,7 @@ jobs:
           assert 'router.delete("/credential")' in admin_source
           assert "put_tenant_secret" in admin_source
           assert "ACCOUNTING_LLM_API_KEY" not in admin_source
-          assert "DEEPSEEK_API_KEY" not in admin_source
+          assert "ANTHROPIC_API_KEY" not in admin_source
           assert "api_key_prefix" not in admin_source
           assert "api_key_value" not in admin_source
           PY
@@ -357,10 +357,10 @@ jobs:
           assert str(backend_environment.get("LOCAL_LLM_ENABLED", "")).lower() == "false"
           assert str(backend_environment.get("EXTERNAL_LLM_ENABLED", "")).lower() == "false"
           assert backend_environment.get("ACCOUNTING_LLM_API_KEY", "") == ""
-          assert backend_environment.get("DEEPSEEK_API_KEY", "") == ""
-          assert backend_environment.get("EXTERNAL_LLM_ALLOWED_PROVIDERS") == "deepseek"
-          assert backend_environment.get("EXTERNAL_LLM_ALLOWED_MODELS") == "deepseek:deepseek-chat"
-          assert backend_environment.get("EXTERNAL_LLM_ALLOWED_HOSTS") == "api.deepseek.com"
+          assert backend_environment.get("ANTHROPIC_API_KEY", "") == ""
+          assert backend_environment.get("EXTERNAL_LLM_ALLOWED_PROVIDERS") == "anthropic"
+          assert backend_environment.get("EXTERNAL_LLM_ALLOWED_MODELS") == "anthropic:claude-sonnet-4-20250514"
+          assert backend_environment.get("EXTERNAL_LLM_ALLOWED_HOSTS") == "api.anthropic.com"
           assert int(backend_environment.get("EXTERNAL_LLM_MAX_REQUEST_BYTES", 0)) <= 1048576
           assert int(backend_environment.get("EXTERNAL_LLM_MAX_RESPONSE_BYTES", 0)) <= 4194304
           assert int(backend_environment.get("EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS", 0)) <= 8000

@@ -202,7 +202,7 @@ class LLMAccountingReasoner:
                 temperature=0.1,
                 response_format={"type": "json_object"},
             )
-            content = response_payload["choices"][0]["message"]["content"]
+            content = response_payload["content"][0]["text"]
             reasoning = self._validate_reasoning(self._parse_json_content(content))
             return LLMReasoningResult(
                 status="success",

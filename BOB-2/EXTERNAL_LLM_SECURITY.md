@@ -22,7 +22,7 @@ Legacy callers use `backend/app/services/llm_service.py`. That module is local-o
 - every resolved address must be loopback;
 - the socket is pinned to the validated loopback address;
 - responses are size and timeout bounded;
-- it contains no DeepSeek/OpenAI/Internet fallback.
+- it contains no Anthropic/OpenAI/Internet fallback.
 
 Therefore bank reconciliation, natural-language intent classification, and older ERP helpers cannot silently send data externally merely because an API key exists.
 
@@ -138,7 +138,7 @@ They do not contain the system prompt, user prompt, raw document text, sanitized
 
 ## External network transport
 
-The gateway accepts only an exact configured HTTPS host on port 443 and a `/chat/completions` endpoint. It rejects:
+The gateway accepts only an exact configured HTTPS host on port 443 and a `/v1/messages` endpoint. It rejects:
 
 - HTTP;
 - alternate/unapproved hosts;
@@ -192,7 +192,7 @@ Before considering external processing:
 
 CI must fail if:
 
-- DeepSeek or another external fallback returns to `llm_service.py`;
+- Anthropic or another external fallback returns to `llm_service.py`;
 - the accounting reasoner directly uses an HTTP library instead of the gateway;
 - the global kill switch, tenant policy, DPA, provider/model/purpose checks disappear;
 - pre-send audit persistence disappears;

@@ -52,9 +52,9 @@ def _seed_actor(db, *, organization_id: int = 1, user_id: int = 1):
 def _enable_global(monkeypatch):
     monkeypatch.setattr(settings, "EXTERNAL_LLM_ENABLED", True)
     monkeypatch.setattr(settings, "EXTERNAL_LLM_REQUIRED_DPA_VERSION", "2026-07-v1")
-    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_PROVIDERS", "deepseek")
-    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_MODELS", "deepseek:deepseek-chat")
-    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_HOSTS", "api.deepseek.com")
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_PROVIDERS", "anthropic")
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_MODELS", "anthropic:claude-sonnet-4-20250514")
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_HOSTS", "api.anthropic.com")
     monkeypatch.setattr(settings, "EXTERNAL_LLM_MAX_REQUEST_BYTES", 262_144)
     monkeypatch.setattr(settings, "EXTERNAL_LLM_MAX_RESPONSE_BYTES", 1_048_576)
     monkeypatch.setattr(settings, "EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS", 4_000)
@@ -66,8 +66,8 @@ def _create_policy(
     organization_id: int = 1,
     user_id: int = 1,
     enabled: bool = True,
-    provider: str = "deepseek",
-    model: str = "deepseek-chat",
+    provider: str = "anthropic",
+    model: str = "claude-sonnet-4-20250514",
     purposes: list[str] | None = None,
     allow_text: bool = False,
     allow_financial_values: bool = False,
@@ -119,16 +119,16 @@ def _context(
 
 
 def _success_response(content: str = '{"summary":"ok","confidence_score":0.9}'):
-    return {"choices": [{"message": {"content": content}}]}
+    return {"content": [{"type": "text", "text": content}]}
 
 
 def test_legacy_llm_service_contains_no_external_provider_or_fallback():
     source = Path("app/services/llm_service.py").read_text(encoding="utf-8")
     forbidden = (
-        "DeepSeek",
-        "DEEPSEEK_API_URL",
-        "_call_deepseek",
-        "api.deepseek.com",
+        "Anthropic",
+        "ANTHROPIC_API_URL",
+        "_call_anthropic",
+        "api.anthropic.com",
         "falls back",
     )
     assert not [item for item in forbidden if item in source]
@@ -157,8 +157,8 @@ def test_api_key_is_not_consent_when_global_switch_is_off(db, monkeypatch):
     gateway = ExternalLLMGateway(
         db=db,
         context=_context(),
-        provider="deepseek",
-        model="deepseek-chat",
+        provider="anthropic",
+        model="claude-sonnet-4-20250514",
         api_key="configured-key",
         transport=lambda *_args: sent.append(True) or _success_response(),
     )
@@ -193,8 +193,8 @@ def test_policy_dpa_provider_model_and_purpose_fail_closed(
     gateway = ExternalLLMGateway(
         db=db,
         context=_context(purpose=purpose),
-        provider="deepseek",
-        model="deepseek-chat",
+        provider="anthropic",
+        model="claude-sonnet-4-20250514",
         api_key="configured-key",
         transport=lambda *_args: _success_response(),
     )
@@ -209,8 +209,8 @@ def test_missing_tenant_policy_fails_closed_and_is_audited(db, monkeypatch):
     gateway = ExternalLLMGateway(
         db=db,
         context=_context(),
-        provider="deepseek",
-        model="deepseek-chat",
+        provider="anthropic",
+        model="claude-sonnet-4-20250514",
         api_key="configured-key",
         transport=lambda *_args: _success_response(),
     )
@@ -229,8 +229,8 @@ def test_inactive_or_cross_tenant_actor_is_blocked(db, monkeypatch):
     gateway = ExternalLLMGateway(
         db=db,
         context=_context(),
-        provider="deepseek",
-        model="deepseek-chat",
+        provider="anthropic",
+        model="claude-sonnet-4-20250514",
         api_key="configured-key",
         transport=lambda *_args: _success_response(),
     )
@@ -345,8 +345,8 @@ def test_successful_gateway_sends_only_sanitized_content_and_records_started_and
     gateway = ExternalLLMGateway(
         db=db,
         context=_context(),
-        provider="deepseek",
-        model="deepseek-chat",
+        provider="anthropic",
+        model="claude-sonnet-4-20250514",
         api_key="configured-key",
         transport=transport,
     )
@@ -360,7 +360,7 @@ def test_successful_gateway_sends_only_sanitized_content_and_records_started_and
         },
         raw_document_text="Secret Supplier secret@example.com SAR 9999.99",
     )
-    assert response["choices"]
+    assert response["content"]
     sent = json.dumps(captured["payload"], ensure_ascii=False)
     assert "Secret Supplier" not in sent
     assert "secret@example.com" not in sent
@@ -395,8 +395,8 @@ def test_provider_failure_records_started_and_failed_without_raw_provider_body(d
     gateway = ExternalLLMGateway(
         db=db,
         context=_context(),
-        provider="deepseek",
-        model="deepseek-chat",
+        provider="anthropic",
+        model="claude-sonnet-4-20250514",
         api_key="configured-key",
         transport=failing_transport,
     )
@@ -426,8 +426,8 @@ def test_audit_failure_before_send_prevents_transport(db, monkeypatch):
     gateway = ExternalLLMGateway(
         db=db,
         context=_context(),
-        provider="deepseek",
-        model="deepseek-chat",
+        provider="anthropic",
+        model="claude-sonnet-4-20250514",
         api_key="configured-key",
         transport=lambda *_args: sent.append(True) or _success_response(),
     )
@@ -439,24 +439,24 @@ def test_audit_failure_before_send_prevents_transport(db, monkeypatch):
 @pytest.mark.parametrize(
     "url",
     [
-        "http://api.deepseek.com/chat/completions",
-        "https://evil.example/chat/completions",
-        "https://user:password@api.deepseek.com/chat/completions",
-        "https://api.deepseek.com:8443/chat/completions",
-        "https://api.deepseek.com/chat/completions?redirect=x",
-        "https://api.deepseek.com/v1/models",
-        "https://api.deepseek.com/../chat/completions",
+        "http://api.anthropic.com/v1/messages",
+        "https://evil.example/v1/messages",
+        "https://user:password@api.anthropic.com/v1/messages",
+        "https://api.anthropic.com:8443/v1/messages",
+        "https://api.anthropic.com/v1/messages?redirect=x",
+        "https://api.anthropic.com/v1/models",
+        "https://api.anthropic.com/../v1/messages",
     ],
 )
 def test_external_endpoint_rejects_unapproved_url_forms(monkeypatch, url):
-    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_HOSTS", "api.deepseek.com")
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_HOSTS", "api.anthropic.com")
     with pytest.raises(ExternalLLMProviderError):
         _validate_external_endpoint(url)
 
 
 @pytest.mark.parametrize("address", ["127.0.0.1", "::1", "10.0.0.5", "169.254.169.254"])
 def test_external_endpoint_rejects_private_loopback_and_metadata_dns(monkeypatch, address):
-    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_HOSTS", "api.deepseek.com")
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_HOSTS", "api.anthropic.com")
 
     def resolver(_host, port, _family, _socktype):
         family = socket.AF_INET6 if ":" in address else socket.AF_INET
@@ -465,11 +465,11 @@ def test_external_endpoint_rejects_private_loopback_and_metadata_dns(monkeypatch
 
     monkeypatch.setattr(socket, "getaddrinfo", resolver)
     with pytest.raises(ExternalLLMProviderError):
-        _validate_external_endpoint("https://api.deepseek.com/chat/completions")
+        _validate_external_endpoint("https://api.anthropic.com/v1/messages")
 
 
 def test_external_endpoint_accepts_exact_https_host_with_public_dns(monkeypatch):
-    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_HOSTS", "api.deepseek.com")
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_HOSTS", "api.anthropic.com")
     monkeypatch.setattr(
         socket,
         "getaddrinfo",
@@ -477,8 +477,8 @@ def test_external_endpoint_accepts_exact_https_host_with_public_dns(monkeypatch)
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port))
         ],
     )
-    endpoint = _validate_external_endpoint("https://api.deepseek.com/chat/completions")
-    assert endpoint.hostname == "api.deepseek.com"
+    endpoint = _validate_external_endpoint("https://api.anthropic.com/v1/messages")
+    assert endpoint.hostname == "api.anthropic.com"
     assert endpoint.resolved_ips == ("8.8.8.8",)
 
 
@@ -538,8 +538,8 @@ def test_policy_admin_requires_current_dpa_and_never_returns_api_key(client, aut
         headers=auth_headers,
         json={
             "external_llm_enabled": True,
-            "approved_provider": "deepseek",
-            "approved_model": "deepseek-chat",
+            "approved_provider": "anthropic",
+            "approved_model": "claude-sonnet-4-20250514",
             "allowed_purposes": ["accounting_reasoning"],
             "allow_redacted_document_text": False,
             "allow_financial_values": False,
@@ -573,8 +573,8 @@ def test_policy_admin_is_tenant_scoped_and_disclosure_list_excludes_other_tenant
         ExternalLLMPolicy(
             organization_id=second_org.id,
             external_llm_enabled=True,
-            approved_provider="deepseek",
-            approved_model="deepseek-chat",
+            approved_provider="anthropic",
+            approved_model="claude-sonnet-4-20250514",
             allowed_purposes=["accounting_reasoning"],
             allow_redacted_document_text=False,
             allow_financial_values=False,

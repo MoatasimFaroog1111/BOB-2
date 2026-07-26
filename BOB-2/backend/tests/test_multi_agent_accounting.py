@@ -126,8 +126,8 @@ def test_llm_reasoner_parses_provider_shape_only_through_gateway(db, monkeypatch
         ExternalLLMPolicy(
             organization_id=1,
             external_llm_enabled=True,
-            approved_provider="deepseek",
-            approved_model="deepseek-chat",
+            approved_provider="anthropic",
+            approved_model="claude-sonnet-4-20250514",
             allowed_purposes=["accounting_reasoning"],
             allow_redacted_document_text=False,
             allow_financial_values=False,
@@ -144,8 +144,8 @@ def test_llm_reasoner_parses_provider_shape_only_through_gateway(db, monkeypatch
     db.commit()
     monkeypatch.setattr(settings, "EXTERNAL_LLM_ENABLED", True)
     monkeypatch.setattr(settings, "EXTERNAL_LLM_REQUIRED_DPA_VERSION", "2026-07-v1")
-    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_PROVIDERS", "deepseek")
-    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_MODELS", "deepseek:deepseek-chat")
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_PROVIDERS", "anthropic")
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_MODELS", "anthropic:claude-sonnet-4-20250514")
 
     provider_response = {
         "choices": [

@@ -112,19 +112,19 @@ class Settings(BaseSettings):
     # a tenant-scoped secure secret binding.
     EXTERNAL_LLM_ENABLED: bool = False
     EXTERNAL_LLM_REQUIRED_DPA_VERSION: str = "2026-07-v1"
-    EXTERNAL_LLM_ALLOWED_PROVIDERS: str = "deepseek"
-    EXTERNAL_LLM_ALLOWED_MODELS: str = "deepseek:deepseek-chat"
-    EXTERNAL_LLM_ALLOWED_HOSTS: str = "api.deepseek.com"
+    EXTERNAL_LLM_ALLOWED_PROVIDERS: str = "anthropic"
+    EXTERNAL_LLM_ALLOWED_MODELS: str = "anthropic:claude-sonnet-4-20250514"
+    EXTERNAL_LLM_ALLOWED_HOSTS: str = "api.anthropic.com"
     EXTERNAL_LLM_MAX_REQUEST_BYTES: int = 262_144
     EXTERNAL_LLM_MAX_RESPONSE_BYTES: int = 1_048_576
     EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS: int = 4_000
 
     # Deprecated compatibility inputs. Production validation requires both to
     # remain empty; external provider credentials are resolved from secret storage.
-    DEEPSEEK_API_KEY: str = ""
-    ACCOUNTING_LLM_PROVIDER: str = "deepseek"
-    ACCOUNTING_LLM_MODEL: str = "deepseek-chat"
-    ACCOUNTING_LLM_API_URL: str = "https://api.deepseek.com/chat/completions"
+    ANTHROPIC_API_KEY: str = ""
+    ACCOUNTING_LLM_PROVIDER: str = "anthropic"
+    ACCOUNTING_LLM_MODEL: str = "claude-sonnet-4-20250514"
+    ACCOUNTING_LLM_API_URL: str = "https://api.anthropic.com/v1/messages"
     ACCOUNTING_LLM_API_KEY: str = ""
     ACCOUNTING_LLM_TIMEOUT_SECONDS: int = 45
 
@@ -232,7 +232,7 @@ class Settings(BaseSettings):
             errors.append("SECRET_STORE_MAX_RESPONSE_BYTES must be between 16384 and 4194304")
         if self.LEGACY_FINANCIAL_ORGANIZATION_ID <= 0:
             errors.append("LEGACY_FINANCIAL_ORGANIZATION_ID must be positive")
-        if self.is_production and (self.ACCOUNTING_LLM_API_KEY or self.DEEPSEEK_API_KEY):
+        if self.is_production and (self.ACCOUNTING_LLM_API_KEY or self.ANTHROPIC_API_KEY):
             errors.append("External LLM API keys must not be stored in production environment variables")
         if self.TELEGRAM_BOT_ENABLED and self.TELEGRAM_RUNTIME_ORGANIZATION_ID <= 0:
             errors.append("TELEGRAM_RUNTIME_ORGANIZATION_ID is required when Telegram is enabled")
@@ -347,9 +347,9 @@ class Settings(BaseSettings):
                 or endpoint.password is not None
                 or endpoint.query
                 or endpoint.fragment
-                or not endpoint.path.endswith("/chat/completions")
+                or not endpoint.path.endswith("/v1/messages")
             ):
-                errors.append("ACCOUNTING_LLM_API_URL must be an approved HTTPS chat-completions endpoint")
+                errors.append("ACCOUNTING_LLM_API_URL must be an approved HTTPS messages endpoint")
 
     def validate_runtime_security(self) -> None:
         if not self.is_production:

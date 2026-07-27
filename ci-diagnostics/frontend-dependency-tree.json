@@ -10,33 +10,7 @@
         "postcss": {
           "version": "8.5.23",
           "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.23.tgz",
-          "overridden": false
-        }
-      }
-    },
-    "eslint-config-next": {
-      "version": "16.3.0-preview.9",
-      "resolved": "https://registry.npmjs.org/eslint-config-next/-/eslint-config-next-16.3.0-preview.9.tgz",
-      "overridden": false,
-      "dependencies": {
-        "eslint-plugin-import": {
-          "version": "2.32.0",
-          "resolved": "https://registry.npmjs.org/eslint-plugin-import/-/eslint-plugin-import-2.32.0.tgz",
-          "overridden": false,
-          "dependencies": {
-            "minimatch": {
-              "version": "3.1.5",
-              "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz",
-              "overridden": false,
-              "dependencies": {
-                "brace-expansion": {
-                  "version": "1.1.16",
-                  "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.16.tgz",
-                  "overridden": false
-                }
-              }
-            }
-          }
+          "overridden": true
         }
       }
     },

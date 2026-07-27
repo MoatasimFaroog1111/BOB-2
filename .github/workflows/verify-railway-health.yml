@@ -1,0 +1,43 @@
+name: Verify Railway production health
+
+on:
+  push:
+    branches:
+      - agent/fix-ci-and-railway
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    if: ${{ !contains(github.event.head_commit.message, '[skip railway-health]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/fix-ci-and-railway
+      - name: Check production endpoints
+        run: |
+          mkdir -p ci-diagnostics
+          set +e
+          curl --silent --show-error --location --max-time 30 \
+            --dump-header ci-diagnostics/railway-health-headers.txt \
+            --output ci-diagnostics/railway-health-body.txt \
+            --write-out '%{http_code}' \
+            https://bob-2-production.up.railway.app/health \
+            > ci-diagnostics/railway-health-status.txt
+          echo $? > ci-diagnostics/railway-health-curl-exit.txt
+          curl --silent --show-error --location --max-time 30 \
+            --output ci-diagnostics/railway-root-body.txt \
+            --write-out '%{http_code}' \
+            https://bob-2-production.up.railway.app/ \
+            > ci-diagnostics/railway-root-status.txt
+          echo $? > ci-diagnostics/railway-root-curl-exit.txt
+          set -e
+      - name: Commit health evidence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci-diagnostics
+          git commit -m "ci: capture Railway health [skip railway-health]"
+          git push origin HEAD:agent/fix-ci-and-railway

@@ -1,0 +1,98 @@
+name: Temporary verify merged ClamAV production release
+
+on:
+  push:
+    branches:
+      - agent/verify-clamav-production-postmerge
+    paths:
+      - .github/workflows/temp-verify-clamav-postmerge.yml
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  verify-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PROJECT_ID: db1f1265-1590-4bf0-8c1a-884c2806e0b9
+      ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
+      BACKEND_SERVICE_ID: e253a8c9-06d8-4f11-8c54-f300162796ee
+      BACKEND_URL: https://bob-2-production.up.railway.app
+      RELEASE_SHA: 6e0d27ec3c117238c69790ed6d1845000e2e6ddf
+    steps:
+      - name: Deploy current main source and verify production
+        id: verify
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          railway_api() {
+            local response
+            response=$(curl --fail-with-body --silent --show-error \
+              --request POST \
+              --url https://backboard.railway.com/graphql/v2 \
+              --header "Project-Access-Token: $RAILWAY_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data "$1")
+            if echo "$response" | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
+              echo "$response" | jq '{errors}'
+              return 1
+            fi
+            printf '%s' "$response"
+          }
+
+          deploy_payload=$(jq -n \
+            --arg serviceId "$BACKEND_SERVICE_ID" \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            '{query:"mutation serviceInstanceDeploy($serviceId: String!, $environmentId: String!) { serviceInstanceDeploy(serviceId: $serviceId, environmentId: $environmentId) }",variables:{serviceId:$serviceId,environmentId:$environmentId}}')
+          deploy_response=$(railway_api "$deploy_payload")
+          deployment_id=$(echo "$deploy_response" | jq -r '.data.serviceInstanceDeploy // empty')
+          test -n "$deployment_id"
+          echo "::add-mask::$deployment_id"
+
+          final_status=UNKNOWN
+          for attempt in $(seq 1 120); do
+            deployments_payload=$(jq -n \
+              --arg projectId "$PROJECT_ID" \
+              --arg serviceId "$BACKEND_SERVICE_ID" \
+              --arg environmentId "$ENVIRONMENT_ID" \
+              '{query:"query deployments($input: DeploymentListInput!) { deployments(input: $input, first: 20) { edges { node { id status } } } }",variables:{input:{projectId:$projectId,serviceId:$serviceId,environmentId:$environmentId}}}')
+            deployments_response=$(railway_api "$deployments_payload")
+            final_status=$(echo "$deployments_response" | jq -r \
+              --arg id "$deployment_id" \
+              '.data.deployments.edges[].node | select(.id == $id) | .status' | head -n 1 | tr '[:lower:]' '[:upper:]')
+            test -n "$final_status" || final_status=UNKNOWN
+            case "$final_status" in
+              SUCCESS) break ;;
+              FAILED|CRASHED|REMOVED) exit 1 ;;
+            esac
+            sleep 10
+          done
+          test "$final_status" = SUCCESS
+
+          health=$(curl --fail --silent --show-error --max-time 30 "$BACKEND_URL/health")
+          echo "$health" | jq -e '.status == "healthy"' >/dev/null
+          ready=$(curl --fail --silent --show-error --max-time 30 "$BACKEND_URL/ready")
+          echo "$ready" | jq -e '.status == "ready"' >/dev/null
+
+          echo "deployment_status=$final_status" >> "$GITHUB_OUTPUT"
+
+      - name: Record sanitized production evidence
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/140/comments" \
+            --field body="Post-merge production verification succeeded for release \`${RELEASE_SHA:0:7}\`: Railway deployed the current main source, the backend started with the mandatory clean/EICAR ClamAV startup gate, and both \`/health\` and \`/ready\` returned healthy results. No identifiers, credentials, or customer data are included." >/dev/null
+
+      - name: Record sanitized failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/140/comments" \
+            --field body="Post-merge production verification failed for release \`${RELEASE_SHA:0:7}\`. The merged code remains fail-closed; inspect the temporary workflow logs before another deployment attempt. No secrets were posted." >/dev/null

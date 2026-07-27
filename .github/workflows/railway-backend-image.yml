@@ -53,6 +53,9 @@ jobs:
             --env AZURE_KEY_VAULT_URL=https://guardian-production.vault.azure.net \
             --env ERP_OUTBOUND_ALLOWED_HOSTS=odoo.example.test \
             --env FRONTEND_ORIGIN=https://frontend.example.test \
+            --env REQUIRE_MALWARE_SCAN=true \
+            --env CLAMAV_HOST=clamav.railway.internal \
+            --env CLAMAV_PORT=3310 \
             --env LOCAL_LLM_ENABLED=false \
             --env EXTERNAL_LLM_ENABLED=false \
             --entrypoint python \
@@ -121,6 +124,9 @@ jobs:
             --env AZURE_KEY_VAULT_URL=https://guardian-production.vault.azure.net \
             --env ERP_OUTBOUND_ALLOWED_HOSTS=odoo.example.test \
             --env FRONTEND_ORIGIN=https://frontend.example.test \
+            --env REQUIRE_MALWARE_SCAN=true \
+            --env CLAMAV_HOST=clamav.railway.internal \
+            --env CLAMAV_PORT=3310 \
             --env TELEGRAM_BOT_ENABLED=false \
             --env LOCAL_LLM_ENABLED=false \
             --env EXTERNAL_LLM_ENABLED=false \

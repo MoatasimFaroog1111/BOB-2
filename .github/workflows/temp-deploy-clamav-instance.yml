@@ -1,0 +1,147 @@
+name: Temporary deploy production ClamAV instance
+
+on:
+  push:
+    branches:
+      - agent/railway-clamav-release-gate
+    paths:
+      - .github/workflows/temp-deploy-clamav-instance.yml
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  deploy-and-configure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PROJECT_ID: db1f1265-1590-4bf0-8c1a-884c2806e0b9
+      ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
+      BACKEND_SERVICE_ID: e253a8c9-06d8-4f11-8c54-f300162796ee
+      BACKEND_URL: https://bob-2-production.up.railway.app
+    steps:
+      - name: Deploy ClamAV service instance and configure backend
+        id: deploy
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          railway_api() {
+            local response
+            response=$(curl --fail-with-body --silent --show-error \
+              --request POST \
+              --url https://backboard.railway.com/graphql/v2 \
+              --header "Project-Access-Token: $RAILWAY_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data "$1")
+            if echo "$response" | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
+              echo "$response" | jq '{errors}'
+              return 1
+            fi
+            printf '%s' "$response"
+          }
+
+          services_payload=$(jq -n --arg projectId "$PROJECT_ID" \
+            '{query:"query project($projectId: String!) { project(id: $projectId) { services { edges { node { id name } } } } }",variables:{projectId:$projectId}}')
+          services_response=$(railway_api "$services_payload")
+          clamav_service_id=$(echo "$services_response" | jq -r \
+            '.data.project.services.edges[].node | select((.name | ascii_downcase) == "clamav") | .id' | head -n 1)
+          test -n "$clamav_service_id"
+          echo "::add-mask::$clamav_service_id"
+
+          deploy_payload=$(jq -n \
+            --arg serviceId "$clamav_service_id" \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            '{query:"mutation serviceInstanceDeploy($serviceId: String!, $environmentId: String!) { serviceInstanceDeploy(serviceId: $serviceId, environmentId: $environmentId) }",variables:{serviceId:$serviceId,environmentId:$environmentId}}')
+          deploy_response=$(railway_api "$deploy_payload")
+          deployment_id=$(echo "$deploy_response" | jq -r '.data.serviceInstanceDeploy // empty')
+          test -n "$deployment_id"
+          echo "::add-mask::$deployment_id"
+
+          clamav_status="UNKNOWN"
+          for attempt in $(seq 1 120); do
+            deployments_payload=$(jq -n \
+              --arg projectId "$PROJECT_ID" \
+              --arg serviceId "$clamav_service_id" \
+              --arg environmentId "$ENVIRONMENT_ID" \
+              '{query:"query deployments($input: DeploymentListInput!) { deployments(input: $input, first: 10) { edges { node { id status } } } }",variables:{input:{projectId:$projectId,serviceId:$serviceId,environmentId:$environmentId}}}')
+            deployments_response=$(railway_api "$deployments_payload")
+            clamav_status=$(echo "$deployments_response" | jq -r \
+              --arg id "$deployment_id" \
+              '.data.deployments.edges[].node | select(.id == $id) | .status' | head -n 1 | tr '[:lower:]' '[:upper:]')
+            test -n "$clamav_status" || clamav_status=UNKNOWN
+            case "$clamav_status" in
+              SUCCESS) break ;;
+              FAILED|CRASHED|REMOVED) exit 1 ;;
+            esac
+            sleep 10
+          done
+          test "$clamav_status" = SUCCESS
+
+          variables_payload=$(jq -n \
+            --arg projectId "$PROJECT_ID" \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            --arg serviceId "$BACKEND_SERVICE_ID" \
+            '{query:"mutation variableCollectionUpsert($input: VariableCollectionUpsertInput!) { variableCollectionUpsert(input: $input) }",variables:{input:{projectId:$projectId,environmentId:$environmentId,serviceId:$serviceId,skipDeploys:true,variables:{REQUIRE_MALWARE_SCAN:"true",CLAMAV_HOST:"clamav.railway.internal",CLAMAV_PORT:"3310"}}}}')
+          railway_api "$variables_payload" >/dev/null
+
+          verify_variables_payload=$(jq -n \
+            --arg projectId "$PROJECT_ID" \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            --arg serviceId "$BACKEND_SERVICE_ID" \
+            '{query:"query variables($projectId: String!, $environmentId: String!, $serviceId: String) { variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId) }",variables:{projectId:$projectId,environmentId:$environmentId,serviceId:$serviceId}}')
+          variables_response=$(railway_api "$verify_variables_payload")
+          test "$(echo "$variables_response" | jq -r '.data.variables.REQUIRE_MALWARE_SCAN // empty')" = true
+          test "$(echo "$variables_response" | jq -r '.data.variables.CLAMAV_HOST // empty')" = clamav.railway.internal
+          test "$(echo "$variables_response" | jq -r '.data.variables.CLAMAV_PORT // empty')" = 3310
+
+          backend_redeploy_payload=$(jq -n \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            --arg serviceId "$BACKEND_SERVICE_ID" \
+            '{query:"mutation serviceInstanceRedeploy($environmentId: String!, $serviceId: String!) { serviceInstanceRedeploy(environmentId: $environmentId, serviceId: $serviceId) }",variables:{environmentId:$environmentId,serviceId:$serviceId}}')
+          backend_redeploy_response=$(railway_api "$backend_redeploy_payload")
+          backend_deployment_id=$(echo "$backend_redeploy_response" | jq -r '.data.serviceInstanceRedeploy // empty')
+          test -n "$backend_deployment_id"
+          echo "::add-mask::$backend_deployment_id"
+
+          backend_status="UNKNOWN"
+          for attempt in $(seq 1 90); do
+            deployments_payload=$(jq -n \
+              --arg projectId "$PROJECT_ID" \
+              --arg serviceId "$BACKEND_SERVICE_ID" \
+              --arg environmentId "$ENVIRONMENT_ID" \
+              '{query:"query deployments($input: DeploymentListInput!) { deployments(input: $input, first: 10) { edges { node { id status } } } }",variables:{input:{projectId:$projectId,serviceId:$serviceId,environmentId:$environmentId}}}')
+            deployments_response=$(railway_api "$deployments_payload")
+            backend_status=$(echo "$deployments_response" | jq -r \
+              --arg id "$backend_deployment_id" \
+              '.data.deployments.edges[].node | select(.id == $id) | .status' | head -n 1 | tr '[:lower:]' '[:upper:]')
+            test -n "$backend_status" || backend_status=UNKNOWN
+            case "$backend_status" in
+              SUCCESS) break ;;
+              FAILED|CRASHED|REMOVED) exit 1 ;;
+            esac
+            sleep 10
+          done
+          test "$backend_status" = SUCCESS
+
+          curl --fail --silent --show-error --max-time 30 "$BACKEND_URL/health" | jq -e '.status == "healthy"' >/dev/null
+          curl --fail --silent --show-error --max-time 30 "$BACKEND_URL/ready" | jq -e '.status == "ready"' >/dev/null
+
+      - name: Report sanitized success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/140/comments" \
+            --field body='Production ClamAV was deployed successfully in the private Railway environment. The backend scanner variables match, the backend redeployed successfully, and liveness/readiness checks passed. No identifiers or secrets are included.' >/dev/null
+
+      - name: Report sanitized failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/140/comments" \
+            --field body='The initial production ClamAV deployment or backend configuration failed. PR #140 remains a draft and was not merged. The workflow logs contain the failing operation without publishing secrets.' >/dev/null

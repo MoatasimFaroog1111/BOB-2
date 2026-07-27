@@ -1,10 +1,6 @@
 {
   "version": "0.1.0",
   "name": "frontend",
-  "problems": [
-    "invalid: postcss@8.4.31 /home/runner/work/BOB-2/BOB-2/BOB-2/frontend/node_modules/next/node_modules/postcss",
-    "invalid: sharp@0.34.5 /home/runner/work/BOB-2/BOB-2/BOB-2/frontend/node_modules/next/node_modules/sharp"
-  ],
   "dependencies": {
     "@tailwindcss/postcss": {
       "version": "4.3.2",
@@ -14,7 +10,7 @@
         "postcss": {
           "version": "8.5.23",
           "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.23.tgz",
-          "overridden": true
+          "overridden": false
         }
       }
     },
@@ -24,13 +20,13 @@
       "overridden": false,
       "dependencies": {
         "typescript-eslint": {
-          "version": "8.64.0",
-          "resolved": "https://registry.npmjs.org/typescript-eslint/-/typescript-eslint-8.64.0.tgz",
+          "version": "8.65.0",
+          "resolved": "https://registry.npmjs.org/typescript-eslint/-/typescript-eslint-8.65.0.tgz",
           "overridden": false,
           "dependencies": {
             "@typescript-eslint/typescript-estree": {
-              "version": "8.64.0",
-              "resolved": "https://registry.npmjs.org/@typescript-eslint/typescript-estree/-/typescript-estree-8.64.0.tgz",
+              "version": "8.65.0",
+              "resolved": "https://registry.npmjs.org/@typescript-eslint/typescript-estree/-/typescript-estree-8.65.0.tgz",
               "overridden": false,
               "dependencies": {
                 "minimatch": {
@@ -57,14 +53,14 @@
       "overridden": false,
       "dependencies": {
         "@eslint/eslintrc": {
-          "version": "3.3.5",
-          "resolved": "https://registry.npmjs.org/@eslint/eslintrc/-/eslintrc-3.3.5.tgz",
+          "version": "3.3.6",
+          "resolved": "https://registry.npmjs.org/@eslint/eslintrc/-/eslintrc-3.3.6.tgz",
           "overridden": false,
           "dependencies": {
             "js-yaml": {
               "version": "4.3.0",
               "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.0.tgz",
-              "overridden": true
+              "overridden": false
             }
           }
         },
@@ -88,34 +84,17 @@
       "overridden": false,
       "dependencies": {
         "postcss": {
-          "version": "8.4.31",
-          "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.4.31.tgz",
-          "overridden": false,
-          "invalid": "\"8.5.23\" from node_modules/next",
-          "problems": [
-            "invalid: postcss@8.4.31 /home/runner/work/BOB-2/BOB-2/BOB-2/frontend/node_modules/next/node_modules/postcss"
-          ]
+          "version": "8.5.23"
         },
         "sharp": {
-          "version": "0.34.5",
-          "resolved": "https://registry.npmjs.org/sharp/-/sharp-0.34.5.tgz",
-          "overridden": false,
-          "invalid": "\"0.35.3\" from node_modules/next",
-          "problems": [
-            "invalid: sharp@0.34.5 /home/runner/work/BOB-2/BOB-2/BOB-2/frontend/node_modules/next/node_modules/sharp"
-          ]
+          "version": "0.35.3"
         }
       }
     },
     "sharp": {
       "version": "0.35.3",
       "resolved": "https://registry.npmjs.org/sharp/-/sharp-0.35.3.tgz",
-      "overridden": false
+      "overridden": true
     }
-  },
-  "error": {
-    "code": "ELSPROBLEMS",
-    "summary": "invalid: postcss@8.4.31 /home/runner/work/BOB-2/BOB-2/BOB-2/frontend/node_modules/next/node_modules/postcss\ninvalid: sharp@0.34.5 /home/runner/work/BOB-2/BOB-2/BOB-2/frontend/node_modules/next/node_modules/sharp",
-    "detail": ""
   }
 }

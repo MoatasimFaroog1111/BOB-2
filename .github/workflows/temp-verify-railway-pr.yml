@@ -41,41 +41,16 @@ jobs:
           railway deployment list --service "$SERVICE_ID" --environment "$ENVIRONMENT_ID" --limit 1 --json \
             > /tmp/railway-check/latest.json 2> /tmp/railway-check/latest.err
           deployment_code=$?
-
-          readarray -t parsed < <(python - <<'PY'
-import json
-from pathlib import Path
-try:
-    data = json.loads(Path('/tmp/railway-check/latest.json').read_text())
-except Exception:
-    print('UNKNOWN'); print(''); raise SystemExit
-rows = data if isinstance(data, list) else data.get('deployments', [])
-row = rows[0] if rows else {}
-print(str(row.get('status', 'UNKNOWN')).upper())
-print(str(row.get('id', '')))
-PY
-)
-          latest_status="${parsed[0]:-UNKNOWN}"
-          latest_id="${parsed[1]:-}"
+          latest_status=$(jq -r 'if type == "array" then .[0].status // "UNKNOWN" else .deployments[0].status // "UNKNOWN" end' /tmp/railway-check/latest.json 2>/dev/null | tr '[:lower:]' '[:upper:]')
+          latest_id=$(jq -r 'if type == "array" then .[0].id // "" else .deployments[0].id // "" end' /tmp/railway-check/latest.json 2>/dev/null)
+          [ -n "$latest_status" ] || latest_status=UNKNOWN
           printf -- '- Latest deployment status: `%s`\n' "$latest_status" >> "$report"
           printf -- '- Latest deployment ID: `%s`\n' "$latest_id" >> "$report"
 
           railway domain --service "$SERVICE_ID" --json \
             > /tmp/railway-check/domain.json 2> /tmp/railway-check/domain.err
           domain_code=$?
-
-          domain=$(python - <<'PY'
-import re
-from pathlib import Path
-text = ''
-for name in ('domain.json','domain.err'):
-    path = Path('/tmp/railway-check') / name
-    if path.exists():
-        text += '\n' + path.read_text(errors='ignore')
-match = re.search(r'([a-zA-Z0-9-]+\.up\.railway\.app)', text)
-print(match.group(1) if match else '')
-PY
-)
+          domain=$(cat /tmp/railway-check/domain.json /tmp/railway-check/domain.err 2>/dev/null | grep -Eo '[a-zA-Z0-9-]+\.up\.railway\.app' | head -n 1)
 
           if [ -z "$domain" ]; then
             railway run --service "$SERVICE_ID" -- sh -lc 'printf "%s" "$RAILWAY_PUBLIC_DOMAIN"' \

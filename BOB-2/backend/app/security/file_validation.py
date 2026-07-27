@@ -3,6 +3,7 @@
 import asyncio
 import io
 import os
+import time
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import List, Optional, Tuple
@@ -26,6 +27,13 @@ DANGEROUS_EXTENSIONS = {
 
 TEXT_EXTENSIONS = {".txt", ".csv", ".tsv", ".ofx", ".qfx", ".qif", ".mt940", ".sta"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+
+# Kept split so source scanners do not mistake this repository for an infected
+# artifact. Joined only in memory for the standard harmless antivirus test.
+_EICAR_TEST_PARTS = (
+    b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-",
+    b"STANDARD-ANTIVIRUS-TEST-FILE!$H+H*",
+)
 
 
 def _looks_like_text(content: bytes) -> bool:
@@ -116,7 +124,7 @@ def validate_xlsx_archive(content: bytes) -> None:
             for member in members:
                 _validate_zip_member_name(member.filename)
                 lower_name = member.filename.lower()
-                if lower_name.endswith("vbaproject.bin") or "/externalLinks/".lower() in lower_name:
+                if lower_name.endswith("vbaproject.bin") or "/externallinks/" in lower_name:
                     raise FileValidationError(
                         "Macro-enabled or externally linked spreadsheets are not allowed"
                     )
@@ -150,6 +158,7 @@ def validate_pdf(content: bytes) -> None:
         raise
     except Exception as exc:
         raise FileValidationError("Invalid or corrupted PDF file") from exc
+
 
 def validate_image(content: bytes) -> None:
     try:
@@ -193,6 +202,21 @@ def validate_file_content(content: bytes, declared_extension: str) -> bool:
     return True
 
 
+def _clamav_scan(content: bytes) -> Tuple[Optional[str], Optional[str]]:
+    import clamd
+
+    client = clamd.ClamdNetworkSocket(
+        host=settings.CLAMAV_HOST,
+        port=settings.CLAMAV_PORT,
+        timeout=10,
+    )
+    result = client.instream(io.BytesIO(content))
+    status_value = result.get("stream") if isinstance(result, dict) else None
+    scan_status = status_value[0] if status_value else None
+    signature = status_value[1] if status_value and len(status_value) > 1 else None
+    return scan_status, signature
+
+
 def scan_for_malware(content: bytes) -> None:
     """Scan bytes with ClamAV and fail closed when scanning is required."""
     if not settings.CLAMAV_HOST:
@@ -201,29 +225,55 @@ def scan_for_malware(content: bytes) -> None:
         return
 
     try:
-        import clamd
-
-        client = clamd.ClamdNetworkSocket(
-            host=settings.CLAMAV_HOST,
-            port=settings.CLAMAV_PORT,
-            timeout=10,
-        )
-        result = client.instream(io.BytesIO(content))
-        status_value = result.get("stream") if isinstance(result, dict) else None
-        scan_status = status_value[0] if status_value else None
-        signature = status_value[1] if status_value and len(status_value) > 1 else None
-
-        if scan_status == "FOUND":
-            raise FileValidationError(
-                f"Upload rejected by malware scanner: {signature or 'malware detected'}"
-            )
-        if scan_status != "OK":
-            raise FileValidationError("Malware scanner returned an indeterminate result")
-    except FileValidationError:
-        raise
+        scan_status, signature = _clamav_scan(content)
     except Exception as exc:
         if settings.REQUIRE_MALWARE_SCAN:
             raise FileValidationError("Malware scan could not be completed") from exc
+        return
+
+    if scan_status == "FOUND":
+        raise FileValidationError(
+            f"Upload rejected by malware scanner: {signature or 'malware detected'}"
+        )
+    if scan_status != "OK":
+        raise FileValidationError("Malware scanner returned an indeterminate result")
+
+
+def verify_malware_scanner_ready(
+    *,
+    max_attempts: int = 12,
+    retry_delay_seconds: float = 5.0,
+) -> None:
+    """Prove the production scanner accepts clean bytes and detects EICAR.
+
+    The check is bounded and fail-closed. No uploaded customer document is used,
+    and the harmless test signature is never persisted or logged.
+    """
+    if not settings.REQUIRE_MALWARE_SCAN:
+        return
+    if not settings.CLAMAV_HOST:
+        raise RuntimeError("Malware scanner is required but not configured")
+    if max_attempts < 1:
+        raise ValueError("max_attempts must be at least 1")
+
+    clean_probe = b"GuardianAI production malware-scanner readiness probe"
+    eicar_probe = b"".join(_EICAR_TEST_PARTS)
+    last_error: Optional[BaseException] = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            clean_status, _ = _clamav_scan(clean_probe)
+            eicar_status, _ = _clamav_scan(eicar_probe)
+            if clean_status == "OK" and eicar_status == "FOUND":
+                return
+            last_error = RuntimeError("Scanner did not return the required clean/detect results")
+        except Exception as exc:
+            last_error = exc
+
+        if attempt < max_attempts and retry_delay_seconds > 0:
+            time.sleep(retry_delay_seconds)
+
+    raise RuntimeError("Malware scanner readiness verification failed") from last_error
 
 
 def sanitize_filename(filename: str) -> str:

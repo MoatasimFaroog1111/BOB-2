@@ -19,15 +19,15 @@
     "@types/node": "26.1.1",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
-    "eslint": "9.39.1",
+    "eslint": "10.8.0",
     "eslint-config-next": "16.3.0-preview.9",
     "tailwindcss": "4.3.2",
     "typescript": "6.0.3"
   },
   "overrides": {
-    "brace-expansion@1.1.15": "1.1.16",
-    "brace-expansion@5.0.7": "5.0.8",
-    "js-yaml@4.2.0": "4.3.0",
+    "next@16.3.0-preview.9": {
+      "postcss": "8.5.23"
+    },
     "postcss@8.5.15": "8.5.23"
   }
 }

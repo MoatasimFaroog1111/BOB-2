@@ -1,1 +1,0 @@
-Warning: `railway service status --all` is deprecated. Please use `railway service list` instead.

@@ -1,8 +1,0 @@
-npm warn using --force Recommended protections disabled.
-
-added 354 packages, and audited 355 packages in 22s
-
-146 packages are looking for funding
-  run `npm fund` for details
-
-found 0 vulnerabilities

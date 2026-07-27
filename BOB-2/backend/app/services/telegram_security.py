@@ -7,6 +7,8 @@ from the linked user's current role; they are never copied into Telegram state.
 
 from __future__ import annotations
 
+from datetime import timezone
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterable
@@ -297,7 +299,7 @@ def authorize_telegram_actor(
         system_user_email=system_user.email,
         system_user_role=system_user.role,
     )
-    authorization.last_used_at = datetime.utcnow()
+    authorization.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
     try:
         db.commit()
     except Exception:

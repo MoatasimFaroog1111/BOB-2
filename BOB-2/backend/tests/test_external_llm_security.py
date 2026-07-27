@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timezone
+
 import json
 import socket
 from datetime import datetime
@@ -92,7 +94,7 @@ def _create_policy(
         data_residency_region=region,
         provider_retention_mode=retention,
         accepted_by_user_id=user_id,
-        accepted_at=datetime.utcnow(),
+        accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
         revoked_at=revoked_at,
         policy_version=1,
     )
@@ -178,7 +180,7 @@ def test_api_key_is_not_consent_when_global_switch_is_off(db, monkeypatch):
         ({"dpa_reference": None}, "accounting_reasoning", "external_llm_dpa_not_current"),
         ({"region": None}, "accounting_reasoning", "external_llm_dpa_not_current"),
         ({"retention": None}, "accounting_reasoning", "external_llm_dpa_not_current"),
-        ({"revoked_at": datetime.utcnow()}, "accounting_reasoning", "external_llm_dpa_not_current"),
+        ({"revoked_at": datetime.now(timezone.utc).replace(tzinfo=None)}, "accounting_reasoning", "external_llm_dpa_not_current"),
         ({"provider": "openai"}, "accounting_reasoning", "external_llm_provider_not_approved"),
         ({"model": "other-model"}, "accounting_reasoning", "external_llm_model_not_approved"),
         ({"purposes": ["accounting_reasoning"]}, "natural_language_intent", "external_llm_purpose_not_approved"),
@@ -584,7 +586,7 @@ def test_policy_admin_is_tenant_scoped_and_disclosure_list_excludes_other_tenant
             data_residency_region="KSA",
             provider_retention_mode="contractual_zero_retention",
             accepted_by_user_id=second_user.id,
-            accepted_at=datetime.utcnow(),
+            accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
             policy_version=1,
         )
     )

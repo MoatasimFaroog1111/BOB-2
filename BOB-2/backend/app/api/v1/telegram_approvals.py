@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timezone
+
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -132,7 +134,7 @@ def revoke_approval_operation(
             status_code=status.HTTP_409_CONFLICT,
             detail="Only pending approval operations can be revoked.",
         )
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     updated = (
         db.query(TelegramApprovalOperation)
         .filter(

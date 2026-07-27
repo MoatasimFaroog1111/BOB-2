@@ -1,3 +1,5 @@
+from datetime import timezone
+
 from datetime import datetime
 
 from app.models.core import Organization, User
@@ -137,7 +139,7 @@ def test_llm_reasoner_parses_provider_shape_only_through_gateway(db, monkeypatch
             data_residency_region="KSA",
             provider_retention_mode="contractual_zero_retention",
             accepted_by_user_id=1,
-            accepted_at=datetime.utcnow(),
+            accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
             policy_version=1,
         )
     )

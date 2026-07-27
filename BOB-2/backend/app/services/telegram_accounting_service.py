@@ -8,6 +8,8 @@ converted to XML-RPC numbers only at the final Odoo boundary.
 
 from __future__ import annotations
 
+from datetime import timezone
+
 import base64
 import hashlib
 import hmac
@@ -70,7 +72,7 @@ class ApprovalPostingResult:
 
 
 def _utcnow() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _sha256_text(value: str) -> str:

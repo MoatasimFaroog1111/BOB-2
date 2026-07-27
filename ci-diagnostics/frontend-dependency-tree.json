@@ -10,7 +10,7 @@
         "postcss": {
           "version": "8.5.23",
           "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.23.tgz",
-          "overridden": true
+          "overridden": false
         }
       }
     },
@@ -19,27 +19,20 @@
       "resolved": "https://registry.npmjs.org/eslint-config-next/-/eslint-config-next-16.3.0-preview.9.tgz",
       "overridden": false,
       "dependencies": {
-        "typescript-eslint": {
-          "version": "8.65.0",
-          "resolved": "https://registry.npmjs.org/typescript-eslint/-/typescript-eslint-8.65.0.tgz",
+        "eslint-plugin-import": {
+          "version": "2.32.0",
+          "resolved": "https://registry.npmjs.org/eslint-plugin-import/-/eslint-plugin-import-2.32.0.tgz",
           "overridden": false,
           "dependencies": {
-            "@typescript-eslint/typescript-estree": {
-              "version": "8.65.0",
-              "resolved": "https://registry.npmjs.org/@typescript-eslint/typescript-estree/-/typescript-estree-8.65.0.tgz",
+            "minimatch": {
+              "version": "3.1.5",
+              "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz",
               "overridden": false,
               "dependencies": {
-                "minimatch": {
-                  "version": "10.2.5",
-                  "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-10.2.5.tgz",
-                  "overridden": false,
-                  "dependencies": {
-                    "brace-expansion": {
-                      "version": "5.0.8",
-                      "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz",
-                      "overridden": true
-                    }
-                  }
+                "brace-expansion": {
+                  "version": "1.1.16",
+                  "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.16.tgz",
+                  "overridden": false
                 }
               }
             }
@@ -48,31 +41,19 @@
       }
     },
     "eslint": {
-      "version": "9.39.1",
-      "resolved": "https://registry.npmjs.org/eslint/-/eslint-9.39.1.tgz",
+      "version": "10.8.0",
+      "resolved": "https://registry.npmjs.org/eslint/-/eslint-10.8.0.tgz",
       "overridden": false,
       "dependencies": {
-        "@eslint/eslintrc": {
-          "version": "3.3.6",
-          "resolved": "https://registry.npmjs.org/@eslint/eslintrc/-/eslintrc-3.3.6.tgz",
-          "overridden": false,
-          "dependencies": {
-            "js-yaml": {
-              "version": "4.3.0",
-              "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.3.0.tgz",
-              "overridden": false
-            }
-          }
-        },
         "minimatch": {
-          "version": "3.1.5",
-          "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-3.1.5.tgz",
+          "version": "10.2.5",
+          "resolved": "https://registry.npmjs.org/minimatch/-/minimatch-10.2.5.tgz",
           "overridden": false,
           "dependencies": {
             "brace-expansion": {
-              "version": "1.1.16",
-              "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-1.1.16.tgz",
-              "overridden": true
+              "version": "5.0.8",
+              "resolved": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.8.tgz",
+              "overridden": false
             }
           }
         }
@@ -81,12 +62,10 @@
     "next": {
       "version": "16.3.0-preview.9",
       "resolved": "https://registry.npmjs.org/next/-/next-16.3.0-preview.9.tgz",
-      "overridden": false,
+      "overridden": true,
       "dependencies": {
         "postcss": {
-          "version": "8.5.10",
-          "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.5.10.tgz",
-          "overridden": false
+          "version": "8.5.23"
         },
         "sharp": {
           "version": "0.35.3"

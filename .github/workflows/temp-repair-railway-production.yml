@@ -1,0 +1,204 @@
+name: Temporary Railway production repair
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/temp-repair-railway-production.yml"
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@latest
+      - name: Repair backend deployment and networking
+        id: repair
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_ID: db1f1265-1590-4bf0-8c1a-884c2806e0b9
+          ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
+          SERVICE_ID: e253a8c9-06d8-4f11-8c54-f300162796ee
+        run: |
+          set +e
+          mkdir -p /tmp/railway-repair
+          report=/tmp/railway-repair/report.md
+
+          printf '## Railway backend repair result\n\n' > "$report"
+          printf -- '- Run: `%s`\n' "${GITHUB_RUN_ID}" >> "$report"
+          printf -- '- Commit: `%s`\n\n' "${GITHUB_SHA}" >> "$report"
+
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            printf '**Result:** `RAILWAY_TOKEN` is not present in GitHub Secrets.\n' >> "$report"
+            gh pr comment 134 --body-file "$report"
+            exit 1
+          fi
+
+          railway --version > /tmp/railway-repair/version.txt 2>&1
+
+          railway link \
+            --project "$PROJECT_ID" \
+            --environment "$ENVIRONMENT_ID" \
+            --service "$SERVICE_ID" \
+            --json \
+            > /tmp/railway-repair/link.json \
+            2> /tmp/railway-repair/link.err
+          link_code=$?
+          printf '### Authentication and link\n\n' >> "$report"
+          printf -- '- Link exit code: `%s`\n' "$link_code" >> "$report"
+          if [ "$link_code" -ne 0 ]; then
+            printf '```text\n' >> "$report"
+            sed -E 's/(token|authorization|bearer)[^ ]*/[REDACTED]/Ig' /tmp/railway-repair/link.err | tail -n 20 >> "$report"
+            printf '\n```\n' >> "$report"
+            gh pr comment 134 --body-file "$report"
+            exit 1
+          fi
+
+          railway status --json \
+            > /tmp/railway-repair/status-before.json \
+            2> /tmp/railway-repair/status-before.err
+          status_before_code=$?
+          printf -- '- Status query exit code: `%s`\n\n' "$status_before_code" >> "$report"
+
+          railway deployment list \
+            --service "$SERVICE_ID" \
+            --environment "$ENVIRONMENT_ID" \
+            --limit 5 \
+            --json \
+            > /tmp/railway-repair/deployments-before.json \
+            2> /tmp/railway-repair/deployments-before.err
+
+          railway redeploy \
+            --service "$SERVICE_ID" \
+            --yes \
+            --json \
+            > /tmp/railway-repair/redeploy.json \
+            2> /tmp/railway-repair/redeploy.err
+          redeploy_code=$?
+          printf '### Redeploy\n\n' >> "$report"
+          printf -- '- Redeploy exit code: `%s`\n' "$redeploy_code" >> "$report"
+
+          latest_status="UNKNOWN"
+          latest_id=""
+          for attempt in $(seq 1 60); do
+            railway deployment list \
+              --service "$SERVICE_ID" \
+              --environment "$ENVIRONMENT_ID" \
+              --limit 1 \
+              --json \
+              > /tmp/railway-repair/latest.json \
+              2> /tmp/railway-repair/latest.err
+
+            readarray -t parsed < <(python - <<'PY'
+import json
+from pathlib import Path
+
+try:
+    data = json.loads(Path('/tmp/railway-repair/latest.json').read_text())
+except Exception:
+    print('UNKNOWN')
+    print('')
+    raise SystemExit
+rows = data if isinstance(data, list) else data.get('deployments', [])
+row = rows[0] if rows else {}
+print(str(row.get('status', 'UNKNOWN')).upper())
+print(str(row.get('id', '')))
+PY
+)
+            latest_status="${parsed[0]:-UNKNOWN}"
+            latest_id="${parsed[1]:-}"
+            case "$latest_status" in
+              SUCCESS|FAILED|CRASHED|REMOVED) break ;;
+            esac
+            sleep 10
+          done
+          printf -- '- Latest deployment status: `%s`\n' "$latest_status" >> "$report"
+          printf -- '- Latest deployment ID: `%s`\n\n' "$latest_id" >> "$report"
+
+          railway domain \
+            --service "$SERVICE_ID" \
+            --json \
+            > /tmp/railway-repair/domain.json \
+            2> /tmp/railway-repair/domain.err
+          domain_code=$?
+
+          railway status --json \
+            > /tmp/railway-repair/status-after.json \
+            2> /tmp/railway-repair/status-after.err
+
+          domain=$(python - <<'PY'
+import json
+import re
+from pathlib import Path
+
+texts = []
+for name in ('domain.json', 'domain.err', 'status-after.json', 'status-after.err'):
+    path = Path('/tmp/railway-repair') / name
+    if path.exists():
+        texts.append(path.read_text(errors='ignore'))
+text = '\n'.join(texts)
+match = re.search(r'([a-zA-Z0-9-]+\.up\.railway\.app)', text)
+print(match.group(1) if match else '')
+PY
+)
+
+          if [ -z "$domain" ]; then
+            railway run --service "$SERVICE_ID" -- sh -lc 'printf "%s" "$RAILWAY_PUBLIC_DOMAIN"' \
+              > /tmp/railway-repair/public-domain.txt \
+              2> /tmp/railway-repair/public-domain.err
+            domain=$(grep -Eo '[a-zA-Z0-9-]+\.up\.railway\.app' /tmp/railway-repair/public-domain.txt | head -n 1)
+          fi
+
+          printf '### Public networking\n\n' >> "$report"
+          printf -- '- Domain command exit code: `%s`\n' "$domain_code" >> "$report"
+          printf -- '- Railway domain: `%s`\n' "${domain:-not-resolved}" >> "$report"
+
+          health_code="000"
+          health_body=""
+          if [ -n "$domain" ]; then
+            for attempt in $(seq 1 30); do
+              health_code=$(curl --silent --show-error --location --max-time 20 \
+                --output /tmp/railway-repair/health-body.txt \
+                --write-out '%{http_code}' \
+                "https://${domain}/health")
+              if [ "$health_code" = "200" ]; then
+                break
+              fi
+              sleep 10
+            done
+            health_body=$(head -c 1000 /tmp/railway-repair/health-body.txt 2>/dev/null)
+          fi
+
+          printf -- '- `/health` HTTP status: `%s`\n\n' "$health_code" >> "$report"
+          if [ -n "$health_body" ]; then
+            printf '```json\n%s\n```\n' "$health_body" >> "$report"
+          fi
+
+          if [ "$latest_status" = "SUCCESS" ] && [ "$health_code" = "200" ]; then
+            printf '\n**Result:** Backend redeployed successfully and the public health endpoint is online.\n' >> "$report"
+            final_code=0
+          else
+            printf '\n**Result:** Railway was reached, but deployment or public health still requires attention.\n' >> "$report"
+            printf '\n<details><summary>Sanitized Railway errors</summary>\n\n```text\n' >> "$report"
+            for file in /tmp/railway-repair/*.err; do
+              [ -s "$file" ] || continue
+              printf '\n--- %s ---\n' "$(basename "$file")" >> "$report"
+              sed -E 's/(token|authorization|bearer)[^ ]*/[REDACTED]/Ig' "$file" | tail -n 20 >> "$report"
+            done
+            printf '\n```\n</details>\n' >> "$report"
+            final_code=1
+          fi
+
+          gh pr comment 134 --body-file "$report"
+          exit "$final_code"

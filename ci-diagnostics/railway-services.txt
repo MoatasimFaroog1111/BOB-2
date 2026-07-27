@@ -1,0 +1,6 @@
+Services in production:
+
+Postgres             | bfa26ab7-0a60-45c8-8ed2-5c4c8241dff1 | SUCCESS
+BOB FRONT END        | df980f63-a808-4043-a73b-08fb16204c84 | SUCCESS
+BOB-2                | b16e1c61-c743-4669-9665-38eae549fcbd | SUCCESS
+Redis                | 1033eb45-cb7f-41d2-aabc-ef04259cc41d | SUCCESS

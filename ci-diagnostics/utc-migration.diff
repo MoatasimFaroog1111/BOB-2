@@ -87,3 +87,249 @@ index 57978c6..1c7a3f9 100644
              revocation_reason="organization_deactivated",
          )
      )
+diff --git a/BOB-2/backend/app/security/dependencies.py b/BOB-2/backend/app/security/dependencies.py
+index b91a922..85d440e 100644
+--- a/BOB-2/backend/app/security/dependencies.py
++++ b/BOB-2/backend/app/security/dependencies.py
+@@ -1,3 +1,5 @@
++from datetime import timezone
++
+ from collections.abc import AsyncIterator
+ from datetime import datetime
+ 
+@@ -29,7 +31,7 @@ def _revoke_invalid_session(
+ ) -> None:
+     if auth_session is None or auth_session.revoked_at is not None:
+         return
+-    auth_session.revoked_at = datetime.utcnow()
++    auth_session.revoked_at = datetime.now(timezone.utc).replace(tzinfo=None)
+     auth_session.revocation_reason = reason[:100]
+     db.commit()
+ 
+@@ -66,7 +68,7 @@ def get_current_token_payload(
+     if (
+         not auth_session
+         or auth_session.revoked_at is not None
+-        or auth_session.expires_at <= datetime.utcnow()
++        or auth_session.expires_at <= datetime.now(timezone.utc).replace(tzinfo=None)
+     ):
+         raise _unauthorized()
+ 
+diff --git a/BOB-2/backend/app/services/refresh_token_rotation.py b/BOB-2/backend/app/services/refresh_token_rotation.py
+index 2ad5ce0..7c1ff7d 100644
+--- a/BOB-2/backend/app/services/refresh_token_rotation.py
++++ b/BOB-2/backend/app/services/refresh_token_rotation.py
+@@ -1,5 +1,7 @@
+ from __future__ import annotations
+ 
++from datetime import timezone
++
+ import hashlib
+ from datetime import datetime
+ from typing import Any
+@@ -132,7 +134,7 @@ def revoke_family(
+     metadata: dict[str, Any] | None = None,
+     commit: bool = True,
+ ) -> None:
+-    now = datetime.utcnow()
++    now = datetime.now(timezone.utc).replace(tzinfo=None)
+     db.execute(
+         update(AuthSession)
+         .where(
+diff --git a/BOB-2/backend/app/services/telegram_accounting_service.py b/BOB-2/backend/app/services/telegram_accounting_service.py
+index 7cd4a30..222755c 100644
+--- a/BOB-2/backend/app/services/telegram_accounting_service.py
++++ b/BOB-2/backend/app/services/telegram_accounting_service.py
+@@ -8,6 +8,8 @@ converted to XML-RPC numbers only at the final Odoo boundary.
+ 
+ from __future__ import annotations
+ 
++from datetime import timezone
++
+ import base64
+ import hashlib
+ import hmac
+@@ -70,7 +72,7 @@ class ApprovalPostingResult:
+ 
+ 
+ def _utcnow() -> datetime:
+-    return datetime.utcnow()
++    return datetime.now(timezone.utc).replace(tzinfo=None)
+ 
+ 
+ def _sha256_text(value: str) -> str:
+diff --git a/BOB-2/backend/app/services/telegram_approval_cleanup.py b/BOB-2/backend/app/services/telegram_approval_cleanup.py
+index 491e041..003f7e4 100644
+--- a/BOB-2/backend/app/services/telegram_approval_cleanup.py
++++ b/BOB-2/backend/app/services/telegram_approval_cleanup.py
+@@ -2,6 +2,8 @@
+ 
+ from __future__ import annotations
+ 
++from datetime import timezone
++
+ from datetime import datetime
+ from pathlib import Path
+ 
+@@ -21,7 +23,7 @@ def expire_pending_approvals(
+     deletion therefore cannot make an expired approval usable again.
+     """
+ 
+-    effective_now = now or datetime.utcnow()
++    effective_now = now or datetime.now(timezone.utc).replace(tzinfo=None)
+     rows = (
+         db.query(TelegramApprovalOperation)
+         .filter(
+diff --git a/BOB-2/backend/app/services/telegram_security.py b/BOB-2/backend/app/services/telegram_security.py
+index c873e7a..2b420fe 100644
+--- a/BOB-2/backend/app/services/telegram_security.py
++++ b/BOB-2/backend/app/services/telegram_security.py
+@@ -7,6 +7,8 @@ from the linked user's current role; they are never copied into Telegram state.
+ 
+ from __future__ import annotations
+ 
++from datetime import timezone
++
+ from dataclasses import dataclass
+ from datetime import datetime
+ from typing import Any, Iterable
+@@ -297,7 +299,7 @@ def authorize_telegram_actor(
+         system_user_email=system_user.email,
+         system_user_role=system_user.role,
+     )
+-    authorization.last_used_at = datetime.utcnow()
++    authorization.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
+     try:
+         db.commit()
+     except Exception:
+diff --git a/BOB-2/backend/tests/test_atomic_refresh_rotation.py b/BOB-2/backend/tests/test_atomic_refresh_rotation.py
+index 1ece034..479cae6 100644
+--- a/BOB-2/backend/tests/test_atomic_refresh_rotation.py
++++ b/BOB-2/backend/tests/test_atomic_refresh_rotation.py
+@@ -1,3 +1,5 @@
++from datetime import timezone
++
+ from concurrent.futures import ThreadPoolExecutor
+ from pathlib import Path
+ from threading import Barrier
+@@ -121,7 +123,7 @@ def test_compare_and_swap_allows_only_one_concurrent_generation_claim(tmp_path:
+                 session_id="race-session",
+                 family_id="race-family",
+                 expected_generation=0,
+-                rotated_at=__import__("datetime").datetime.utcnow(),
++                rotated_at=__import__("datetime").datetime.now(timezone.utc).replace(tzinfo=None),
+             )
+             db.commit()
+             return claimed
+diff --git a/BOB-2/backend/tests/test_external_llm_security.py b/BOB-2/backend/tests/test_external_llm_security.py
+index 7bf7b3f..3ef5ce2 100644
+--- a/BOB-2/backend/tests/test_external_llm_security.py
++++ b/BOB-2/backend/tests/test_external_llm_security.py
+@@ -2,6 +2,8 @@
+ 
+ from __future__ import annotations
+ 
++from datetime import timezone
++
+ import json
+ import socket
+ from datetime import datetime
+@@ -92,7 +94,7 @@ def _create_policy(
+         data_residency_region=region,
+         provider_retention_mode=retention,
+         accepted_by_user_id=user_id,
+-        accepted_at=datetime.utcnow(),
++        accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+         revoked_at=revoked_at,
+         policy_version=1,
+     )
+@@ -178,7 +180,7 @@ def test_api_key_is_not_consent_when_global_switch_is_off(db, monkeypatch):
+         ({"dpa_reference": None}, "accounting_reasoning", "external_llm_dpa_not_current"),
+         ({"region": None}, "accounting_reasoning", "external_llm_dpa_not_current"),
+         ({"retention": None}, "accounting_reasoning", "external_llm_dpa_not_current"),
+-        ({"revoked_at": datetime.utcnow()}, "accounting_reasoning", "external_llm_dpa_not_current"),
++        ({"revoked_at": datetime.now(timezone.utc).replace(tzinfo=None)}, "accounting_reasoning", "external_llm_dpa_not_current"),
+         ({"provider": "openai"}, "accounting_reasoning", "external_llm_provider_not_approved"),
+         ({"model": "other-model"}, "accounting_reasoning", "external_llm_model_not_approved"),
+         ({"purposes": ["accounting_reasoning"]}, "natural_language_intent", "external_llm_purpose_not_approved"),
+@@ -584,7 +586,7 @@ def test_policy_admin_is_tenant_scoped_and_disclosure_list_excludes_other_tenant
+             data_residency_region="KSA",
+             provider_retention_mode="contractual_zero_retention",
+             accepted_by_user_id=second_user.id,
+-            accepted_at=datetime.utcnow(),
++            accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+             policy_version=1,
+         )
+     )
+diff --git a/BOB-2/backend/tests/test_multi_agent_accounting.py b/BOB-2/backend/tests/test_multi_agent_accounting.py
+index 82e0936..c980739 100644
+--- a/BOB-2/backend/tests/test_multi_agent_accounting.py
++++ b/BOB-2/backend/tests/test_multi_agent_accounting.py
+@@ -1,3 +1,5 @@
++from datetime import timezone
++
+ from datetime import datetime
+ 
+ from app.models.core import Organization, User
+@@ -137,7 +139,7 @@ def test_llm_reasoner_parses_provider_shape_only_through_gateway(db, monkeypatch
+             data_residency_region="KSA",
+             provider_retention_mode="contractual_zero_retention",
+             accepted_by_user_id=1,
+-            accepted_at=datetime.utcnow(),
++            accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
+             policy_version=1,
+         )
+     )
+diff --git a/BOB-2/backend/tests/test_telegram_accounting_approvals.py b/BOB-2/backend/tests/test_telegram_accounting_approvals.py
+index 99d399b..7ce2a3a 100644
+--- a/BOB-2/backend/tests/test_telegram_accounting_approvals.py
++++ b/BOB-2/backend/tests/test_telegram_accounting_approvals.py
+@@ -2,6 +2,8 @@
+ 
+ from __future__ import annotations
+ 
++from datetime import timezone
++
+ import inspect
+ import json
+ from datetime import datetime, timedelta
+@@ -232,7 +234,7 @@ def test_expired_approval_is_terminal_and_cannot_post(db):
+     context = _seed_actor(db)
+     approval = _create(db, context)
+     row = db.query(TelegramApprovalOperation).filter_by(id=approval.operation_id).one()
+-    row.expires_at = datetime.utcnow() - timedelta(seconds=1)
++    row.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+     db.commit()
+ 
+     with pytest.raises(TelegramApprovalDenied) as denied:
+diff --git a/BOB-2/backend/tests/test_telegram_ingestion_security.py b/BOB-2/backend/tests/test_telegram_ingestion_security.py
+index 01ec71d..95c7e2c 100644
+--- a/BOB-2/backend/tests/test_telegram_ingestion_security.py
++++ b/BOB-2/backend/tests/test_telegram_ingestion_security.py
+@@ -2,6 +2,8 @@
+ 
+ from __future__ import annotations
+ 
++from datetime import timezone
++
+ import io
+ import threading
+ import time
+@@ -490,7 +492,7 @@ def test_expired_approval_cleanup_updates_state_audits_and_deletes_file(db, tmp_
+ 
+     retained = tmp_path / "retained.pdf"
+     retained.write_bytes(b"%PDF-test")
+-    expired_at = datetime.utcnow() - timedelta(seconds=1)
++    expired_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
+     operation = TelegramApprovalOperation(
+         organization_id=1,
+         authorization_id=1,
+@@ -509,7 +511,7 @@ def test_expired_approval_cleanup_updates_state_audits_and_deletes_file(db, tmp_
+     db.commit()
+     db.refresh(operation)
+ 
+-    expired_ids = expire_pending_approvals(db, now=datetime.utcnow())
++    expired_ids = expire_pending_approvals(db, now=datetime.now(timezone.utc).replace(tzinfo=None))
+     db.refresh(operation)
+     assert expired_ids == [operation.id]
+     assert operation.status == "expired"

@@ -73,11 +73,23 @@ jobs:
           test "$actual" = "$ODOO_HOST"
           echo "ERP outbound allowlist updated to the requested Odoo hostname."
 
-          railway redeploy \
-            --service "$SERVICE_ID" \
-            --yes \
-            --json > /tmp/redeploy.json
-          echo "Backend redeploy requested."
+          redeploy_payload=$(jq -n \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            --arg serviceId "$SERVICE_ID" \
+            '{query:"mutation serviceInstanceRedeploy($environmentId: String!, $serviceId: String!) { serviceInstanceRedeploy(environmentId: $environmentId, serviceId: $serviceId) }",variables:{environmentId:$environmentId,serviceId:$serviceId}}')
+
+          redeploy_response=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url https://backboard.railway.com/graphql/v2 \
+            --header "Project-Access-Token: $RAILWAY_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$redeploy_payload")
+
+          if echo "$redeploy_response" | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
+            echo "$redeploy_response" | jq '{errors}'
+            exit 1
+          fi
+          echo "Backend redeploy requested through the Railway API."
 
       - name: Wait for the backend deployment
         env:

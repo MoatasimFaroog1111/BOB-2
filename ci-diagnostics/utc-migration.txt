@@ -1,0 +1,9 @@
+Traceback (most recent call last):
+  File "/home/runner/work/BOB-2/BOB-2/BOB-2/backend/scripts/replace_datetime_utcnow.py", line 74, in <module>
+    main()
+  File "/home/runner/work/BOB-2/BOB-2/BOB-2/backend/scripts/replace_datetime_utcnow.py", line 60, in main
+    if migrate(path):
+       ^^^^^^^^^^^^^
+  File "/home/runner/work/BOB-2/BOB-2/BOB-2/backend/scripts/replace_datetime_utcnow.py", line 50, in migrate
+    raise RuntimeError(f"Unmigrated datetime.utcnow reference in {path}")
+RuntimeError: Unmigrated datetime.utcnow reference in /home/runner/work/BOB-2/BOB-2/BOB-2/backend/app/models/mixins.py

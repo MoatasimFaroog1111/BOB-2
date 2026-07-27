@@ -1,4 +1,4 @@
-name: Capture frontend audit diagnostics
+name: Refresh and validate frontend dependencies
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  capture-audit:
+  refresh-and-validate:
     if: ${{ !contains(github.event.head_commit.message, '[skip audit-capture]') }}
     runs-on: ubuntu-latest
     steps:
@@ -21,20 +21,35 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: BOB-2/frontend/package-lock.json
+      - name: Regenerate lockfile with security overrides
+        working-directory: BOB-2/frontend
+        run: npm install --package-lock-only --ignore-scripts
       - name: Install locked dependencies
         working-directory: BOB-2/frontend
         run: npm ci --ignore-scripts
-      - name: Capture audit and dependency tree
+      - name: Capture post-remediation reports
         working-directory: BOB-2/frontend
         run: |
           mkdir -p ../../ci-diagnostics
           npm audit --json > ../../ci-diagnostics/frontend-audit.json || true
           npm audit --audit-level=high > ../../ci-diagnostics/frontend-audit.txt 2>&1 || true
           npm ls brace-expansion js-yaml postcss sharp --all --json > ../../ci-diagnostics/frontend-dependency-tree.json || true
-      - name: Commit diagnostic reports
+      - name: Commit regenerated lockfile and reports
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ci-diagnostics/frontend-audit.json ci-diagnostics/frontend-audit.txt ci-diagnostics/frontend-dependency-tree.json
-          git commit -m "ci: capture frontend dependency tree [skip audit-capture]"
-          git push origin HEAD:agent/fix-ci-and-railway
+          git add BOB-2/frontend/package.json BOB-2/frontend/package-lock.json ci-diagnostics
+          if git diff --cached --quiet; then
+            echo "No dependency changes to commit"
+          else
+            git commit -m "chore(frontend): apply patched dependency overrides [skip audit-capture]"
+            git push origin HEAD:agent/fix-ci-and-railway
+          fi
+      - name: Verify npm audit
+        working-directory: BOB-2/frontend
+        run: npm audit --audit-level=high
+      - name: Build frontend
+        working-directory: BOB-2/frontend
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid
+        run: npm run build

@@ -21,13 +21,6 @@ jobs:
       ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
       BACKEND_SERVICE_ID: e253a8c9-06d8-4f11-8c54-f300162796ee
     steps:
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-
-      - name: Install Railway CLI
-        run: npm install --global @railway/cli@latest
-
       - name: Inspect Railway configuration
         id: inspect
         env:
@@ -57,9 +50,14 @@ jobs:
           if test -n "$clamav_id"; then
             service_exists=true
             echo "::add-mask::$clamav_id"
-            railway deployment list --service "$clamav_id" --environment "$ENVIRONMENT_ID" --limit 1 --json > /tmp/deployment.json 2>/dev/null
-            deployment_status=$(jq -r 'if type == "array" then (.[0].status // "UNKNOWN") else (.deployments[0].status // .status // "UNKNOWN") end' /tmp/deployment.json 2>/dev/null | tr '[:lower:]' '[:upper:]')
-            test -n "$deployment_status" || deployment_status=UNKNOWN
+            deployments_payload=$(jq -n \
+              --arg projectId "$PROJECT_ID" \
+              --arg serviceId "$clamav_id" \
+              --arg environmentId "$ENVIRONMENT_ID" \
+              '{query:"query deployments($input: DeploymentListInput!) { deployments(input: $input, first: 5) { edges { node { status createdAt } } } }",variables:{input:{projectId:$projectId,serviceId:$serviceId,environmentId:$environmentId}}}')
+            deployments_response=$(api "$deployments_payload")
+            deployment_status=$(echo "$deployments_response" | jq -r '.data.deployments.edges[0].node.status // "NOT_FOUND"' | tr '[:lower:]' '[:upper:]')
+            if echo "$deployments_response" | jq -e '.errors and (.errors | length > 0)' >/dev/null 2>&1; then api_ok=false; deployment_status=QUERY_ERROR; fi
           fi
 
           require_scan=$(echo "$variables_response" | jq -r '.data.variables.REQUIRE_MALWARE_SCAN // empty')

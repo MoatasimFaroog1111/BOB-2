@@ -128,13 +128,25 @@ jobs:
                   data.extend(chunk)
               return bytes(data)
 
+          def recv_command(connection):
+              first = recv_exact(connection, 1)
+              if first == b"n":
+                  terminator = b"\n"
+              elif first == b"z":
+                  terminator = b"\0"
+              else:
+                  raise ValueError("unsupported command prefix")
+
+              command = bytearray(first)
+              while not command.endswith(terminator):
+                  command.extend(recv_exact(connection, 1))
+              return bytes(command), terminator
+
           def handle(connection):
               try:
-                  command = bytearray()
-                  while not command.endswith(b"\0"):
-                      command.extend(connection.recv(1))
-                  if bytes(command) != b"zINSTREAM\0":
-                      connection.sendall(b"UNKNOWN COMMAND\0")
+                  command, terminator = recv_command(connection)
+                  if command not in (b"nINSTREAM\n", b"zINSTREAM\0"):
+                      connection.sendall(b"UNKNOWN COMMAND" + terminator)
                       return
 
                   payload = bytearray()
@@ -145,9 +157,12 @@ jobs:
                       payload.extend(recv_exact(connection, size))
 
                   if EICAR in payload:
-                      connection.sendall(b"stream: Eicar-Test-Signature FOUND\0")
+                      response = b"stream: Eicar-Test-Signature FOUND"
                   else:
-                      connection.sendall(b"stream: OK\0")
+                      response = b"stream: OK"
+                  connection.sendall(response + terminator)
+              except Exception as exc:
+                  print(f"fake clamd handler error: {type(exc).__name__}", flush=True)
               finally:
                   connection.close()
 

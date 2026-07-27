@@ -1,0 +1,247 @@
+name: Temporary account recovery production setup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/temp-account-recovery-production.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/account-recovery-production-trigger"
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  configure-and-recover:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install Railway and recovery dependencies
+        run: |
+          npm install --global @railway/cli@latest
+          python -m pip install --quiet psycopg2-binary PyJWT
+
+      - name: Configure account recovery and redeploy backend
+        id: configure
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          PROJECT_ID: db1f1265-1590-4bf0-8c1a-884c2806e0b9
+          ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
+          SERVICE_ID: e253a8c9-06d8-4f11-8c54-f300162796ee
+          ACCOUNT_ACCESS_URL: https://bob-front-end-production.up.railway.app/team
+        run: |
+          set -euo pipefail
+
+          upsert_payload=$(jq -n \
+            --arg projectId "$PROJECT_ID" \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            --arg serviceId "$SERVICE_ID" \
+            --arg name "ACCOUNT_ACCESS_FRONTEND_URL" \
+            --arg value "$ACCOUNT_ACCESS_URL" \
+            '{query:"mutation variableUpsert($input: VariableUpsertInput!) { variableUpsert(input: $input) }",variables:{input:{projectId:$projectId,environmentId:$environmentId,serviceId:$serviceId,name:$name,value:$value}}}')
+
+          upsert_response=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url https://backboard.railway.com/graphql/v2 \
+            --header "Project-Access-Token: $RAILWAY_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$upsert_payload")
+          if echo "$upsert_response" | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
+            echo "$upsert_response" | jq '{errors}'
+            exit 1
+          fi
+
+          variables_payload=$(jq -n \
+            --arg projectId "$PROJECT_ID" \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            --arg serviceId "$SERVICE_ID" \
+            '{query:"query variables($projectId: String!, $environmentId: String!, $serviceId: String) { variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId) }",variables:{projectId:$projectId,environmentId:$environmentId,serviceId:$serviceId}}')
+          variables_response=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url https://backboard.railway.com/graphql/v2 \
+            --header "Project-Access-Token: $RAILWAY_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$variables_payload")
+          if echo "$variables_response" | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
+            echo "$variables_response" | jq '{errors}'
+            exit 1
+          fi
+
+          actual_url=$(echo "$variables_response" | jq -r '.data.variables.ACCOUNT_ACCESS_FRONTEND_URL // empty')
+          test "$actual_url" = "$ACCOUNT_ACCESS_URL"
+          if test -n "$(echo "$variables_response" | jq -r '.data.variables.RESEND_API_KEY // empty')"; then
+            echo "resend_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "resend_present=false" >> "$GITHUB_OUTPUT"
+          fi
+          if test -n "$(echo "$variables_response" | jq -r '.data.variables.ACCOUNT_EMAIL_FROM // empty')"; then
+            echo "from_present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "from_present=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          redeploy_payload=$(jq -n \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            --arg serviceId "$SERVICE_ID" \
+            '{query:"mutation serviceInstanceRedeploy($environmentId: String!, $serviceId: String!) { serviceInstanceRedeploy(environmentId: $environmentId, serviceId: $serviceId) }",variables:{environmentId:$environmentId,serviceId:$serviceId}}')
+          redeploy_response=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url https://backboard.railway.com/graphql/v2 \
+            --header "Project-Access-Token: $RAILWAY_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$redeploy_payload")
+          if echo "$redeploy_response" | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
+            echo "$redeploy_response" | jq '{errors}'
+            exit 1
+          fi
+          echo "Account recovery URL configured and backend redeploy requested."
+
+      - name: Wait for backend and verify health
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
+          SERVICE_ID: e253a8c9-06d8-4f11-8c54-f300162796ee
+        run: |
+          set -euo pipefail
+          final_status="UNKNOWN"
+          for attempt in $(seq 1 60); do
+            railway deployment list \
+              --service "$SERVICE_ID" \
+              --environment "$ENVIRONMENT_ID" \
+              --limit 1 \
+              --json > /tmp/latest-deployment.json
+            final_status=$(jq -r 'if type == "array" then (.[0].status // "UNKNOWN") else (.deployments[0].status // .status // "UNKNOWN") end' /tmp/latest-deployment.json | tr '[:lower:]' '[:upper:]')
+            case "$final_status" in
+              SUCCESS) break ;;
+              FAILED|CRASHED|REMOVED) echo "Backend deployment ended with $final_status"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          test "$final_status" = "SUCCESS"
+          health=$(curl --fail --silent --show-error --max-time 30 https://bob-2-production.up.railway.app/health)
+          echo "$health" | jq -e '.status == "healthy"' >/dev/null
+
+      - name: Create one-time owner reset link
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          PROJECT_ID: db1f1265-1590-4bf0-8c1a-884c2806e0b9
+          ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
+          BACKEND_SERVICE_ID: e253a8c9-06d8-4f11-8c54-f300162796ee
+          LOGIN_EMAIL: motasim.noor@gtc-intl.com
+          FRONTEND_URL: https://bob-front-end-production.up.railway.app/team
+          RESEND_PRESENT: ${{ steps.configure.outputs.resend_present }}
+          FROM_PRESENT: ${{ steps.configure.outputs.from_present }}
+        run: |
+          set -euo pipefail
+
+          services_payload=$(jq -n \
+            --arg projectId "$PROJECT_ID" \
+            '{query:"query project($projectId: String!) { project(id: $projectId) { services { edges { node { id name } } } } }",variables:{projectId:$projectId}}')
+          services_response=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url https://backboard.railway.com/graphql/v2 \
+            --header "Project-Access-Token: $RAILWAY_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$services_payload")
+          postgres_service_id=$(echo "$services_response" | jq -r '.data.project.services.edges[].node | select((.name | ascii_downcase) | contains("postgres")) | .id' | head -n 1)
+          test -n "$postgres_service_id"
+
+          query_variables() {
+            local service_id="$1"
+            local payload
+            payload=$(jq -n \
+              --arg projectId "$PROJECT_ID" \
+              --arg environmentId "$ENVIRONMENT_ID" \
+              --arg serviceId "$service_id" \
+              '{query:"query variables($projectId: String!, $environmentId: String!, $serviceId: String) { variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId) }",variables:{projectId:$projectId,environmentId:$environmentId,serviceId:$serviceId}}')
+            curl --fail-with-body --silent --show-error \
+              --request POST \
+              --url https://backboard.railway.com/graphql/v2 \
+              --header "Project-Access-Token: $RAILWAY_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data "$payload"
+          }
+
+          backend_variables=$(query_variables "$BACKEND_SERVICE_ID")
+          postgres_variables=$(query_variables "$postgres_service_id")
+          SECRET_KEY=$(echo "$backend_variables" | jq -r '.data.variables.SECRET_KEY // empty')
+          DATABASE_PUBLIC_URL=$(echo "$postgres_variables" | jq -r '.data.variables.DATABASE_PUBLIC_URL // .data.variables.POSTGRES_PUBLIC_URL // empty')
+          test -n "$SECRET_KEY"
+          test -n "$DATABASE_PUBLIC_URL"
+          echo "::add-mask::$SECRET_KEY"
+          echo "::add-mask::$DATABASE_PUBLIC_URL"
+          export SECRET_KEY DATABASE_PUBLIC_URL LOGIN_EMAIL FRONTEND_URL
+
+          python - <<'PY' > /tmp/reset-url.txt
+          import hashlib
+          import os
+          import secrets
+          from datetime import datetime, timedelta, timezone
+          from urllib.parse import urlencode
+
+          import jwt
+          import psycopg2
+
+          email = os.environ["LOGIN_EMAIL"].strip().lower()
+          conn = psycopg2.connect(os.environ["DATABASE_PUBLIC_URL"], connect_timeout=15)
+          try:
+              with conn.cursor() as cur:
+                  cur.execute(
+                      """
+                      SELECT u.id, u.email, u.security_version, u.hashed_password
+                      FROM users AS u
+                      JOIN organizations AS o ON o.id = u.organization_id
+                      WHERE lower(u.email) = %s AND u.is_active IS TRUE AND o.is_active IS TRUE
+                      """,
+                      (email,),
+                  )
+                  row = cur.fetchone()
+          finally:
+              conn.close()
+          if not row:
+              raise SystemExit("Active owner account was not found")
+
+          now = datetime.now(timezone.utc)
+          token = jwt.encode(
+              {
+                  "uid": int(row[0]),
+                  "email": row[1],
+                  "sv": int(row[2] or 1),
+                  "pwd": hashlib.sha256(row[3].encode("utf-8")).hexdigest(),
+                  "type": "password_reset",
+                  "iat": now,
+                  "nbf": now,
+                  "exp": now + timedelta(minutes=20),
+                  "jti": secrets.token_urlsafe(24),
+              },
+              os.environ["SECRET_KEY"],
+              algorithm="HS256",
+          )
+          print(f'{os.environ["FRONTEND_URL"]}?{urlencode({"reset_token": token})}')
+          PY
+
+          RESET_URL=$(cat /tmp/reset-url.txt)
+          test -n "$RESET_URL"
+          echo "::add-mask::$RESET_URL"
+          email_ready=false
+          if test "$RESEND_PRESENT" = "true" && test "$FROM_PRESENT" = "true"; then
+            email_ready=true
+          fi
+
+          jq -n \
+            --arg body "## One-time production password recovery\n\nEmail delivery configured: \`$email_ready\`\n\nReset URL (valid for 20 minutes and invalid after password change):\n\n\`$RESET_URL\`" \
+            '{body:$body}' > /tmp/comment.json
+          gh api \
+            --method POST \
+            "repos/${GITHUB_REPOSITORY}/issues/138/comments" \
+            --input /tmp/comment.json >/dev/null

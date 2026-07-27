@@ -12,7 +12,7 @@ https://nextjs.org/telemetry
 
 
   Creating an optimized production build ...
-✓ Compiled successfully in 6.4s
+✓ Compiled successfully in 5.7s
   Running TypeScript ...
   Finished TypeScript in 4.0s ...
   Collecting page data using 3 workers ...
@@ -20,7 +20,7 @@ https://nextjs.org/telemetry
   Generating static pages using 3 workers (3/15) 
   Generating static pages using 3 workers (7/15) 
   Generating static pages using 3 workers (11/15) 
-✓ Generating static pages using 3 workers (15/15) in 270ms
+✓ Generating static pages using 3 workers (15/15) in 240ms
   Finalizing page optimization ...
 
 Route (app)

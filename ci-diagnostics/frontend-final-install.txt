@@ -1,13 +1,8 @@
 npm warn using --force Recommended protections disabled.
 
-added 367 packages, and audited 368 packages in 23s
+added 354 packages, and audited 355 packages in 22s
 
 146 packages are looking for funding
   run `npm fund` for details
 
-5 high severity vulnerabilities
-
-To address all issues (including breaking changes), run:
-  npm audit fix --force
-
-Run `npm audit` for details.
+found 0 vulnerabilities

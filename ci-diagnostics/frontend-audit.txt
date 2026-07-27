@@ -1,0 +1,44 @@
+# npm audit report
+
+brace-expansion  <=5.0.7
+Severity: high
+brace-expansion: DoS via exponential-time expansion of consecutive non-expanding {} groups - https://github.com/advisories/GHSA-3jxr-9vmj-r5cp
+brace-expansion: DoS via unbounded expansion length causing an out-of-memory process crash - https://github.com/advisories/GHSA-mh99-v99m-4gvg
+fix available via `npm audit fix`
+node_modules/brace-expansion
+node_modules/eslint-config-next/node_modules/brace-expansion
+
+js-yaml  4.0.0 - 4.2.0
+Severity: high
+js-yaml: YAML merge-key chains can force quadratic CPU consumption - https://github.com/advisories/GHSA-52cp-r559-cp3m
+fix available via `npm audit fix`
+node_modules/js-yaml
+
+postcss  <=8.5.17
+Severity: high
+PostCSS has XSS via Unescaped </style> in its CSS Stringify Output - https://github.com/advisories/GHSA-qx2v-qp2m-jg93
+PostCSS: Arbitrary file read and information disclosure via attacker-controlled sourceMappingURL in CSS comments - https://github.com/advisories/GHSA-6g55-p6wh-862q
+PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMappingURL) leads to Arbitrary .map File Disclosure - https://github.com/advisories/GHSA-r28c-9q8g-f849
+fix available via `npm audit fix --force`
+Will install next@9.3.3, which is a breaking change
+node_modules/next/node_modules/postcss
+node_modules/postcss
+  next  9.3.4-canary.0 - 16.3.0-preview.7
+  Depends on vulnerable versions of postcss
+  Depends on vulnerable versions of sharp
+  node_modules/next
+
+sharp  <0.35.0
+Severity: high
+sharp inherited vulnerabilities in libvips: CVE-2026-33327, CVE-2026-33328, CVE-2026-35590, CVE-2026-35591 - https://github.com/advisories/GHSA-f88m-g3jw-g9cj
+fix available via `npm audit fix --force`
+Will install next@9.3.3, which is a breaking change
+node_modules/next/node_modules/sharp
+
+5 high severity vulnerabilities
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force

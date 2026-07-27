@@ -19,14 +19,11 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
-          cache: npm
-          cache-dependency-path: BOB-2/frontend/package-lock.json
-      - name: Regenerate lockfile with security overrides
+      - name: Rebuild dependency tree from scratch
         working-directory: BOB-2/frontend
-        run: npm install --package-lock-only --ignore-scripts
-      - name: Install locked dependencies
-        working-directory: BOB-2/frontend
-        run: npm ci --ignore-scripts
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install --ignore-scripts --force
       - name: Capture post-remediation reports
         working-directory: BOB-2/frontend
         run: |
@@ -42,7 +39,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No dependency changes to commit"
           else
-            git commit -m "chore(frontend): apply patched dependency overrides [skip audit-capture]"
+            git commit -m "chore(frontend): rebuild secure dependency lock [skip audit-capture]"
             git push origin HEAD:agent/fix-ci-and-railway
           fi
       - name: Verify npm audit

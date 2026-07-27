@@ -148,21 +148,20 @@ def test_llm_reasoner_parses_provider_shape_only_through_gateway(db, monkeypatch
     monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_MODELS", "anthropic:claude-sonnet-4-20250514")
 
     provider_response = {
-        "choices": [
+        "content": [
             {
-                "message": {
-                    "content": """
-                    {
-                      "summary": "Invoice appears valid but needs approval.",
-                      "document_assessment": {"document_type": "invoice"},
-                      "vat_assessment": {"vat_rate": "15%", "treatment": "input VAT review"},
-                      "journal_entry_recommendation": {"debit": "Expense", "credit": "Accounts payable"},
-                      "risks": ["Confirm supplier VAT registration"],
-                      "questions_for_accountant": ["Is the supplier approved?"],
-                      "confidence_score": 0.82
-                    }
-                    """
+                "type": "text",
+                "text": """
+                {
+                  "summary": "Invoice appears valid but needs approval.",
+                  "document_assessment": {"document_type": "invoice"},
+                  "vat_assessment": {"vat_rate": "15%", "treatment": "input VAT review"},
+                  "journal_entry_recommendation": {"debit": "Expense", "credit": "Accounts payable"},
+                  "risks": ["Confirm supplier VAT registration"],
+                  "questions_for_accountant": ["Is the supplier approved?"],
+                  "confidence_score": 0.82
                 }
+                """,
             }
         ]
     }

@@ -22,24 +22,39 @@ jobs:
       - name: Rebuild locked dependency tree
         working-directory: BOB-2/frontend
         run: |
+          mkdir -p ../../ci-diagnostics
           rm -rf node_modules package-lock.json
-          npm install --ignore-scripts --force
-      - name: Validate audit, lint, and build
+          set +e
+          npm install --ignore-scripts --force > ../../ci-diagnostics/frontend-final-install.txt 2>&1
+          echo $? > ../../ci-diagnostics/frontend-final-install-exit-code.txt
+          set -e
+      - name: Capture audit, lint, and build
         working-directory: BOB-2/frontend
         env:
           NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid
         run: |
-          npm audit --audit-level=high
-          npm run lint
-          npm run build
-      - name: Commit regenerated lockfile
+          set +e
+          npm audit --audit-level=high > ../../ci-diagnostics/frontend-final-audit.txt 2>&1
+          echo $? > ../../ci-diagnostics/frontend-final-audit-exit-code.txt
+          npm run lint > ../../ci-diagnostics/frontend-final-lint.txt 2>&1
+          echo $? > ../../ci-diagnostics/frontend-final-lint-exit-code.txt
+          npm run build > ../../ci-diagnostics/frontend-final-build.txt 2>&1
+          echo $? > ../../ci-diagnostics/frontend-final-build-exit-code.txt
+          set -e
+      - name: Commit regenerated lockfile and diagnostics
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add BOB-2/frontend/package-lock.json
+          git add BOB-2/frontend/package-lock.json ci-diagnostics
           if git diff --cached --quiet; then
-            echo "Lockfile already current"
+            echo "No validation changes to commit"
           else
-            git commit -m "chore(frontend): refresh compatible secure lock [skip final-lock-refresh]"
+            git commit -m "ci: capture final frontend validation [skip final-lock-refresh]"
             git push origin HEAD:agent/fix-ci-and-railway
           fi
+      - name: Enforce successful validation
+        run: |
+          test "$(cat ci-diagnostics/frontend-final-install-exit-code.txt)" = "0"
+          test "$(cat ci-diagnostics/frontend-final-audit-exit-code.txt)" = "0"
+          test "$(cat ci-diagnostics/frontend-final-lint-exit-code.txt)" = "0"
+          test "$(cat ci-diagnostics/frontend-final-build-exit-code.txt)" = "0"

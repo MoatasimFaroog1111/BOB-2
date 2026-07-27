@@ -24,16 +24,17 @@ jobs:
       - name: Install locked dependencies
         working-directory: BOB-2/frontend
         run: npm ci --ignore-scripts
-      - name: Capture audit report
+      - name: Capture audit and dependency tree
         working-directory: BOB-2/frontend
         run: |
           mkdir -p ../../ci-diagnostics
           npm audit --json > ../../ci-diagnostics/frontend-audit.json || true
           npm audit --audit-level=high > ../../ci-diagnostics/frontend-audit.txt 2>&1 || true
-      - name: Commit audit report
+          npm ls brace-expansion js-yaml postcss sharp --all --json > ../../ci-diagnostics/frontend-dependency-tree.json || true
+      - name: Commit diagnostic reports
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add ci-diagnostics/frontend-audit.json ci-diagnostics/frontend-audit.txt
-          git commit -m "ci: capture frontend audit diagnostics [skip audit-capture]"
+          git add ci-diagnostics/frontend-audit.json ci-diagnostics/frontend-audit.txt ci-diagnostics/frontend-dependency-tree.json
+          git commit -m "ci: capture frontend dependency tree [skip audit-capture]"
           git push origin HEAD:agent/fix-ci-and-railway

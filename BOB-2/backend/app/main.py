@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -16,6 +17,7 @@ from app.middleware.audit import AuditLogMiddleware
 from app.middleware.request_size import RequestSizeLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.security.document_processing_guard import install_document_processing_guard
+from app.security.file_validation import verify_malware_scanner_ready
 from app.security.ocr_guard import install_ocr_guard
 from app.services.readiness import readiness_snapshot
 from app.services.telegram_runtime import (
@@ -35,18 +37,14 @@ _RAILWAY_ENVIRONMENT_VARIABLES = (
 )
 
 # Railway terminates TLS and performs host routing at its managed edge. Only
-# controls that are genuinely supplied by that edge may be delegated. Redis,
-# secret storage, database, ERP egress and all other application controls stay
-# fail-closed on Railway exactly as they do on every other production runtime.
+# controls genuinely supplied by that edge may be delegated. Redis, malware
+# scanning, secret storage, database, ERP egress and every other application
+# control stay fail-closed on Railway exactly as on every production runtime.
 _RAILWAY_DELEGATED_SECURITY_ERRORS = {
     "TRUSTED_HOSTS is required",
     "TRUSTED_PROXY_IPS is required",
     "REQUIRE_HTTPS must be true",
     "FRONTEND_ORIGIN must use https",
-    # TODO(security): remove both malware-scanning exceptions when the Railway
-    # ClamAV private service is deployed and verified by the release workflow.
-    "REQUIRE_MALWARE_SCAN must be true",
-    "CLAMAV_HOST is required when malware scanning is enabled",
 }
 
 
@@ -59,8 +57,7 @@ def _validate_startup_security() -> None:
     """Validate production settings while respecting Railway's managed edge.
 
     The ordinary production profile remains fully fail-closed. On Railway only
-    controls supplied by the platform edge, or the explicitly documented
-    temporary malware-scanning integration, may be absent. Every other
+    controls supplied by the platform edge may be absent. Every application-level
     validation error still aborts startup.
     """
     if _is_railway_runtime() and not settings.is_production:
@@ -95,13 +92,16 @@ def _validate_startup_security() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize only non-blocking runtime guards.
+    """Initialize bounded fail-closed production guards.
 
     Database migrations and baseline seeding run through Railway's pre-deploy
-    command. They must not block Uvicorn from binding to PORT, otherwise Railway
-    can only report a generic network healthcheck failure.
+    command. The malware scanner check is the only bounded dependency probe here:
+    production must prove that clean bytes pass and EICAR is detected before the
+    API accepts traffic.
     """
     _validate_startup_security()
+    if settings.is_production and settings.REQUIRE_MALWARE_SCAN:
+        await asyncio.to_thread(verify_malware_scanner_ready)
     install_ocr_guard()
     install_document_processing_guard()
     install_runtime_guard()

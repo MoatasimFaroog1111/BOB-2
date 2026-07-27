@@ -1,4 +1,4 @@
-"""Tests that production cannot start with optional security controls."""
+"""Tests that production cannot start without mandatory security controls."""
 
 import pytest
 
@@ -100,7 +100,31 @@ def test_railway_without_redis_refuses_startup(monkeypatch):
         main_module._validate_startup_security()
 
 
-def test_railway_only_delegates_managed_edge_and_temporary_clamav_controls():
+def test_railway_without_required_malware_scan_refuses_startup(monkeypatch):
+    from app import main as main_module
+
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_ID", "railway-production")
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        _production_settings(REQUIRE_MALWARE_SCAN=False),
+    )
+
+    with pytest.raises(ValueError, match="REQUIRE_MALWARE_SCAN"):
+        main_module._validate_startup_security()
+
+
+def test_railway_without_clamav_host_refuses_startup(monkeypatch):
+    from app import main as main_module
+
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_ID", "railway-production")
+    monkeypatch.setattr(main_module, "settings", _production_settings(CLAMAV_HOST=""))
+
+    with pytest.raises(ValueError, match="CLAMAV_HOST"):
+        main_module._validate_startup_security()
+
+
+def test_railway_only_delegates_managed_edge_controls():
     from app import main as main_module
 
     assert main_module._RAILWAY_DELEGATED_SECURITY_ERRORS == {
@@ -108,8 +132,6 @@ def test_railway_only_delegates_managed_edge_and_temporary_clamav_controls():
         "TRUSTED_PROXY_IPS is required",
         "REQUIRE_HTTPS must be true",
         "FRONTEND_ORIGIN must use https",
-        "REQUIRE_MALWARE_SCAN must be true",
-        "CLAMAV_HOST is required when malware scanning is enabled",
     }
 
 

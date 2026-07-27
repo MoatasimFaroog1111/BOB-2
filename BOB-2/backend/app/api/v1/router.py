@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends
 
+from app.api.v1.account_access import router as account_access_router
 from app.api.v1.accounting_ai import router as accounting_ai_router
 from app.api.v1.accounting_command_router import router as accounting_command_router
 from app.api.v1.agents import router as agents_router
@@ -33,6 +34,7 @@ financial_access = [Depends(enforce_financial_route_permission)]
 
 api_router.include_router(system_router, prefix="/system", tags=["System"])
 api_router.include_router(auth_router, prefix="/auth", tags=["Security"])
+api_router.include_router(account_access_router, prefix="/auth", tags=["Account Access"])
 api_router.include_router(mfa_router, prefix="/auth", tags=["Multi-Factor Authentication"])
 api_router.include_router(journal_router, prefix="/journal", tags=["Journal Entries"])
 api_router.include_router(

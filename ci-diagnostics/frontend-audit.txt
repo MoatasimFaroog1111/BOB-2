@@ -23,19 +23,30 @@ node_modules/brace-expansion
     eslint-plugin-import  >=1.15.0
     Depends on vulnerable versions of minimatch
     node_modules/eslint-plugin-import
+    eslint-plugin-jsx-a11y  >=6.5.0
+    Depends on vulnerable versions of minimatch
+    node_modules/eslint-plugin-jsx-a11y
       eslint-config-next  >=10.2.1-canary.2
       Depends on vulnerable versions of eslint-plugin-import
       Depends on vulnerable versions of eslint-plugin-jsx-a11y
       Depends on vulnerable versions of eslint-plugin-react
       node_modules/eslint-config-next
-    eslint-plugin-jsx-a11y  >=6.5.0
-    Depends on vulnerable versions of minimatch
-    node_modules/eslint-plugin-jsx-a11y
     eslint-plugin-react  >=7.23.0
     Depends on vulnerable versions of minimatch
     node_modules/eslint-plugin-react
 
-9 high severity vulnerabilities
+postcss  <=8.5.17
+Severity: high
+PostCSS: Arbitrary file read and information disclosure via attacker-controlled sourceMappingURL in CSS comments - https://github.com/advisories/GHSA-6g55-p6wh-862q
+PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMappingURL) leads to Arbitrary .map File Disclosure - https://github.com/advisories/GHSA-r28c-9q8g-f849
+fix available via `npm audit fix --force`
+Will install next@9.3.3, which is a breaking change
+node_modules/next/node_modules/postcss
+  next  >=9.3.4-canary.0
+  Depends on vulnerable versions of postcss
+  node_modules/next
+
+11 high severity vulnerabilities
 
 To address issues that do not require attention, run:
   npm audit fix

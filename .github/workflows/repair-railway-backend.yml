@@ -1,0 +1,122 @@
+name: Repair Railway backend
+
+on:
+  push:
+    branches:
+      - agent/fix-ci-and-railway
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: ${{ !contains(github.event.head_commit.message, '[skip railway-repair]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/fix-ci-and-railway
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@latest
+      - name: Inspect, redeploy, and restore public domain
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          PROJECT_ID: db1f1265-1590-4bf0-8c1a-884c2806e0b9
+          ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
+          SERVICE_ID: e253a8c9-06d8-4f11-8c54-f300162796ee
+        run: |
+          mkdir -p ci-diagnostics
+          set +e
+
+          railway --version > ci-diagnostics/railway-cli-version.txt 2>&1
+
+          railway link \
+            --project "$PROJECT_ID" \
+            --environment "$ENVIRONMENT_ID" \
+            --service "$SERVICE_ID" \
+            --json \
+            > ci-diagnostics/railway-link.json \
+            2> ci-diagnostics/railway-link-error.txt
+          echo $? > ci-diagnostics/railway-link-exit-code.txt
+
+          railway status --json \
+            > ci-diagnostics/railway-status-before.json \
+            2> ci-diagnostics/railway-status-before-error.txt
+          echo $? > ci-diagnostics/railway-status-before-exit-code.txt
+
+          railway service status --all \
+            > ci-diagnostics/railway-services-before.txt \
+            2> ci-diagnostics/railway-services-before-error.txt
+          echo $? > ci-diagnostics/railway-services-before-exit-code.txt
+
+          railway deployment list \
+            --service "$SERVICE_ID" \
+            --environment "$ENVIRONMENT_ID" \
+            --limit 10 \
+            --json \
+            > ci-diagnostics/railway-deployments-before.json \
+            2> ci-diagnostics/railway-deployments-before-error.txt
+          echo $? > ci-diagnostics/railway-deployments-before-exit-code.txt
+
+          railway redeploy \
+            --service "$SERVICE_ID" \
+            --yes \
+            --json \
+            > ci-diagnostics/railway-redeploy.json \
+            2> ci-diagnostics/railway-redeploy-error.txt
+          echo $? > ci-diagnostics/railway-redeploy-exit-code.txt
+
+          for attempt in $(seq 1 60); do
+            railway deployment list \
+              --service "$SERVICE_ID" \
+              --environment "$ENVIRONMENT_ID" \
+              --limit 1 \
+              --json \
+              > ci-diagnostics/railway-deployment-latest.json \
+              2> ci-diagnostics/railway-deployment-latest-error.txt
+            python - <<'PY'
+import json
+from pathlib import Path
+
+path = Path("ci-diagnostics/railway-deployment-latest.json")
+try:
+    payload = json.loads(path.read_text())
+except Exception:
+    raise SystemExit(1)
+
+rows = payload if isinstance(payload, list) else payload.get("deployments", [])
+if not rows:
+    raise SystemExit(1)
+status = str(rows[0].get("status", "")).upper()
+Path("ci-diagnostics/railway-latest-status.txt").write_text(status)
+raise SystemExit(0 if status in {"SUCCESS", "FAILED", "CRASHED", "REMOVED"} else 1)
+PY
+            if [ $? -eq 0 ]; then
+              break
+            fi
+            sleep 10
+          done
+
+          railway domain \
+            --service "$SERVICE_ID" \
+            --json \
+            > ci-diagnostics/railway-domain.json \
+            2> ci-diagnostics/railway-domain-error.txt
+          echo $? > ci-diagnostics/railway-domain-exit-code.txt
+
+          railway status --json \
+            > ci-diagnostics/railway-status-after.json \
+            2> ci-diagnostics/railway-status-after-error.txt
+          echo $? > ci-diagnostics/railway-status-after-exit-code.txt
+
+          set -e
+      - name: Commit Railway evidence
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add ci-diagnostics
+          git commit -m "ci: capture Railway backend repair [skip railway-repair]"
+          git push origin HEAD:agent/fix-ci-and-railway

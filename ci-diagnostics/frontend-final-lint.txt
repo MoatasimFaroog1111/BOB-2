@@ -1,0 +1,240 @@
+
+> frontend@0.1.0 lint
+> eslint
+
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/admin/llm/page.tsx
+  172:10  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/admin/llm/page.tsx:172:10
+  170 |
+  171 |   useEffect(() => {
+> 172 |     void loadAll();
+      |          ^^^^^^^ Avoid calling setState() directly within an effect
+  173 |   }, [loadAll]);
+  174 |
+  175 |   const approvedModelOptions = useMemo(() => {  react-hooks/set-state-in-effect
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/admin/telegram/page.tsx
+  133:10  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/admin/telegram/page.tsx:133:10
+  131 |
+  132 |   useEffect(() => {
+> 133 |     void loadAll();
+      |          ^^^^^^^ Avoid calling setState() directly within an effect
+  134 |     const timer = window.setInterval(() => void loadAll(), 15_000);
+  135 |     return () => window.clearInterval(timer);
+  136 |   }, [loadAll]);  react-hooks/set-state-in-effect
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/audit/page.tsx
+   35:11  warning  't' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+   35:14  warning  'language' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+   70:5   warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/audit/page.tsx:70:5
+  68 |
+  69 |   useEffect(() => {
+> 70 |     fetchAccounts();
+     |     ^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  71 |   }, [selectedCompanyId]);
+  72 |
+  73 |   const handleDetectAttachments = async () => {  react-hooks/set-state-in-effect
+   71:6   warning  React Hook useEffect has a missing dependency: 'fetchAccounts'. Either include it or remove the dependency array                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       react-hooks/exhaustive-deps
+  103:19  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/communication-tools/page.tsx
+  117:5  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/communication-tools/page.tsx:117:5
+  115 |
+  116 |   useEffect(() => {
+> 117 |     loadStatus();
+      |     ^^^^^^^^^^ Avoid calling setState() directly within an effect
+  118 |   }, []);
+  119 |
+  120 |   const actionButtons: { key: ActionKey; label: string; description: string }[] = [  react-hooks/set-state-in-effect
+  118:6  warning  React Hook useEffect has a missing dependency: 'loadStatus'. Either include it or remove the dependency array                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             react-hooks/exhaustive-deps
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/documents/page.tsx
+   247:33  warning  Unexpected any. Specify a different type                                                                               @typescript-eslint/no-explicit-any
+   265:19  warning  Unexpected any. Specify a different type                                                                               @typescript-eslint/no-explicit-any
+   406:19  warning  Unexpected any. Specify a different type                                                                               @typescript-eslint/no-explicit-any
+   520:40  warning  Unexpected any. Specify a different type                                                                               @typescript-eslint/no-explicit-any
+   554:19  warning  Unexpected any. Specify a different type                                                                               @typescript-eslint/no-explicit-any
+   574:6   warning  React Hook useEffect has a missing dependency: 'fetchDiscoveryData'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+   610:51  warning  Unexpected any. Specify a different type                                                                               @typescript-eslint/no-explicit-any
+  1402:19  warning  Unexpected any. Specify a different type                                                                               @typescript-eslint/no-explicit-any
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/erp/discovery/page.tsx
+   20:32  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+   43:5   warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/erp/discovery/page.tsx:43:5
+  41 |
+  42 |   useEffect(() => {
+> 43 |     fetchDiscoveryData();
+     |     ^^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  44 |   }, []);
+  45 |
+  46 |   const handleTriggerDiscovery = async () => {  react-hooks/set-state-in-effect
+   61:19  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+   67:36  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+   69:32  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+  354:64  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-explicit-any
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/erp/page.tsx
+   19:48  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-explicit-any
+   20:58  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-explicit-any
+   21:50  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-explicit-any
+   27:58  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-explicit-any
+   77:5   warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/erp/page.tsx:77:5
+  75 |
+  76 |   useEffect(() => {
+> 77 |     fetchSavedConnection();
+     |     ^^^^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  78 |     fetchTelegramConfig();
+  79 |   }, []);
+  80 |  react-hooks/set-state-in-effect
+   79:6   warning  React Hook useEffect has a missing dependency: 'fetchSavedConnection'. Either include it or remove the dependency array                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      react-hooks/exhaustive-deps
+  102:19  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-explicit-any
+  129:19  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-explicit-any
+  163:19  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-explicit-any
+  191:19  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-explicit-any
+  403:59  warning  Unexpected any. Specify a different type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-explicit-any
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/erp/reconciliation/layout.tsx
+  3:60  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/settings/page.tsx
+  6:37  warning  't' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/app/team/page.tsx
+  109:69  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/components/HistoricalJournalEntrySuggestionsEditor.tsx
+   90:12  warning  Unexpected any. Specify a different type                                                                                                    @typescript-eslint/no-explicit-any
+  131:23  warning  Unexpected any. Specify a different type                                                                                                    @typescript-eslint/no-explicit-any
+  147:26  warning  Unexpected any. Specify a different type                                                                                                    @typescript-eslint/no-explicit-any
+  150:17  warning  Unexpected any. Specify a different type                                                                                                    @typescript-eslint/no-explicit-any
+  427:30  warning  Unexpected any. Specify a different type                                                                                                    @typescript-eslint/no-explicit-any
+  446:21  warning  Unexpected any. Specify a different type                                                                                                    @typescript-eslint/no-explicit-any
+  458:6   warning  React Hook useEffect has missing dependencies: 'accounts', 'analytics', and 'partners'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  608:19  warning  Unexpected any. Specify a different type                                                                                                    @typescript-eslint/no-explicit-any
+  631:21  warning  Unexpected any. Specify a different type                                                                                                    @typescript-eslint/no-explicit-any
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/components/ReconciliationPageClient.tsx
+  197:97  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  225:93  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  287:64  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  294:88  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/components/accounting/JournalEntrySheetActions.tsx
+  382:19  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  417:19  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  449:19  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  478:19  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/components/accounting/OdooRegistrationSheetMirror.tsx
+   69:7   warning  'findByAliases' is assigned a value but never used  @typescript-eslint/no-unused-vars
+  431:21  warning  Unexpected any. Specify a different type            @typescript-eslint/no-explicit-any
+  460:21  warning  Unexpected any. Specify a different type            @typescript-eslint/no-explicit-any
+  514:21  warning  Unexpected any. Specify a different type            @typescript-eslint/no-explicit-any
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/components/auth/AuthGate.tsx
+  119:5  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/components/auth/AuthGate.tsx:119:5
+  117 |     };
+  118 |
+> 119 |     setAuthState(
+      |     ^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  120 |       sessionStorage.getItem(ACCESS_TOKEN_KEY)
+  121 |         ? "authenticated"
+  122 |         : "unauthenticated",  react-hooks/set-state-in-effect
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/lib/CompanyContext.tsx
+  56:5  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/lib/CompanyContext.tsx:56:5
+  54 |
+  55 |   useEffect(() => {
+> 56 |     fetchCompanies();
+     |     ^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  57 |   }, [fetchCompanies]);
+  58 |
+  59 |   const setSelectedCompanyId = (id: number | null) => {  react-hooks/set-state-in-effect
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/lib/LanguageContext.tsx
+  27:5  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/lib/LanguageContext.tsx:27:5
+  25 |
+  26 |   useEffect(() => {
+> 27 |     setMounted(true);
+     |     ^^^^^^^^^^ Avoid calling setState() directly within an effect
+  28 |   }, []);
+  29 |
+  30 |   useEffect(() => {  react-hooks/set-state-in-effect
+
+/home/runner/work/BOB-2/BOB-2/BOB-2/frontend/src/lib/translations.ts
+  1:43  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+✖ 62 problems (0 errors, 62 warnings)
+

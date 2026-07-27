@@ -1,0 +1,129 @@
+name: Temporary allow Odoo ERP host
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/temp-allow-odoo-host.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  configure-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli@latest
+
+      - name: Allow the production Odoo hostname
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          PROJECT_ID: db1f1265-1590-4bf0-8c1a-884c2806e0b9
+          ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
+          SERVICE_ID: e253a8c9-06d8-4f11-8c54-f300162796ee
+          ODOO_HOST: gtcintl2.odoo.com
+        run: |
+          set -euo pipefail
+
+          payload=$(jq -n \
+            --arg projectId "$PROJECT_ID" \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            --arg serviceId "$SERVICE_ID" \
+            --arg name "ERP_OUTBOUND_ALLOWED_HOSTS" \
+            --arg value "$ODOO_HOST" \
+            '{query:"mutation variableUpsert($input: VariableUpsertInput!) { variableUpsert(input: $input) }",variables:{input:{projectId:$projectId,environmentId:$environmentId,serviceId:$serviceId,name:$name,value:$value}}}')
+
+          response=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url https://backboard.railway.com/graphql/v2 \
+            --header "Project-Access-Token: $RAILWAY_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$payload")
+
+          if echo "$response" | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
+            echo "$response" | jq '{errors}'
+            exit 1
+          fi
+
+          verify_payload=$(jq -n \
+            --arg projectId "$PROJECT_ID" \
+            --arg environmentId "$ENVIRONMENT_ID" \
+            --arg serviceId "$SERVICE_ID" \
+            '{query:"query variables($projectId: String!, $environmentId: String!, $serviceId: String) { variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId) }",variables:{projectId:$projectId,environmentId:$environmentId,serviceId:$serviceId}}')
+
+          verify_response=$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --url https://backboard.railway.com/graphql/v2 \
+            --header "Project-Access-Token: $RAILWAY_TOKEN" \
+            --header 'Content-Type: application/json' \
+            --data "$verify_payload")
+
+          actual=$(echo "$verify_response" | jq -r '.data.variables.ERP_OUTBOUND_ALLOWED_HOSTS // empty')
+          test "$actual" = "$ODOO_HOST"
+          echo "ERP outbound allowlist updated to the requested Odoo hostname."
+
+      - name: Wait for the backend deployment
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
+          SERVICE_ID: e253a8c9-06d8-4f11-8c54-f300162796ee
+        run: |
+          set -euo pipefail
+          final_status="UNKNOWN"
+          for attempt in $(seq 1 60); do
+            railway deployment list \
+              --service "$SERVICE_ID" \
+              --environment "$ENVIRONMENT_ID" \
+              --limit 1 \
+              --json > /tmp/latest-deployment.json
+
+            final_status=$(jq -r 'if type == "array" then (.[0].status // "UNKNOWN") else (.deployments[0].status // .status // "UNKNOWN") end' /tmp/latest-deployment.json | tr '[:lower:]' '[:upper:]')
+            case "$final_status" in
+              SUCCESS) echo "Backend deployment succeeded."; exit 0 ;;
+              FAILED|CRASHED|REMOVED) echo "Backend deployment ended with $final_status"; exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "Backend deployment did not reach a terminal state: $final_status"
+          exit 1
+
+      - name: Verify production health and Odoo XML-RPC
+        run: |
+          set -euo pipefail
+
+          health=$(curl --fail --silent --show-error --max-time 30 \
+            https://bob-2-production.up.railway.app/health)
+          echo "$health" | jq -e '.status == "healthy"' >/dev/null
+
+          cat > /tmp/odoo-version.xml <<'XML'
+          <?xml version="1.0"?>
+          <methodCall>
+            <methodName>version</methodName>
+            <params></params>
+          </methodCall>
+          XML
+
+          curl --fail --silent --show-error --max-time 30 \
+            --header 'Content-Type: text/xml' \
+            --data-binary @/tmp/odoo-version.xml \
+            https://gtcintl2.odoo.com/xmlrpc/2/common \
+            | grep -q 'server_version'
+
+      - name: Run the repository outbound-policy check
+        run: |
+          set -euo pipefail
+          python -m pip install --quiet pydantic-settings
+          cd BOB-2/backend
+          APP_ENV=test \
+          ERP_OUTBOUND_ALLOWED_HOSTS=gtcintl2.odoo.com \
+          ERP_OUTBOUND_ALLOWED_PORTS=443 \
+          ERP_OUTBOUND_ALLOW_HTTP=false \
+          PYTHONPATH=. \
+          python -c 'from app.security.outbound_network import validate_erp_base_url; target=validate_erp_base_url("https://gtcintl2.odoo.com"); assert target.hostname == "gtcintl2.odoo.com" and target.port == 443; print("odoo-outbound-policy-ok")'

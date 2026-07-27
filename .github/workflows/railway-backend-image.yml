@@ -107,10 +107,76 @@ jobs:
           done
           exit 1
 
+      - name: Start deterministic ClamAV protocol test server
+        run: |
+          cat > /tmp/fake_clamd.py <<'PY'
+          import socket
+          import struct
+          import threading
+
+          EICAR = (
+              b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-"
+              b"STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+          )
+
+          def recv_exact(connection, length):
+              data = bytearray()
+              while len(data) < length:
+                  chunk = connection.recv(length - len(data))
+                  if not chunk:
+                      raise ConnectionError("unexpected EOF")
+                  data.extend(chunk)
+              return bytes(data)
+
+          def handle(connection):
+              try:
+                  command = bytearray()
+                  while not command.endswith(b"\0"):
+                      command.extend(connection.recv(1))
+                  if bytes(command) != b"zINSTREAM\0":
+                      connection.sendall(b"UNKNOWN COMMAND\0")
+                      return
+
+                  payload = bytearray()
+                  while True:
+                      size = struct.unpack("!I", recv_exact(connection, 4))[0]
+                      if size == 0:
+                          break
+                      payload.extend(recv_exact(connection, size))
+
+                  if EICAR in payload:
+                      connection.sendall(b"stream: Eicar-Test-Signature FOUND\0")
+                  else:
+                      connection.sendall(b"stream: OK\0")
+              finally:
+                  connection.close()
+
+          with socket.create_server(("0.0.0.0", 3310), reuse_port=True) as server:
+              while True:
+                  connection, _ = server.accept()
+                  threading.Thread(target=handle, args=(connection,), daemon=True).start()
+          PY
+          python /tmp/fake_clamd.py > fake-clamd.log 2>&1 &
+          echo $! > /tmp/fake-clamd.pid
+          python - <<'PY'
+          import socket
+          import time
+
+          for _ in range(30):
+              try:
+                  with socket.create_connection(("127.0.0.1", 3310), timeout=1):
+                      break
+              except OSError:
+                  time.sleep(1)
+          else:
+              raise SystemExit("fake ClamAV server did not start")
+          PY
+
       - name: Start production container with unavailable database
         run: |
           docker run --detach --name bob2-railway-prod-test \
             --publish 8001:8001 \
+            --add-host host.docker.internal:host-gateway \
             --env APP_ENV=production \
             --env PORT=8001 \
             --env RAILWAY_ENVIRONMENT_ID=ci-railway-environment \
@@ -125,7 +191,7 @@ jobs:
             --env ERP_OUTBOUND_ALLOWED_HOSTS=odoo.example.test \
             --env FRONTEND_ORIGIN=https://frontend.example.test \
             --env REQUIRE_MALWARE_SCAN=true \
-            --env CLAMAV_HOST=clamav.railway.internal \
+            --env CLAMAV_HOST=host.docker.internal \
             --env CLAMAV_PORT=3310 \
             --env TELEGRAM_BOT_ENABLED=false \
             --env LOCAL_LLM_ENABLED=false \
@@ -134,7 +200,7 @@ jobs:
 
       - name: Verify production liveness is database-independent
         run: |
-          for attempt in $(seq 1 30); do
+          for attempt in $(seq 1 45); do
             if curl --fail --silent http://127.0.0.1:8001/health >/dev/null 2>&1; then
               curl --fail --silent --show-error http://127.0.0.1:8001/health
               exit 0
@@ -167,6 +233,7 @@ jobs:
             railway-container-state.txt
             railway-production.log
             railway-production-state.txt
+            fake-clamd.log
           if-no-files-found: warn
           retention-days: 3
 
@@ -178,10 +245,12 @@ jobs:
           cat railway-container.log || true
           cat railway-production-state.txt || true
           cat railway-production.log || true
+          cat fake-clamd.log || true
 
-      - name: Stop test containers
+      - name: Stop test processes and containers
         if: always()
         run: |
           docker rm --force bob2-railway-test || true
           docker rm --force bob2-railway-prod-test || true
           docker rm --force bob2-predeploy-test || true
+          if test -f /tmp/fake-clamd.pid; then kill "$(cat /tmp/fake-clamd.pid)" || true; fi

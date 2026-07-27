@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: read
+  issues: write
+  pull-requests: write
 
 jobs:
   inspect:
@@ -18,6 +20,7 @@ jobs:
       - name: Inspect account without exposing secrets
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           PROJECT_ID: db1f1265-1590-4bf0-8c1a-884c2806e0b9
           ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
           LOGIN_EMAIL: motasim.noor@gtc-intl.com
@@ -67,7 +70,7 @@ jobs:
 
           python -m pip install --quiet psycopg2-binary
 
-          python - <<'PY'
+          python - <<'PY' > /tmp/login-result.json
           import json
           import os
           import psycopg2
@@ -116,3 +119,12 @@ jobs:
               )
           print(json.dumps(result, ensure_ascii=False, sort_keys=True))
           PY
+
+          cat /tmp/login-result.json
+          {
+            printf '## Production login account inspection\n\n'
+            printf '```json\n'
+            cat /tmp/login-result.json
+            printf '\n```\n'
+          } > /tmp/login-comment.md
+          gh pr comment 134 --body-file /tmp/login-comment.md

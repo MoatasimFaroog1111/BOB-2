@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -16,6 +17,7 @@ from app.middleware.audit import AuditLogMiddleware
 from app.middleware.request_size import RequestSizeLimitMiddleware
 from app.middleware.security_headers import SecurityHeadersMiddleware
 from app.security.document_processing_guard import install_document_processing_guard
+from app.security.file_validation import verify_malware_scanner_ready
 from app.security.ocr_guard import install_ocr_guard
 from app.services.readiness import readiness_snapshot
 from app.services.telegram_runtime import (
@@ -90,13 +92,16 @@ def _validate_startup_security() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialize only non-blocking runtime guards.
+    """Initialize bounded fail-closed production guards.
 
     Database migrations and baseline seeding run through Railway's pre-deploy
-    command. They must not block Uvicorn from binding to PORT, otherwise Railway
-    can only report a generic network healthcheck failure.
+    command. The malware scanner check is the only bounded dependency probe here:
+    production must prove that clean bytes pass and EICAR is detected before the
+    API accepts traffic.
     """
     _validate_startup_security()
+    if settings.is_production and settings.REQUIRE_MALWARE_SCAN:
+        await asyncio.to_thread(verify_malware_scanner_ready)
     install_ocr_guard()
     install_document_processing_guard()
     install_runtime_guard()

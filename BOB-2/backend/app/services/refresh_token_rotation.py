@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timezone
+
 import hashlib
 from datetime import datetime
 from typing import Any
@@ -132,7 +134,7 @@ def revoke_family(
     metadata: dict[str, Any] | None = None,
     commit: bool = True,
 ) -> None:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     db.execute(
         update(AuthSession)
         .where(

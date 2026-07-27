@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timezone
+
 import io
 import threading
 import time
@@ -490,7 +492,7 @@ def test_expired_approval_cleanup_updates_state_audits_and_deletes_file(db, tmp_
 
     retained = tmp_path / "retained.pdf"
     retained.write_bytes(b"%PDF-test")
-    expired_at = datetime.utcnow() - timedelta(seconds=1)
+    expired_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
     operation = TelegramApprovalOperation(
         organization_id=1,
         authorization_id=1,
@@ -509,7 +511,7 @@ def test_expired_approval_cleanup_updates_state_audits_and_deletes_file(db, tmp_
     db.commit()
     db.refresh(operation)
 
-    expired_ids = expire_pending_approvals(db, now=datetime.utcnow())
+    expired_ids = expire_pending_approvals(db, now=datetime.now(timezone.utc).replace(tzinfo=None))
     db.refresh(operation)
     assert expired_ids == [operation.id]
     assert operation.status == "expired"

@@ -1,3 +1,5 @@
+from datetime import timezone
+
 from datetime import date, datetime
 from decimal import Decimal
 
@@ -190,7 +192,7 @@ class AuditLogChainHead(Base):
     scope_key: Mapped[str] = mapped_column(String(80), primary_key=True)
     last_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     last_hash: Mapped[str] = mapped_column(String(64), nullable=False, default=GENESIS_HASH)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
 
 
 class AuditLog(Base, TimestampMixin):
@@ -434,7 +436,7 @@ def _mark_user_security_change(_mapper, _connection, target: User) -> None:
         return
 
     target.security_version = int(target.security_version or 1) + 1
-    target.security_changed_at = datetime.utcnow()
+    target.security_changed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     target.__dict__["_pending_security_change_fields"] = changed_fields
 
 
@@ -451,7 +453,7 @@ def _revoke_sessions_after_user_security_change(_mapper, connection, target: Use
             AuthSession.revoked_at.is_(None),
         )
         .values(
-            revoked_at=datetime.utcnow(),
+            revoked_at=datetime.now(timezone.utc).replace(tzinfo=None),
             revocation_reason="user_security_state_changed",
         )
     )
@@ -481,7 +483,7 @@ def _revoke_sessions_after_organization_deactivation(
             AuthSession.revoked_at.is_(None),
         )
         .values(
-            revoked_at=datetime.utcnow(),
+            revoked_at=datetime.now(timezone.utc).replace(tzinfo=None),
             revocation_reason="organization_deactivated",
         )
     )

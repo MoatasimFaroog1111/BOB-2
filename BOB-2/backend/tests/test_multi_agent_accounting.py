@@ -1,3 +1,5 @@
+from datetime import timezone
+
 from datetime import datetime
 
 from app.models.core import Organization, User
@@ -137,7 +139,7 @@ def test_llm_reasoner_parses_provider_shape_only_through_gateway(db, monkeypatch
             data_residency_region="KSA",
             provider_retention_mode="contractual_zero_retention",
             accepted_by_user_id=1,
-            accepted_at=datetime.utcnow(),
+            accepted_at=datetime.now(timezone.utc).replace(tzinfo=None),
             policy_version=1,
         )
     )
@@ -148,21 +150,20 @@ def test_llm_reasoner_parses_provider_shape_only_through_gateway(db, monkeypatch
     monkeypatch.setattr(settings, "EXTERNAL_LLM_ALLOWED_MODELS", "anthropic:claude-sonnet-4-20250514")
 
     provider_response = {
-        "choices": [
+        "content": [
             {
-                "message": {
-                    "content": """
-                    {
-                      "summary": "Invoice appears valid but needs approval.",
-                      "document_assessment": {"document_type": "invoice"},
-                      "vat_assessment": {"vat_rate": "15%", "treatment": "input VAT review"},
-                      "journal_entry_recommendation": {"debit": "Expense", "credit": "Accounts payable"},
-                      "risks": ["Confirm supplier VAT registration"],
-                      "questions_for_accountant": ["Is the supplier approved?"],
-                      "confidence_score": 0.82
-                    }
-                    """
+                "type": "text",
+                "text": """
+                {
+                  "summary": "Invoice appears valid but needs approval.",
+                  "document_assessment": {"document_type": "invoice"},
+                  "vat_assessment": {"vat_rate": "15%", "treatment": "input VAT review"},
+                  "journal_entry_recommendation": {"debit": "Expense", "credit": "Accounts payable"},
+                  "risks": ["Confirm supplier VAT registration"],
+                  "questions_for_accountant": ["Is the supplier approved?"],
+                  "confidence_score": 0.82
                 }
+                """,
             }
         ]
     }

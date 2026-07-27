@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timezone
+
 from datetime import datetime
 from pathlib import Path
 
@@ -21,7 +23,7 @@ def expire_pending_approvals(
     deletion therefore cannot make an expired approval usable again.
     """
 
-    effective_now = now or datetime.utcnow()
+    effective_now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     rows = (
         db.query(TelegramApprovalOperation)
         .filter(

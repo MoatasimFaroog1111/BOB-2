@@ -60,7 +60,7 @@ def db():
 
 @pytest.fixture()
 def seeded_user(db):
-    """Seed a test user and return its email/password."""
+    """Seed a test user and return its credentials and tenant identity."""
     from app.models.core import Organization, User
     from app.security.auth import hash_password
 
@@ -80,7 +80,12 @@ def seeded_user(db):
     )
     db.add(user)
     db.commit()
-    return {"email": "test@guardian-ai.com", "password": password}
+    return {
+        "email": "test@guardian-ai.com",
+        "password": password,
+        "organization_id": org.id,
+        "user_id": user.id,
+    }
 
 
 @pytest.fixture()

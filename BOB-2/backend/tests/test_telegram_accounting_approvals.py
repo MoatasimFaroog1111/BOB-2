@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import timezone
+
 import inspect
 import json
 from datetime import datetime, timedelta
@@ -232,7 +234,7 @@ def test_expired_approval_is_terminal_and_cannot_post(db):
     context = _seed_actor(db)
     approval = _create(db, context)
     row = db.query(TelegramApprovalOperation).filter_by(id=approval.operation_id).one()
-    row.expires_at = datetime.utcnow() - timedelta(seconds=1)
+    row.expires_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=1)
     db.commit()
 
     with pytest.raises(TelegramApprovalDenied) as denied:

@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TARGETS = (ROOT / "app", ROOT / "tests")
 REPLACEMENT = "datetime.now(timezone.utc).replace(tzinfo=None)"
+CALLABLE_REPLACEMENT = f"lambda: {REPLACEMENT}"
 
 
 def ensure_timezone_import(content: str) -> str:
@@ -40,12 +41,18 @@ def migrate(path: Path) -> bool:
     content = path.read_text(encoding="utf-8")
     if "datetime.utcnow" not in content:
         return False
+
     content = ensure_timezone_import(content)
     content = content.replace("datetime.utcnow()", REPLACEMENT)
-    content = content.replace(
-        "default=datetime.utcnow",
-        f"default=lambda: {REPLACEMENT}",
-    )
+
+    # SQLAlchemy and similar APIs accept callables for defaults and updates.
+    # Replace both forms so an onupdate=datetime.utcnow reference cannot remain.
+    for keyword in ("default", "onupdate"):
+        content = content.replace(
+            f"{keyword}=datetime.utcnow",
+            f"{keyword}={CALLABLE_REPLACEMENT}",
+        )
+
     if "datetime.utcnow" in content:
         raise RuntimeError(f"Unmigrated datetime.utcnow reference in {path}")
     compile(content, str(path), "exec")

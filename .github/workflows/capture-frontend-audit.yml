@@ -19,15 +19,18 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
-      - name: Rebuild dependency tree from scratch
-        working-directory: BOB-2/frontend
-        run: |
-          rm -rf node_modules package-lock.json
-          npm install --ignore-scripts --force
-      - name: Capture post-remediation reports
+      - name: Rebuild dependency tree and capture install result
         working-directory: BOB-2/frontend
         run: |
           mkdir -p ../../ci-diagnostics
+          rm -rf node_modules package-lock.json
+          set +e
+          npm install --ignore-scripts --force > ../../ci-diagnostics/frontend-install.txt 2>&1
+          echo $? > ../../ci-diagnostics/frontend-install-exit-code.txt
+          set -e
+      - name: Capture post-remediation reports
+        working-directory: BOB-2/frontend
+        run: |
           npm audit --json > ../../ci-diagnostics/frontend-audit.json || true
           npm audit --audit-level=high > ../../ci-diagnostics/frontend-audit.txt 2>&1 || true
           npm ls brace-expansion js-yaml postcss sharp --all --json > ../../ci-diagnostics/frontend-dependency-tree.json || true
@@ -35,13 +38,16 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add BOB-2/frontend/package.json BOB-2/frontend/package-lock.json ci-diagnostics
+          git add BOB-2/frontend/package.json ci-diagnostics
+          if test -f BOB-2/frontend/package-lock.json; then git add BOB-2/frontend/package-lock.json; fi
           if git diff --cached --quiet; then
             echo "No dependency changes to commit"
           else
-            git commit -m "chore(frontend): rebuild secure dependency lock [skip audit-capture]"
+            git commit -m "ci: capture frontend install result [skip audit-capture]"
             git push origin HEAD:agent/fix-ci-and-railway
           fi
+      - name: Require successful install
+        run: test "$(cat ci-diagnostics/frontend-install-exit-code.txt)" = "0"
       - name: Verify npm audit
         working-directory: BOB-2/frontend
         run: npm audit --audit-level=high

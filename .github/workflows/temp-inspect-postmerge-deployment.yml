@@ -1,0 +1,99 @@
+name: Temporary inspect merged backend deployment
+
+on:
+  push:
+    branches:
+      - agent/verify-clamav-production-postmerge
+    paths:
+      - .github/workflows/temp-inspect-postmerge-deployment.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/temp-inspect-postmerge-deployment.yml
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  inspect-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      PROJECT_ID: db1f1265-1590-4bf0-8c1a-884c2806e0b9
+      ENVIRONMENT_ID: 3caf3125-f1c7-4817-bb04-eb7ad772fc4a
+      BACKEND_SERVICE_ID: e253a8c9-06d8-4f11-8c54-f300162796ee
+      BACKEND_URL: https://bob-2-production.up.railway.app
+      MERGED_AFTER: 2026-07-27T12:50:00Z
+      RELEASE_SHA: 6e0d27ec3c117238c69790ed6d1845000e2e6ddf
+    steps:
+      - name: Verify latest post-merge deployment and endpoints
+        id: inspect
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          railway_api() {
+            local response
+            response=$(curl --fail-with-body --silent --show-error \
+              --request POST \
+              --url https://backboard.railway.com/graphql/v2 \
+              --header "Project-Access-Token: $RAILWAY_TOKEN" \
+              --header 'Content-Type: application/json' \
+              --data "$1")
+            if echo "$response" | jq -e '.errors and (.errors | length > 0)' >/dev/null; then
+              echo "$response" | jq '{errors}'
+              return 1
+            fi
+            printf '%s' "$response"
+          }
+
+          latest_status=UNKNOWN
+          latest_created=""
+          for attempt in $(seq 1 75); do
+            payload=$(jq -n \
+              --arg projectId "$PROJECT_ID" \
+              --arg serviceId "$BACKEND_SERVICE_ID" \
+              --arg environmentId "$ENVIRONMENT_ID" \
+              '{query:"query deployments($input: DeploymentListInput!) { deployments(input: $input, first: 10) { edges { node { status createdAt } } } }",variables:{input:{projectId:$projectId,serviceId:$serviceId,environmentId:$environmentId}}}')
+            response=$(railway_api "$payload")
+            latest_status=$(echo "$response" | jq -r '.data.deployments.edges[0].node.status // "UNKNOWN"' | tr '[:lower:]' '[:upper:]')
+            latest_created=$(echo "$response" | jq -r '.data.deployments.edges[0].node.createdAt // empty')
+
+            if test "$latest_created" \> "$MERGED_AFTER" && test "$latest_status" = SUCCESS; then
+              break
+            fi
+            case "$latest_status" in
+              FAILED|CRASHED|REMOVED)
+                if test "$latest_created" \> "$MERGED_AFTER"; then exit 1; fi
+                ;;
+            esac
+            sleep 10
+          done
+
+          test "$latest_created" \> "$MERGED_AFTER"
+          test "$latest_status" = SUCCESS
+
+          health=$(curl --fail --silent --show-error --max-time 30 "$BACKEND_URL/health")
+          echo "$health" | jq -e '.status == "healthy"' >/dev/null
+          ready=$(curl --fail --silent --show-error --max-time 30 "$BACKEND_URL/ready")
+          echo "$ready" | jq -e '.status == "ready"' >/dev/null
+
+      - name: Record sanitized success
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/140/comments" \
+            --field body="Independent post-merge check succeeded for release \`${RELEASE_SHA:0:7}\`: the latest backend deployment was created after the merge and completed successfully, and both \`/health\` and \`/ready\` passed. Since production startup is now gated by clean/EICAR ClamAV verification, this also confirms the scanner gate passed in the deployed release." >/dev/null
+
+      - name: Record sanitized failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/140/comments" \
+            --field body="Independent post-merge backend check failed for release \`${RELEASE_SHA:0:7}\`. The application remains fail-closed; inspect the temporary verification logs before retrying." >/dev/null

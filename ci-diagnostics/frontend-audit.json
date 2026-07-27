@@ -1,28 +1,51 @@
 {
   "auditReportVersion": 2,
   "vulnerabilities": {
+    "@eslint/config-array": {
+      "name": "@eslint/config-array",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        "minimatch"
+      ],
+      "effects": [
+        "eslint"
+      ],
+      "range": "<=0.22.0",
+      "nodes": [
+        "node_modules/@eslint/config-array"
+      ],
+      "fixAvailable": {
+        "name": "eslint",
+        "version": "10.8.0",
+        "isSemVerMajor": true
+      }
+    },
+    "@eslint/eslintrc": {
+      "name": "@eslint/eslintrc",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        "minimatch"
+      ],
+      "effects": [
+        "eslint"
+      ],
+      "range": "0.0.1 || >=0.1.1",
+      "nodes": [
+        "node_modules/@eslint/eslintrc"
+      ],
+      "fixAvailable": {
+        "name": "eslint",
+        "version": "10.8.0",
+        "isSemVerMajor": true
+      }
+    },
     "brace-expansion": {
       "name": "brace-expansion",
       "severity": "high",
       "isDirect": false,
       "via": [
-        {
-          "source": 1123897,
-          "name": "brace-expansion",
-          "dependency": "brace-expansion",
-          "title": "brace-expansion: DoS via exponential-time expansion of consecutive non-expanding {} groups",
-          "url": "https://github.com/advisories/GHSA-3jxr-9vmj-r5cp",
-          "severity": "high",
-          "cwe": [
-            "CWE-400",
-            "CWE-407"
-          ],
-          "cvss": {
-            "score": 5.3,
-            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L"
-          },
-          "range": "<1.1.16"
-        },
         {
           "source": 1124334,
           "name": "brace-expansion",
@@ -41,43 +64,137 @@
           "range": "<=5.0.7"
         }
       ],
-      "effects": [],
+      "effects": [
+        "minimatch"
+      ],
       "range": "<=5.0.7",
       "nodes": [
-        "node_modules/brace-expansion",
-        "node_modules/eslint-config-next/node_modules/brace-expansion"
+        "node_modules/brace-expansion"
       ],
-      "fixAvailable": true
+      "fixAvailable": {
+        "name": "eslint",
+        "version": "10.8.0",
+        "isSemVerMajor": true
+      }
     },
-    "js-yaml": {
-      "name": "js-yaml",
+    "eslint": {
+      "name": "eslint",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        "@eslint/config-array",
+        "@eslint/eslintrc",
+        "minimatch"
+      ],
+      "effects": [],
+      "range": "0.12.0 - 2.0.0-rc.1 || 4.1.0 - 10.0.0-rc.2",
+      "nodes": [
+        "node_modules/eslint"
+      ],
+      "fixAvailable": {
+        "name": "eslint",
+        "version": "10.8.0",
+        "isSemVerMajor": true
+      }
+    },
+    "eslint-config-next": {
+      "name": "eslint-config-next",
+      "severity": "high",
+      "isDirect": true,
+      "via": [
+        "eslint-plugin-import",
+        "eslint-plugin-jsx-a11y",
+        "eslint-plugin-react"
+      ],
+      "effects": [],
+      "range": ">=10.2.1-canary.2",
+      "nodes": [
+        "node_modules/eslint-config-next"
+      ],
+      "fixAvailable": {
+        "name": "eslint-config-next",
+        "version": "12.0.4",
+        "isSemVerMajor": true
+      }
+    },
+    "eslint-plugin-import": {
+      "name": "eslint-plugin-import",
       "severity": "high",
       "isDirect": false,
       "via": [
-        {
-          "source": 1123911,
-          "name": "js-yaml",
-          "dependency": "js-yaml",
-          "title": "js-yaml: YAML merge-key chains can force quadratic CPU consumption",
-          "url": "https://github.com/advisories/GHSA-52cp-r559-cp3m",
-          "severity": "high",
-          "cwe": [
-            "CWE-400",
-            "CWE-407"
-          ],
-          "cvss": {
-            "score": 7.5,
-            "vectorString": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
-          },
-          "range": ">=4.0.0 <4.3.0"
-        }
+        "minimatch"
+      ],
+      "effects": [
+        "eslint-config-next"
+      ],
+      "range": ">=1.15.0",
+      "nodes": [
+        "node_modules/eslint-plugin-import"
+      ],
+      "fixAvailable": {
+        "name": "eslint-config-next",
+        "version": "12.0.4",
+        "isSemVerMajor": true
+      }
+    },
+    "eslint-plugin-jsx-a11y": {
+      "name": "eslint-plugin-jsx-a11y",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        "minimatch"
+      ],
+      "effects": [
+        "eslint-config-next"
+      ],
+      "range": ">=6.5.0",
+      "nodes": [
+        "node_modules/eslint-plugin-jsx-a11y"
+      ],
+      "fixAvailable": {
+        "name": "eslint-config-next",
+        "version": "12.0.4",
+        "isSemVerMajor": true
+      }
+    },
+    "eslint-plugin-react": {
+      "name": "eslint-plugin-react",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        "minimatch"
       ],
       "effects": [],
-      "range": "4.0.0 - 4.2.0",
+      "range": ">=7.23.0",
       "nodes": [
-        "node_modules/js-yaml"
+        "node_modules/eslint-plugin-react"
       ],
       "fixAvailable": true
+    },
+    "minimatch": {
+      "name": "minimatch",
+      "severity": "high",
+      "isDirect": false,
+      "via": [
+        "brace-expansion"
+      ],
+      "effects": [
+        "@eslint/config-array",
+        "@eslint/eslintrc",
+        "eslint",
+        "eslint-plugin-import",
+        "eslint-plugin-jsx-a11y",
+        "eslint-plugin-react"
+      ],
+      "range": "2.0.0 - 10.0.2",
+      "nodes": [
+        "node_modules/minimatch"
+      ],
+      "fixAvailable": {
+        "name": "eslint",
+        "version": "10.8.0",
+        "isSemVerMajor": true
+      }
     },
     "next": {
       "name": "next",
@@ -158,8 +275,7 @@
       ],
       "range": "<=8.5.17",
       "nodes": [
-        "node_modules/next/node_modules/postcss",
-        "node_modules/postcss"
+        "node_modules/next/node_modules/postcss"
       ],
       "fixAvailable": {
         "name": "next",
@@ -208,9 +324,9 @@
       "info": 0,
       "low": 0,
       "moderate": 0,
-      "high": 5,
+      "high": 12,
       "critical": 0,
-      "total": 5
+      "total": 12
     },
     "dependencies": {
       "prod": 20,

@@ -2,17 +2,38 @@
 
 brace-expansion  <=5.0.7
 Severity: high
-brace-expansion: DoS via exponential-time expansion of consecutive non-expanding {} groups - https://github.com/advisories/GHSA-3jxr-9vmj-r5cp
 brace-expansion: DoS via unbounded expansion length causing an out-of-memory process crash - https://github.com/advisories/GHSA-mh99-v99m-4gvg
-fix available via `npm audit fix`
+fix available via `npm audit fix --force`
+Will install eslint@10.8.0, which is a breaking change
 node_modules/brace-expansion
-node_modules/eslint-config-next/node_modules/brace-expansion
-
-js-yaml  4.0.0 - 4.2.0
-Severity: high
-js-yaml: YAML merge-key chains can force quadratic CPU consumption - https://github.com/advisories/GHSA-52cp-r559-cp3m
-fix available via `npm audit fix`
-node_modules/js-yaml
+  minimatch  2.0.0 - 10.0.2
+  Depends on vulnerable versions of brace-expansion
+  node_modules/minimatch
+    @eslint/config-array  <=0.22.0
+    Depends on vulnerable versions of minimatch
+    node_modules/@eslint/config-array
+      eslint  0.12.0 - 2.0.0-rc.1 || 4.1.0 - 10.0.0-rc.2
+      Depends on vulnerable versions of @eslint/config-array
+      Depends on vulnerable versions of @eslint/eslintrc
+      Depends on vulnerable versions of minimatch
+      node_modules/eslint
+    @eslint/eslintrc  0.0.1 || >=0.1.1
+    Depends on vulnerable versions of minimatch
+    node_modules/@eslint/eslintrc
+    eslint-plugin-import  >=1.15.0
+    Depends on vulnerable versions of minimatch
+    node_modules/eslint-plugin-import
+    eslint-plugin-jsx-a11y  >=6.5.0
+    Depends on vulnerable versions of minimatch
+    node_modules/eslint-plugin-jsx-a11y
+      eslint-config-next  >=10.2.1-canary.2
+      Depends on vulnerable versions of eslint-plugin-import
+      Depends on vulnerable versions of eslint-plugin-jsx-a11y
+      Depends on vulnerable versions of eslint-plugin-react
+      node_modules/eslint-config-next
+    eslint-plugin-react  >=7.23.0
+    Depends on vulnerable versions of minimatch
+    node_modules/eslint-plugin-react
 
 postcss  <=8.5.17
 Severity: high
@@ -22,7 +43,6 @@ PostCSS: Path Traversal in Previous Source Map Auto-Loading (sourceMappingURL) l
 fix available via `npm audit fix --force`
 Will install next@9.3.3, which is a breaking change
 node_modules/next/node_modules/postcss
-node_modules/postcss
   next  9.3.4-canary.0 - 16.3.0-preview.7
   Depends on vulnerable versions of postcss
   Depends on vulnerable versions of sharp
@@ -35,7 +55,7 @@ fix available via `npm audit fix --force`
 Will install next@9.3.3, which is a breaking change
 node_modules/next/node_modules/sharp
 
-5 high severity vulnerabilities
+12 high severity vulnerabilities
 
 To address issues that do not require attention, run:
   npm audit fix

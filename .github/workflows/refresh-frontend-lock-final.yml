@@ -1,0 +1,45 @@
+name: Refresh frontend lock and validate
+
+on:
+  push:
+    branches:
+      - agent/fix-ci-and-railway
+
+permissions:
+  contents: write
+
+jobs:
+  refresh-and-validate:
+    if: ${{ !contains(github.event.head_commit.message, '[skip final-lock-refresh]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/fix-ci-and-railway
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Rebuild locked dependency tree
+        working-directory: BOB-2/frontend
+        run: |
+          rm -rf node_modules package-lock.json
+          npm install --ignore-scripts --force
+      - name: Validate audit, lint, and build
+        working-directory: BOB-2/frontend
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid
+        run: |
+          npm audit --audit-level=high
+          npm run lint
+          npm run build
+      - name: Commit regenerated lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add BOB-2/frontend/package-lock.json
+          if git diff --cached --quiet; then
+            echo "Lockfile already current"
+          else
+            git commit -m "chore(frontend): refresh compatible secure lock [skip final-lock-refresh]"
+            git push origin HEAD:agent/fix-ci-and-railway
+          fi

@@ -81,7 +81,7 @@ jobs:
         run: |
           set -euo pipefail
           final_status="UNKNOWN"
-          for attempt in $(seq 1 60); do
+          for attempt in $(seq 1 20); do
             railway deployment list \
               --service "$SERVICE_ID" \
               --environment "$ENVIRONMENT_ID" \
@@ -91,6 +91,7 @@ jobs:
             final_status=$(jq -r 'if type == "array" then (.[0].status // "UNKNOWN") else (.deployments[0].status // .status // "UNKNOWN") end' /tmp/latest-deployment.json | tr '[:lower:]' '[:upper:]')
             case "$final_status" in
               SUCCESS) echo "Backend deployment succeeded."; exit 0 ;;
+              SKIPPED) echo "Railway reported a no-op deployment because the value was already current."; exit 0 ;;
               FAILED|CRASHED|REMOVED) echo "Backend deployment ended with $final_status"; exit 1 ;;
             esac
             sleep 10

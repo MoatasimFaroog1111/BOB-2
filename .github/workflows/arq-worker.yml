@@ -31,7 +31,7 @@ on:
       - ".github/workflows/arq-worker.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: arq-worker-${{ github.workflow }}-${{ github.ref }}
@@ -96,3 +96,103 @@ jobs:
           tests/test_worker_arq.py
           tests/test_worker_long_running_jobs.py
           -q
+
+  # T5_FRONTEND_CODEMOD_START
+  t5-frontend-codemod:
+    if: github.event_name == 'pull_request' && github.head_ref == 'agent/t5-long-running-worker-jobs'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: agent/t5-long-running-worker-jobs
+      - name: Apply exact frontend polling changes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str) -> None:
+              text = path.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, found {count}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          reconciliation = Path("BOB-2/frontend/src/components/ReconciliationPageClient.tsx")
+          replace_once(reconciliation, 'import { API_BASE_URL } from "@/lib/api";\n', 'import { API_BASE_URL } from "@/lib/api";\nimport { resolveJobResponse } from "@/lib/jobs";\n')
+          replace_once(
+              reconciliation,
+              '''      const res = await fetch(`${API_BASE_URL}/api/v1/erp/bank-statement-parse`, { method: "POST", body: formData });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.detail || (isAr ? "فشل قراءة الملف" : "Failed to parse file"));
+              setResult(data);
+''',
+              '''      const res = await fetch(`${API_BASE_URL}/api/v1/erp/bank-statement-parse`, { method: "POST", body: formData });
+              const data = await resolveJobResponse<ReconciliationResult>(res);
+              setResult(data);
+''',
+          )
+          replace_once(
+              reconciliation,
+              '''    const res = await fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation`, { method: "POST", body: formData });
+              const data = await res.json();
+              if (!res.ok) throw new Error(data.detail || (isAr ? "فشل تنفيذ العملية" : "Operation failed"));
+              setResult(data);
+''',
+              '''    const res = await fetch(`${API_BASE_URL}/api/v1/erp/bank-reconciliation`, { method: "POST", body: formData });
+              const data = await resolveJobResponse<ReconciliationResult>(res);
+              setResult(data);
+''',
+          )
+
+          documents = Path("BOB-2/frontend/src/app/documents/page.tsx")
+          replace_once(documents, 'import { API_BASE_URL } from "@/lib/api";\n', 'import { API_BASE_URL } from "@/lib/api";\nimport { resolveJobResponse } from "@/lib/jobs";\n')
+          replace_once(documents, '''      if (!res.ok) {
+                throw new Error(await res.text());
+              }
+
+              const data = await res.json();
+''', '''      const data = await resolveJobResponse<any>(res);
+''')
+          replace_once(documents, '''      if (!uploadRes.ok) {
+                throw new Error(await uploadRes.text());
+              }
+
+              const uploadData = await uploadRes.json();
+''', '''      const uploadData = await resolveJobResponse<any>(uploadRes);
+''')
+
+          team = Path("BOB-2/frontend/src/app/team/page.tsx")
+          replace_once(team, 'import { API_BASE_URL } from "@/lib/api";\n', 'import { API_BASE_URL } from "@/lib/api";\nimport { resolveJobResponse } from "@/lib/jobs";\n')
+          replace_once(team, '''      if (!response.ok) {
+                throw new Error(`Backend unavailable: ${response.status}`);
+              }
+
+              const data = await response.json();
+''', '''      const data = await resolveJobResponse<any>(response);
+''')
+          replace_once(team, '''      if (!response.ok) throw new Error(`Match failed: ${response.status}`);
+              const data = await response.json();
+''', '''      const data = await resolveJobResponse<any>(response);
+''')
+
+          temporary = Path(".github/workflows/t5-frontend-codemod.yml")
+          temporary.unlink(missing_ok=True)
+          workflow = Path(".github/workflows/arq-worker.yml")
+          workflow_text = workflow.read_text(encoding="utf-8")
+          workflow_text = workflow_text.replace("contents: write", "contents: read", 1)
+          workflow.write_text(workflow_text.split("  # T5_FRONTEND_CODEMOD_START", 1)[0].rstrip() + "\n", encoding="utf-8")
+          PY
+      - name: Verify generated integration
+        run: |
+          grep -q 'resolveJobResponse<ReconciliationResult>' BOB-2/frontend/src/components/ReconciliationPageClient.tsx
+          test "$(grep -c 'resolveJobResponse<any>' BOB-2/frontend/src/app/documents/page.tsx)" -eq 2
+          test "$(grep -c 'resolveJobResponse<any>' BOB-2/frontend/src/app/team/page.tsx)" -eq 2
+          test ! -e .github/workflows/t5-frontend-codemod.yml
+          test "$(grep -c 'T5_FRONTEND_CODEMOD_START' .github/workflows/arq-worker.yml)" -eq 0
+      - name: Commit generated frontend integration
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add BOB-2/frontend .github/workflows
+          git commit -m "T5: poll background job results in frontend"
+          git push origin HEAD:agent/t5-long-running-worker-jobs

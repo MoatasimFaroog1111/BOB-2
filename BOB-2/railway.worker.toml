@@ -1,0 +1,13 @@
+# Configure the Railway worker service to use this file as its custom
+# Config-as-Code path. Railway applies one config file per service, so the web
+# service uses /railway.toml and the worker service uses /railway.worker.toml.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+preDeployCommand = "python -m app.predeploy"
+startCommand = "/usr/local/bin/guardian-entrypoint arq app.worker.settings.WorkerSettings"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

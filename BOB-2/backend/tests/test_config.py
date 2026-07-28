@@ -1,5 +1,8 @@
 """Tests for configuration and settings."""
 
+import pytest
+from fastapi import HTTPException
+
 from app.core.config import Settings, generate_secret_key
 
 
@@ -27,6 +30,40 @@ class TestConfig:
     def test_is_not_production_by_default(self):
         from app.core.config import settings
         assert not settings.is_production
+
+    def test_shared_redis_key_is_environment_and_tenant_scoped(self, monkeypatch):
+        from app.core.config import settings
+        from app.core.redis_client import build_redis_key
+
+        monkeypatch.setattr(settings, "APP_ENV", "Production")
+        key = build_redis_key(
+            "Bank Reconciliation",
+            organization_id=42,
+            parts=("jobs", "abc:123"),
+        )
+
+        assert key == (
+            "guardian:production:bank-reconciliation:"
+            "org:42:jobs:abc%3A123"
+        )
+
+    def test_shared_redis_key_rejects_invalid_organization(self):
+        from app.core.redis_client import build_redis_key
+
+        with pytest.raises(ValueError, match="organization_id"):
+            build_redis_key("auth", organization_id=-1)
+
+    def test_production_without_redis_fails_closed(self, monkeypatch):
+        from app.core.config import settings
+        from app.core.redis_client import get_redis_client
+
+        monkeypatch.setattr(settings, "APP_ENV", "production")
+        monkeypatch.setattr(settings, "REDIS_URL", "")
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_redis_client()
+
+        assert exc_info.value.status_code == 503
 
 
 class TestRateLimiter:

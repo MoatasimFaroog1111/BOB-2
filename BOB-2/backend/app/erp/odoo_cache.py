@@ -76,11 +76,11 @@ def _redis_unavailable(exc: Exception) -> None:
 
 
 def get_cached(provider_url: str, db_name: str, kind: str) -> Optional[List]:
+    key = _cache_key(provider_url, db_name, kind)
     client = get_redis_client()
     if client is None:
         return None
 
-    key = _cache_key(provider_url, db_name, kind)
     try:
         raw_value = client.get(key)
     except RedisError as exc:
@@ -103,6 +103,7 @@ def get_cached(provider_url: str, db_name: str, kind: str) -> Optional[List]:
 
 
 def set_cached(provider_url: str, db_name: str, kind: str, data: List) -> None:
+    key = _cache_key(provider_url, db_name, kind)
     client = get_redis_client()
     if client is None:
         return
@@ -117,7 +118,6 @@ def set_cached(provider_url: str, db_name: str, kind: str, data: List) -> None:
         logger.warning("Skipping non-serializable Odoo cache payload")
         return
 
-    key = _cache_key(provider_url, db_name, kind)
     try:
         client.set(key, payload, ex=TTL_SECONDS)
     except RedisError as exc:

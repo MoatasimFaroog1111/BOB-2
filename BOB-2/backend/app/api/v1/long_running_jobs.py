@@ -6,7 +6,8 @@ import os
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from sqlalchemy.orm import Session
 
@@ -57,13 +58,16 @@ def _async_jobs_enabled() -> bool:
     }
 
 
-def _queued_response(job_id: str, kind: str) -> dict[str, Any]:
-    return {
-        "status": "queued",
-        "job_id": job_id,
-        "kind": kind,
-        "progress": 0,
-    }
+def _queued_response(job_id: str, kind: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "queued",
+            "job_id": job_id,
+            "kind": kind,
+            "progress": 0,
+        },
+    )
 
 
 async def _queue_file_job(
@@ -73,7 +77,7 @@ async def _queue_file_job(
     kind: str,
     function_name: str,
     trailing_args: tuple[Any, ...] = (),
-) -> dict[str, Any]:
+) -> JSONResponse:
     organization_id = int(current_organization_id(required=True))
     job_id = uuid.uuid4().hex
     persisted = await persist_validated_uploads(
@@ -100,7 +104,7 @@ async def _queue_file_job(
     return _queued_response(job_id, kind)
 
 
-@router.post("/upload-documents", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/upload-documents")
 async def upload_documents(
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
@@ -133,7 +137,7 @@ async def upload_documents(
     return _queued_response(job_id, "document_ocr")
 
 
-@router.post("/match-documents", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/match-documents")
 async def match_documents(
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
@@ -166,7 +170,7 @@ async def match_documents(
     return _queued_response(job_id, "document_matching")
 
 
-@router.post("/bank-statement-parse", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/bank-statement-parse")
 async def parse_bank_statement(
     statement: UploadFile = File(...),
     date_from: str | None = Form(None),
@@ -185,7 +189,7 @@ async def parse_bank_statement(
     )
 
 
-@router.post("/bank-reconciliation", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/bank-reconciliation")
 async def bank_reconciliation(
     statement: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -210,7 +214,7 @@ async def bank_reconciliation(
     )
 
 
-@router.post("/chat-spreadsheet", status_code=status.HTTP_202_ACCEPTED)
+@router.post("/chat-spreadsheet")
 async def chat_spreadsheet(
     payload: ChatSpreadsheetRequest,
     db: Session = Depends(get_db),

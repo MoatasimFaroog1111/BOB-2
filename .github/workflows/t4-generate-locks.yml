@@ -8,6 +8,12 @@ on:
       - "BOB-2/backend/requirements.txt"
       - "BOB-2/backend/requirements.runtime.txt"
       - ".github/workflows/t4-generate-locks.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "BOB-2/backend/requirements.txt"
+      - "BOB-2/backend/requirements.runtime.txt"
+      - ".github/workflows/t4-generate-locks.yml"
 
 permissions:
   contents: read

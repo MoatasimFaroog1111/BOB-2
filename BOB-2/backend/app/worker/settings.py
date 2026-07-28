@@ -7,7 +7,14 @@ from arq.worker import func
 
 from app.core.config import settings
 from app.core.redis_client import build_redis_key
-from app.worker.tasks import worker_smoke_test
+from app.worker.tasks import (
+    chat_spreadsheet_job,
+    match_documents_job,
+    parse_bank_statement_job,
+    process_documents_job,
+    reconcile_bank_statement_job,
+    worker_smoke_test,
+)
 
 WORKER_QUEUE_NAME = build_redis_key(
     "jobs",
@@ -43,20 +50,29 @@ def _worker_redis_settings() -> RedisSettings:
     return configured
 
 
+def _task(function, name: str, timeout: int = 900):
+    return func(
+        function,
+        name=name,
+        timeout=timeout,
+        keep_result=3600,
+        max_tries=3,
+    )
+
+
 class WorkerSettings:
     functions = [
-        func(
-            worker_smoke_test,
-            name="worker_smoke_test",
-            timeout=60,
-            keep_result=300,
-            max_tries=3,
-        )
+        _task(worker_smoke_test, "worker_smoke_test", timeout=60),
+        _task(process_documents_job, "process_documents_job"),
+        _task(match_documents_job, "match_documents_job"),
+        _task(parse_bank_statement_job, "parse_bank_statement_job"),
+        _task(reconcile_bank_statement_job, "reconcile_bank_statement_job"),
+        _task(chat_spreadsheet_job, "chat_spreadsheet_job"),
     ]
     redis_settings = _worker_redis_settings()
     queue_name = WORKER_QUEUE_NAME
     max_jobs = 4
-    job_timeout = 300
+    job_timeout = 900
     keep_result = 3600
     max_tries = 3
     retry_jobs = True

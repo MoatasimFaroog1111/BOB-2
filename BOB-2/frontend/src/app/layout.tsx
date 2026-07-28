@@ -4,6 +4,7 @@ import { connection } from "next/server";
 import AuthGate from "@/components/auth/AuthGate";
 import JournalEntrySheetActions from "@/components/accounting/JournalEntrySheetActions";
 import OdooRegistrationSheetMirror from "@/components/accounting/OdooRegistrationSheetMirror";
+import BackgroundJobFetchBridge from "@/components/jobs/BackgroundJobFetchBridge";
 import GlobalBackButton from "@/components/layout/GlobalBackButton";
 import { MainNavigation } from "@/components/layout/MainNavigation";
 import { CompanyProvider } from "@/lib/CompanyContext";
@@ -40,6 +41,7 @@ export default async function RootLayout({
               </main>
             </CompanyProvider>
           </AuthGate>
+          <BackgroundJobFetchBridge />
         </LanguageProvider>
       </body>
     </html>

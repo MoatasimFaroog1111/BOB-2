@@ -2,24 +2,14 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 from contextlib import ExitStack
-from pathlib import Path
 from typing import Any
 
 from fastapi import UploadFile
 
 from app.db.database import SessionLocal
-from app.erp.bank_reconciliation import (
-    _run_matching,
-    get_date_range,
-    parse_file as parse_statement_file,
-    transactions_from_odoo_move_lines,
-)
 from app.erp.document_ai import GuardianDocumentAI
-from app.erp.factory import get_erp_provider
-from app.models.core import ERPConnection
-from app.security.encryption import decrypt_value
 
 
 def analyze_documents(files: list[dict[str, str]]) -> dict[str, Any]:
@@ -78,48 +68,19 @@ def parse_bank_statement(
     date_from: str | None,
     date_to: str | None,
 ) -> dict[str, Any]:
-    statement_txns = parse_statement_file(file_item["path"])
-    statement_total = round(sum(transaction.amount for transaction in statement_txns), 2)
-    return {
-        "status": "success",
-        "statement_only": [transaction.model_dump() for transaction in statement_txns],
-        "ledger_only": [],
-        "matched": [],
-        "smart_matched": [],
-        "statement_total": statement_total,
-        "ledger_total": 0.0,
-        "difference": statement_total,
-        "statement_count": len(statement_txns),
-        "ledger_count": 0,
-        "odoo_raw_count": 0,
-        "date_range_used": {"from": date_from, "to": date_to},
-    }
+    """Run the hardened parser outside the web process."""
 
+    from app.api.v1.bank_reconciliation_hardening import parse_bank_statement_only
 
-def _tenant_erp_connection(organization_id: int):
-    db = SessionLocal()
-    try:
-        connection = (
-            db.query(ERPConnection)
-            .filter(
-                ERPConnection.organization_id == organization_id,
-                ERPConnection.is_active.is_(True),
+    with open(file_item["path"], "rb") as handle:
+        upload = UploadFile(file=handle, filename=file_item["filename"])
+        return asyncio.run(
+            parse_bank_statement_only(
+                statement=upload,
+                date_from=date_from,
+                date_to=date_to,
             )
-            .order_by(ERPConnection.id.asc())
-            .first()
         )
-        if connection is None or not connection.encrypted_secret_ref:
-            raise RuntimeError("erp_connection_missing")
-        credentials = json.loads(decrypt_value(connection.encrypted_secret_ref))
-        return get_erp_provider(
-            provider=connection.provider,
-            url=connection.base_url,
-            db=connection.database_name or "",
-            username=str(credentials.get("username") or ""),
-            password=str(credentials.get("password") or ""),
-        )
-    finally:
-        db.close()
 
 
 def reconcile_bank_statement(
@@ -129,35 +90,28 @@ def reconcile_bank_statement(
     date_from: str | None,
     date_to: str | None,
     company_id: int | None,
+    bank_journal_id: int | None,
 ) -> dict[str, Any]:
-    statement_txns = parse_statement_file(file_item["path"])
-    if not date_from or not date_to:
-        auto_from, auto_to = get_date_range(statement_txns)
-        date_from = date_from or auto_from
-        date_to = date_to or auto_to
+    """Run the hardened full reconciliation and its audit trail in the worker."""
 
-    erp = _tenant_erp_connection(organization_id)
-    odoo_move_lines = erp.fetch_bank_transactions(
-        date_from=date_from,
-        date_to=date_to,
-        company_id=company_id,
-    )
-    ledger_txns = transactions_from_odoo_move_lines(odoo_move_lines)
-    result = _run_matching(statement_txns, ledger_txns)
-    return {
-        "status": "success",
-        "statement_only": [item.model_dump() for item in result.statement_only],
-        "ledger_only": [item.model_dump() for item in result.ledger_only],
-        "matched": [item.model_dump() for item in result.matched],
-        "smart_matched": [item.model_dump() for item in result.smart_matched],
-        "statement_total": result.statement_total,
-        "ledger_total": result.ledger_total,
-        "difference": result.difference,
-        "statement_count": result.statement_count,
-        "ledger_count": result.ledger_count,
-        "odoo_raw_count": len(odoo_move_lines),
-        "date_range_used": {"from": date_from, "to": date_to},
-    }
+    from app.api.v1.bank_reconciliation_hardening import bank_reconciliation
+
+    db = SessionLocal()
+    try:
+        with open(file_item["path"], "rb") as handle:
+            upload = UploadFile(file=handle, filename=file_item["filename"])
+            return asyncio.run(
+                bank_reconciliation(
+                    statement=upload,
+                    db=db,
+                    date_from=date_from,
+                    date_to=date_to,
+                    company_id=company_id,
+                    bank_journal_id=bank_journal_id,
+                )
+            )
+    finally:
+        db.close()
 
 
 def chat_spreadsheet(payload: dict[str, Any]) -> dict[str, Any]:

@@ -1,3 +1,7 @@
+# Railway applies Config-as-Code per service. The web service uses this file;
+# the separate background worker service uses /railway.worker.toml and shares
+# the same Dockerfile image with a different start command.
+
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"

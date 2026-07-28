@@ -35,8 +35,15 @@ RUN python -m compileall -q app \
 ENTRYPOINT ["/usr/local/bin/guardian-entrypoint"]
 EXPOSE 8000
 
+# The same image serves the web and worker Railway services. Detect the active
+# process so the web container checks HTTP while the worker checks arq's Redis
+# heartbeat key.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=5 \
-    CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/health" || exit 1
+    CMD if tr '\0' ' ' < /proc/1/cmdline | grep -q 'app.worker.settings.WorkerSettings'; then \
+            gosu guardian arq --check app.worker.settings.WorkerSettings; \
+        else \
+            curl -fsS "http://127.0.0.1:${PORT:-8000}/health"; \
+        fi || exit 1
 
 # DATABASE_URL must be supplied by Railway PostgreSQL. STORAGE_DIR must be below
 # the attached RAILWAY_VOLUME_MOUNT_PATH; no writable SQLite fallback exists.

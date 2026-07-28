@@ -4,10 +4,10 @@ import os
 import tempfile
 from pathlib import Path
 
-from redis import Redis
 from sqlalchemy import text
 
 from app.core.config import settings
+from app.core.redis_client import get_redis_client
 from app.db.database import engine
 
 
@@ -21,15 +21,10 @@ def _database_ready() -> bool:
 
 
 def _redis_ready() -> bool:
-    if not settings.REDIS_URL.strip():
-        return not settings.is_production
     try:
-        client = Redis.from_url(
-            settings.REDIS_URL,
-            socket_connect_timeout=2,
-            socket_timeout=2,
-            decode_responses=True,
-        )
+        client = get_redis_client()
+        if client is None:
+            return not settings.is_production
         return bool(client.ping())
     except Exception:
         return False

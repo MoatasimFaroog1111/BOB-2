@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 from pathlib import Path
 
@@ -16,6 +17,45 @@ from app.security.tenant_scope import (
     tenant_scope,
 )
 from app.services.secret_store import get_secret_provider
+
+
+class _TestRedis:
+    """Minimal Redis protocol double for tenant-isolation unit tests only."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    def set(self, key: str, value: str, *, ex: int | None = None) -> bool:
+        assert ex == odoo_cache.TTL_SECONDS
+        self.values[key] = value
+        return True
+
+    def get(self, key: str) -> str | None:
+        return self.values.get(key)
+
+    def scan(
+        self,
+        *,
+        cursor: int,
+        match: str,
+        count: int,
+    ) -> tuple[int, list[str]]:
+        assert cursor == 0
+        assert count == odoo_cache.SCAN_COUNT
+        keys = [
+            key
+            for key in self.values
+            if fnmatch.fnmatchcase(key, match)
+        ]
+        return 0, keys
+
+    def delete(self, *keys: str) -> int:
+        removed = 0
+        for key in keys:
+            if key in self.values:
+                removed += 1
+                del self.values[key]
+        return removed
 
 
 def _secret_reference(name: str, username: str) -> str:
@@ -228,7 +268,10 @@ def test_literal_tenant_predicate_is_not_reinterpreted_and_inserts_fail_closed(d
     assert current_organization_id(required=False) is None
 
 
-def test_odoo_cache_is_namespaced_by_tenant():
+def test_odoo_cache_is_namespaced_by_tenant(monkeypatch):
+    fake_redis = _TestRedis()
+    monkeypatch.setattr(odoo_cache, "get_redis_client", lambda: fake_redis)
+
     with tenant_scope(1):
         odoo_cache.set_cached("https://shared.example.com", "shared", "accounts", ["one"])
     with tenant_scope(2):

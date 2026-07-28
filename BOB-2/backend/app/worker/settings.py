@@ -72,7 +72,7 @@ class WorkerSettings:
     redis_settings = _worker_redis_settings()
     queue_name = WORKER_QUEUE_NAME
     max_jobs = 4
-    job_timeout = 900
+    job_timeout = 300
     keep_result = 3600
     max_tries = 3
     retry_jobs = True

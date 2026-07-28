@@ -13,6 +13,7 @@ bcrypt==4.3.0
 cryptography==49.0.0
 pyotp==2.10.0
 redis==8.0.1
+arq==0.28.0
 clamd==1.0.2
 
 pydantic[email]==2.13.4

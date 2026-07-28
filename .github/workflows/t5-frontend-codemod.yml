@@ -6,6 +6,10 @@ on:
       - agent/t5-long-running-worker-jobs
     paths:
       - ".github/workflows/t5-frontend-codemod.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/t5-frontend-codemod.yml"
 
 permissions:
   contents: write

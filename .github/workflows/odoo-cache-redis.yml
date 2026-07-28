@@ -1,0 +1,70 @@
+name: Odoo cache Redis
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "BOB-2/backend/app/core/redis_client.py"
+      - "BOB-2/backend/app/erp/odoo_cache.py"
+      - "BOB-2/backend/tests/test_odoo_cache_redis.py"
+      - ".github/workflows/odoo-cache-redis.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "BOB-2/backend/app/core/redis_client.py"
+      - "BOB-2/backend/app/erp/odoo_cache.py"
+      - "BOB-2/backend/tests/test_odoo_cache_redis.py"
+      - ".github/workflows/odoo-cache-redis.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: odoo-cache-redis-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cross-process-cache:
+    name: Cross-process tenant cache
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: BOB-2/backend
+    env:
+      APP_ENV: test
+      REDIS_URL: redis://127.0.0.1:6379/15
+      SECRET_KEY: ci-only-secret-key-that-is-longer-than-thirty-two-characters
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: BOB-2/backend/requirements.lock
+      - name: Install hash-locked dependencies
+        run: pip install --quiet --require-hashes -r requirements.lock
+      - name: Verify Redis cache implementation shape
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path("app/erp/odoo_cache.py").read_text(encoding="utf-8")
+          assert "threading" not in source
+          assert "_store" not in source
+          assert ".scan(" in source
+          assert ".keys(" not in source
+          assert "ex=TTL_SECONDS" in source
+          assert "current_organization_id(required=True)" in source
+          PY
+      - name: Run real Redis cross-process tests
+        run: python -m pytest tests/test_odoo_cache_redis.py -q

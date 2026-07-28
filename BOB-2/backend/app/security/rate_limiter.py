@@ -2,7 +2,6 @@
 
 import hashlib
 import ipaddress
-import logging
 import time
 from collections import defaultdict
 from typing import Dict, Tuple
@@ -10,15 +9,12 @@ from typing import Dict, Tuple
 from fastapi import HTTPException, status
 
 from app.core.config import settings
-
-logger = logging.getLogger(__name__)
-
-try:
-    from redis import Redis
-    from redis.exceptions import RedisError
-except ImportError:  # pragma: no cover - deployment installs redis dependency
-    Redis = None  # type: ignore[assignment]
-    RedisError = Exception  # type: ignore[assignment]
+from app.core.redis_client import (
+    RedisError,
+    build_redis_key,
+    get_redis_client,
+    handle_redis_unavailable,
+)
 
 
 class LoginRateLimiter:
@@ -27,34 +23,27 @@ class LoginRateLimiter:
     def __init__(self) -> None:
         self._attempts: Dict[str, list] = defaultdict(list)
         self._lockouts: Dict[str, float] = {}
-        self._redis = None
-        if settings.REDIS_URL and Redis is not None:
-            self._redis = Redis.from_url(
-                settings.REDIS_URL,
-                decode_responses=True,
-                socket_connect_timeout=2,
-                socket_timeout=2,
-                health_check_interval=30,
-            )
 
     @staticmethod
     def _key(identifier: str) -> str:
         digest = hashlib.sha256(identifier.encode("utf-8")).hexdigest()
-        return f"guardian:auth:failed:{digest}"
+        return build_redis_key(
+            "auth",
+            organization_id=0,
+            parts=("failed", digest),
+        )
 
     @property
     def _window_seconds(self) -> int:
         return settings.LOGIN_LOCKOUT_MINUTES * 60
 
-    def _redis_unavailable(self, exc: Exception) -> None:
-        logger.error("Redis rate limiter unavailable: %s", exc)
-        if settings.is_production:
-            # Authentication must fail closed if the shared abuse-control store is down.
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Authentication service temporarily unavailable.",
-                headers={"Retry-After": "60"},
-            )
+    @staticmethod
+    def _redis_unavailable(exc: Exception) -> None:
+        handle_redis_unavailable(
+            exc,
+            component="authentication rate limiter",
+            public_detail="Authentication service temporarily unavailable.",
+        )
 
     def _clean_old_attempts(self, identifier: str) -> None:
         now = time.time()
@@ -80,13 +69,14 @@ class LoginRateLimiter:
         return False, 0
 
     def is_locked_out(self, identifier: str) -> Tuple[bool, int]:
-        if self._redis is not None:
+        client = get_redis_client()
+        if client is not None:
             try:
                 key = self._key(identifier)
-                count_value = self._redis.get(key)
+                count_value = client.get(key)
                 count = int(count_value or 0)
                 if count >= settings.MAX_LOGIN_ATTEMPTS:
-                    ttl = self._redis.ttl(key)
+                    ttl = client.ttl(key)
                     return True, max(int(ttl), 1)
                 return False, 0
             except RedisError as exc:
@@ -95,13 +85,14 @@ class LoginRateLimiter:
         return self._local_is_locked_out(identifier)
 
     def record_attempt(self, identifier: str, success: bool) -> None:
-        if self._redis is not None:
+        client = get_redis_client()
+        if client is not None:
             try:
                 key = self._key(identifier)
                 if success:
-                    self._redis.delete(key)
+                    client.delete(key)
                 else:
-                    with self._redis.pipeline(transaction=True) as pipe:
+                    with client.pipeline(transaction=True) as pipe:
                         pipe.incr(key)
                         pipe.expire(key, self._window_seconds)
                         pipe.execute()
@@ -149,7 +140,7 @@ def _is_trusted_proxy(peer_ip: str | None) -> bool:
             if peer in ipaddress.ip_network(configured, strict=False):
                 return True
         except ValueError:
-            logger.error("Ignoring invalid TRUSTED_PROXY_IPS entry: %s", configured)
+            continue
     return False
 
 
@@ -175,5 +166,7 @@ def get_device_identifier(request) -> str:
     """Return a privacy-preserving coarse device identifier for abuse controls."""
     user_agent = request.headers.get("User-Agent", "unknown")[:512]
     accept_language = request.headers.get("Accept-Language", "")[:128]
-    digest = hashlib.sha256(f"{user_agent}|{accept_language}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(
+        f"{user_agent}|{accept_language}".encode("utf-8")
+    ).hexdigest()
     return digest

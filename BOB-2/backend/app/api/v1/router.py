@@ -68,10 +68,12 @@ api_router.include_router(
     tags=["Communication Tools"],
 )
 
-# Remove historical implementations before the broad ERP router is copied into
-# the application. Compatible tenant-scoped replacements are included below.
+# Remove every synchronous implementation before any broad ERP router is copied
+# into the application. The queued replacements preserve the hardened behavior.
 replace_unsafe_legacy_routes(erp_router)
 replace_long_running_routes(erp_router)
+replace_long_running_routes(bank_reconciliation_compat_router)
+replace_long_running_routes(bank_reconciliation_hardening_router)
 
 # The centralized dependency is method-aware: reads require view_financials,
 # mutations require create_entries by default, settings require manage_settings,

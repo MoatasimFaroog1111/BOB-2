@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import HTTPException, UploadFile, status
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -118,7 +119,13 @@ def store_job_result(
     if client is None:
         return
     try:
-        payload = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+        # Match FastAPI's HTTP response encoding before persisting temporary
+        # results so Decimal, datetime, and Pydantic values remain JSON-safe.
+        payload = json.dumps(
+            jsonable_encoder(result),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         client.set(
             _result_key(organization_id, job_id),
             payload,

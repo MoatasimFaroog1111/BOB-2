@@ -1,6 +1,8 @@
-# Configure the Railway worker service to use this file as its custom
-# Config-as-Code path. Railway applies one config file per service, so the web
-# service uses /railway.toml and the worker service uses /railway.worker.toml.
+# Create a second Railway service from this repository and set its custom
+# Config-as-Code path to /railway.worker.toml. Railway applies one config file
+# per service: the web service uses /railway.toml, while this worker service
+# shares the same image and DATABASE_URL/REDIS_URL/storage/security variables
+# but starts arq instead of Uvicorn.
 
 [build]
 builder = "DOCKERFILE"

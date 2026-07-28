@@ -2,6 +2,7 @@
 
 import hashlib
 import ipaddress
+import logging
 import time
 from collections import defaultdict
 from typing import Dict, Tuple
@@ -15,6 +16,8 @@ from app.core.redis_client import (
     get_redis_client,
     handle_redis_unavailable,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class LoginRateLimiter:
@@ -140,7 +143,7 @@ def _is_trusted_proxy(peer_ip: str | None) -> bool:
             if peer in ipaddress.ip_network(configured, strict=False):
                 return True
         except ValueError:
-            continue
+            logger.error("Ignoring invalid TRUSTED_PROXY_IPS entry: %s", configured)
     return False
 
 

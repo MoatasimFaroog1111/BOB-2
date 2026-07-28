@@ -20,11 +20,47 @@ from app.worker.settings import (
     WorkerSettings,
     _worker_redis_settings,
 )
+from app.worker.tasks import _run_audited_task
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("REDIS_URL") or not os.environ.get("DATABASE_URL", "").startswith("postgresql"),
     reason="Real Redis and PostgreSQL are required for worker process tests",
 )
+
+
+def _create_organization(prefix: str) -> int:
+    db = SessionLocal()
+    try:
+        organization = Organization(
+            name=f"{prefix} {uuid.uuid4().hex[:10]}",
+            legal_name=f"{prefix} Organization",
+            country="SA",
+            is_active=True,
+        )
+        db.add(organization)
+        db.commit()
+        db.refresh(organization)
+        return int(organization.id)
+    finally:
+        db.close()
+
+
+def _job_audit_events(organization_id: int, job_id: str) -> list[AuditLog]:
+    db = SessionLocal()
+    try:
+        with tenant_scope(organization_id):
+            return (
+                db.query(AuditLog)
+                .filter(
+                    AuditLog.organization_id == organization_id,
+                    AuditLog.entity_type == "background_job",
+                    AuditLog.entity_id == job_id,
+                )
+                .order_by(AuditLog.sequence_number.asc())
+                .all()
+            )
+    finally:
+        db.close()
 
 
 async def _enqueue_smoke_job(organization_id: int, job_id: str) -> None:
@@ -63,19 +99,7 @@ def test_worker_executes_job_outside_web_process_and_audits_lifecycle():
     assert WorkerSettings.max_tries == 3
     assert WorkerSettings.retry_jobs is True
 
-    db = SessionLocal()
-    organization = Organization(
-        name=f"Worker Test {uuid.uuid4().hex[:10]}",
-        legal_name="Worker Test Organization",
-        country="SA",
-        is_active=True,
-    )
-    db.add(organization)
-    db.commit()
-    db.refresh(organization)
-    organization_id = int(organization.id)
-    db.close()
-
+    organization_id = _create_organization("Worker Test")
     job_id = f"worker-smoke-{uuid.uuid4().hex}"
     asyncio.run(_enqueue_smoke_job(organization_id, job_id))
 
@@ -102,24 +126,43 @@ def test_worker_executes_job_outside_web_process_and_audits_lifecycle():
         "job_id": job_id,
     }
 
-    db = SessionLocal()
-    try:
+    events = _job_audit_events(organization_id, job_id)
+    assert [event.action for event in events] == [
+        "worker_job_started",
+        "worker_job_completed",
+    ]
+    assert all(event.details["kind"] == "worker_smoke_test" for event in events)
+    assert all(event.event_hash and len(event.event_hash) == 64 for event in events)
+
+
+def test_failed_task_records_started_and_failed_audit_events():
+    organization_id = _create_organization("Worker Failure Test")
+    job_id = f"worker-failure-{uuid.uuid4().hex}"
+
+    async def failing_operation() -> dict:
+        raise RuntimeError("intentional worker failure")
+
+    async def execute_failure() -> None:
         with tenant_scope(organization_id):
-            events = (
-                db.query(AuditLog)
-                .filter(
-                    AuditLog.organization_id == organization_id,
-                    AuditLog.entity_type == "background_job",
-                    AuditLog.entity_id == job_id,
-                )
-                .order_by(AuditLog.sequence_number.asc())
-                .all()
+            await _run_audited_task(
+                {"job_id": job_id, "job_try": 2},
+                organization_id=organization_id,
+                kind="failure_probe",
+                operation=failing_operation,
             )
-        assert [event.action for event in events] == [
-            "worker_job_started",
-            "worker_job_completed",
-        ]
-        assert all(event.details["kind"] == "worker_smoke_test" for event in events)
-        assert all(event.event_hash and len(event.event_hash) == 64 for event in events)
-    finally:
-        db.close()
+
+    with pytest.raises(RuntimeError, match="intentional worker failure"):
+        asyncio.run(execute_failure())
+
+    events = _job_audit_events(organization_id, job_id)
+    assert [event.action for event in events] == [
+        "worker_job_started",
+        "worker_job_failed",
+    ]
+    assert events[-1].details == {
+        "job_id": job_id,
+        "kind": "failure_probe",
+        "job_try": 2,
+        "error_code": "RuntimeError",
+    }
+    assert all(event.event_hash and len(event.event_hash) == 64 for event in events)

@@ -116,8 +116,9 @@ def get_redis_client() -> Redis | None:
         with _client_lock:
             if _client is not None or _pool is not None:
                 _clear_client_locked()
-        missing = RuntimeError("REDIS_URL is not configured")
-        handle_redis_unavailable(missing, component="Redis configuration")
+        if settings.is_production:
+            missing = RuntimeError("REDIS_URL is not configured")
+            handle_redis_unavailable(missing, component="Redis configuration")
         return None
 
     with _client_lock:

@@ -26,11 +26,11 @@ export function installCompanyAwareFetch(): void {
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     const isChatRequest = url.includes(CHAT_SPREADSHEET_PATH);
-    const isJsonBody = typeof init?.body === "string";
+    const requestBody = init?.body;
 
-    if (isChatRequest && isJsonBody) {
+    if (isChatRequest && typeof requestBody === "string") {
       try {
-        const body = JSON.parse(init.body as string) as Record<string, unknown>;
+        const body = JSON.parse(requestBody) as Record<string, unknown>;
         if (body.company_id == null) {
           const companyId = selectedCompanyId();
           if (companyId !== null) {

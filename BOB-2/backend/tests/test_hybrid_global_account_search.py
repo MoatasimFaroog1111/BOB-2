@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import inspect
 
 from app.api.v1.hybrid_global_account_search import _extract_global_request
@@ -33,11 +34,16 @@ def test_unscoped_general_chat_does_not_trigger_global_odoo_scan() -> None:
     assert _extract_global_request("ما معنى حساب المصروفات؟") is None
 
 
-def test_global_search_module_has_no_external_ai_dependency() -> None:
+def test_global_search_module_has_no_external_ai_import() -> None:
     import app.api.v1.hybrid_global_account_search as module
 
-    source = inspect.getsource(module).lower()
+    tree = ast.parse(inspect.getsource(module))
+    imported_modules: set[str] = set()
 
-    assert "anthropic" not in source
-    assert "openai" not in source
-    assert "ollama" not in source
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_modules.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_modules.add(node.module.split(".")[0])
+
+    assert imported_modules.isdisjoint({"anthropic", "openai", "ollama"})

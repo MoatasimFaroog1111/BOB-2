@@ -4,7 +4,9 @@ from sqlalchemy.orm import Session
 from app.api.v1.accounting_command_brain import apply_accounting_command
 from app.api.v1.chat_spreadsheet_intent_guard import guarded_chat_spreadsheet
 from app.api.v1.hybrid_account_partner_search import try_hybrid_account_partner_search
-from app.api.v1.hybrid_global_account_search import try_hybrid_global_account_search
+from app.api.v1.hybrid_global_account_search_v2 import (
+    try_hybrid_global_account_search_v2,
+)
 from app.api.v1.erp import ChatSpreadsheetRequest
 from app.api.v1.natural_language_command_model import execute_natural_language_command
 from app.db.database import get_db
@@ -35,7 +37,7 @@ def accounting_command_chat_spreadsheet(
     if hybrid_result is not None:
         return hybrid_result
 
-    global_search_result = try_hybrid_global_account_search(
+    global_search_result = try_hybrid_global_account_search_v2(
         payload=payload,
         db_session=db_session,
     )

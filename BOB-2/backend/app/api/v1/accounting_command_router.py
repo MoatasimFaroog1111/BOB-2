@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.accounting_command_brain import apply_accounting_command
 from app.api.v1.chat_spreadsheet_intent_guard import guarded_chat_spreadsheet
-from app.api.v1.deterministic_account_partner_search import try_deterministic_account_partner_search
+from app.api.v1.hybrid_account_partner_search import try_hybrid_account_partner_search
 from app.api.v1.erp import ChatSpreadsheetRequest
 from app.api.v1.natural_language_command_model import execute_natural_language_command
 from app.db.database import get_db
@@ -26,12 +26,12 @@ def accounting_command_chat_spreadsheet(
     This gives the system a real natural-language command layer without allowing free-form
     LLM text to directly write to Odoo or leak broken JSON to the UI.
     """
-    deterministic_result = try_deterministic_account_partner_search(
+    hybrid_result = try_hybrid_account_partner_search(
         payload=payload,
         db_session=db_session,
     )
-    if deterministic_result is not None:
-        return deterministic_result
+    if hybrid_result is not None:
+        return hybrid_result
 
     nlu_result = execute_natural_language_command(payload.prompt or "", payload, db_session=db_session)
     if nlu_result is not None:

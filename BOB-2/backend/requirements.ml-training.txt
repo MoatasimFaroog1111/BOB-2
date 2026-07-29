@@ -1,0 +1,2 @@
+# Offline model training only. Production inference reads exported JSON weights.
+scikit-learn==1.9.0

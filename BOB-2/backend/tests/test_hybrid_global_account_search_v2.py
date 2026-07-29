@@ -2,11 +2,8 @@ from __future__ import annotations
 
 import inspect
 
-from app.api.v1.hybrid_global_account_search_v2 import (
-    SearchDiagnostics,
-    _read_candidate_lines,
-    _search_terms,
-)
+from app.api.v1.odoo_candidate_line_search import read_candidate_lines
+from app.api.v1.odoo_partner_candidates import build_search_terms
 
 
 class FakeERP:
@@ -52,7 +49,6 @@ class FakeERP:
 
 def test_candidate_search_is_filtered_and_fail_soft() -> None:
     erp = FakeERP()
-    diagnostics = SearchDiagnostics()
     line_metadata = {
         "id": {"type": "integer"},
         "move_id": {"type": "many2one"},
@@ -71,54 +67,38 @@ def test_candidate_search_is_filtered_and_fail_soft() -> None:
         "narration": {"type": "html"},
     }
 
-    rows = _read_candidate_lines(
+    result = read_candidate_lines(
         erp,
-        company_id=1,
+        base_domain=[["company_id", "=", 1]],
         matched_partner_ids=[1],
         terms=["غلام", "ghlam", "Ghulam"],
         line_fields=list(line_metadata),
         line_metadata=line_metadata,
         move_metadata=move_metadata,
-        diagnostics=diagnostics,
     )
 
-    assert [row["id"] for row in rows] == [10]
-    assert diagnostics.successful_queries >= 1
-    assert diagnostics.skipped_queries == 1
+    assert [row["id"] for row in result.lines] == [10]
+    assert result.successful_queries >= 1
+    assert result.skipped_queries == 1
     assert all(domain for domain in erp.domains)
-    assert all(
-        any(
-            isinstance(leaf, list)
-            and leaf
-            and leaf[0] in {
-                "company_id",
-                "partner_id",
-                "name",
-                "ref",
-                "move_id.ref",
-                "move_id.payment_reference",
-                "move_id.narration",
-            }
-            for leaf in domain
-        )
-        for domain in erp.domains
-    )
+    assert all(["company_id", "=", 1] in domain for domain in erp.domains)
 
 
 def test_search_terms_reuse_observed_ghulam_spelling() -> None:
-    terms = _search_terms("غلام", ["GHULAM HUSSAIN"])
+    terms = build_search_terms("غلام", ["GHULAM HUSSAIN"])
 
     assert "غلام" in terms
     assert any(term.casefold() == "ghulam" for term in terms)
 
 
-def test_v2_never_imports_full_ledger_reader_or_dynamic_domain_builder() -> None:
+def test_v2_never_imports_legacy_or_full_ledger_modules() -> None:
     import app.api.v1.hybrid_global_account_search_v2 as module
 
     source = inspect.getsource(module)
 
+    assert "deterministic_account_partner_search" not in source
+    assert "hybrid_global_account_search import" not in source
     assert "_read_account_lines" not in source
-    assert "_direct_text_fields" not in source
     assert "search_count" not in source
 
 

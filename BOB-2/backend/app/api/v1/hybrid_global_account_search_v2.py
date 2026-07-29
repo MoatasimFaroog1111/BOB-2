@@ -1,9 +1,7 @@
 """Resilient read-only Odoo search across all accounts.
 
-This implementation avoids full-ledger scans and avoids building one large,
-dynamic Odoo domain. It first scores a bounded partner directory, then runs a
-small number of independent searches over stable standard fields. Failure of
-one optional field search does not fail the whole request.
+The route scores a bounded partner directory, then runs independent searches
+on stable Odoo fields. One rejected optional query cannot abort the full request.
 """
 
 from __future__ import annotations
@@ -19,14 +17,16 @@ from app.api.v1.deterministic_account_partner_search import (
     BASE_LINE_FIELDS,
     BASE_MOVE_FIELDS,
     _many2one_id,
-    _read_accounts,
     _read_connection,
     _read_fields,
     _read_moves,
     _value_text,
 )
 from app.api.v1.erp import ChatSpreadsheetRequest
-from app.api.v1.hybrid_global_account_search import _extract_global_request
+from app.api.v1.hybrid_global_account_search import (
+    _extract_global_request,
+    _read_accounts,
+)
 from app.ml.name_matching.normalization import transliterate_arabic
 from app.ml.name_matching.runtime import explain_similarity, get_local_name_matcher
 
@@ -36,7 +36,6 @@ MAX_PARTNERS_TO_SCORE = 5_000
 MAX_CANDIDATE_LINES = 5_000
 MAX_RESULTS_PER_QUERY = 1_200
 MAX_SEARCH_TERMS = 8
-
 STABLE_LINE_SEARCH_FIELDS = ("name", "ref")
 STABLE_MOVE_SEARCH_FIELDS = ("ref", "payment_reference", "narration")
 
@@ -61,9 +60,7 @@ def _existing_fields(
 
 
 def _company_prefix(company_id: int | None) -> list[Any]:
-    if not company_id:
-        return []
-    return [["company_id", "=", int(company_id)]]
+    return [["company_id", "=", int(company_id)]] if company_id else []
 
 
 def _or_terms(field_name: str, terms: list[str]) -> list[Any]:
@@ -79,15 +76,10 @@ def _read_partner_directory(
     erp: Any,
     diagnostics: SearchDiagnostics,
 ) -> list[dict[str, Any]]:
-    """Read only stable partner fields, with a minimal-field fallback."""
-    preferred_fields = ["id", "name", "display_name", "ref"]
-    fallback_fields = ["id", "name"]
-
-    for fields in (preferred_fields, fallback_fields):
+    for fields in (["id", "name", "display_name", "ref"], ["id", "name"]):
         try:
             partners: list[dict[str, Any]] = []
             offset = 0
-
             while offset < MAX_PARTNERS_TO_SCORE:
                 limit = min(500, MAX_PARTNERS_TO_SCORE - offset)
                 batch = erp.execute_kw(
@@ -103,22 +95,19 @@ def _read_partner_directory(
                 )
                 if not batch:
                     break
-
                 partners.extend(batch)
                 offset += len(batch)
                 if len(batch) < limit:
                     break
-
             diagnostics.partner_rows = len(partners)
             return partners
         except Exception:
             diagnostics.skipped_queries += 1
             logger.warning(
-                "Global Odoo partner directory read failed for fields=%s",
+                "Partner directory read failed for fields=%s",
                 fields,
                 exc_info=True,
             )
-
     return []
 
 
@@ -126,7 +115,7 @@ def _matching_partners(
     search_term: str,
     partners: list[dict[str, Any]],
 ) -> tuple[list[int], list[str]]:
-    matcher = get_local_name_matcher()
+    threshold = get_local_name_matcher().accept_threshold
     matched_ids: list[int] = []
     matched_texts: list[str] = []
 
@@ -134,20 +123,17 @@ def _matching_partners(
         partner_id = partner.get("id")
         if not isinstance(partner_id, int):
             continue
-
         best_score = 0.0
         best_text = ""
-
         for field_name in ("name", "display_name", "ref"):
             text = _value_text(partner.get(field_name))
             if not text:
                 continue
-            result = explain_similarity(search_term, text)
-            if result.score > best_score:
-                best_score = result.score
+            score = explain_similarity(search_term, text).score
+            if score > best_score:
+                best_score = score
                 best_text = text
-
-        if best_score >= matcher.accept_threshold:
+        if best_score >= threshold:
             matched_ids.append(partner_id)
             if best_text:
                 matched_texts.append(best_text)
@@ -162,14 +148,12 @@ def _search_terms(search_term: str, matched_texts: list[str]) -> list[str]:
     def add(value: str) -> None:
         cleaned = re.sub(r"\s+", " ", value or "").strip()
         key = cleaned.casefold()
-        if len(cleaned) < 2 or key in seen:
-            return
-        seen.add(key)
-        ordered.append(cleaned)
+        if len(cleaned) >= 2 and key not in seen:
+            seen.add(key)
+            ordered.append(cleaned)
 
     add(search_term)
     add(transliterate_arabic(search_term))
-
     for text in matched_texts:
         for token in re.findall(
             r"[A-Za-z\u0600-\u06FF][A-Za-z\u0600-\u06FF\-]*",
@@ -181,7 +165,6 @@ def _search_terms(search_term: str, matched_texts: list[str]) -> list[str]:
             add(text)
         if len(ordered) >= MAX_SEARCH_TERMS:
             break
-
     return ordered[:MAX_SEARCH_TERMS]
 
 
@@ -204,10 +187,7 @@ def _run_line_query(
 ) -> None:
     if not domain or len(destination) >= MAX_CANDIDATE_LINES:
         return
-
-    remaining = MAX_CANDIDATE_LINES - len(destination)
-    limit = min(MAX_RESULTS_PER_QUERY, remaining)
-
+    limit = min(MAX_RESULTS_PER_QUERY, MAX_CANDIDATE_LINES - len(destination))
     try:
         rows = erp.execute_kw(
             "account.move.line",
@@ -223,11 +203,7 @@ def _run_line_query(
         diagnostics.successful_queries += 1
     except Exception:
         diagnostics.skipped_queries += 1
-        logger.warning(
-            "Optional global Odoo candidate query failed: %s",
-            domain,
-            exc_info=True,
-        )
+        logger.warning("Candidate query rejected: %s", domain, exc_info=True)
 
 
 def _read_candidate_lines(
@@ -241,7 +217,6 @@ def _read_candidate_lines(
     move_metadata: dict[str, dict[str, Any]],
     diagnostics: SearchDiagnostics,
 ) -> list[dict[str, Any]]:
-    """Run independent, fail-soft searches over stable standard fields."""
     candidates: dict[int, dict[str, Any]] = {}
     company_domain = _company_prefix(company_id)
 
@@ -257,11 +232,11 @@ def _read_candidate_lines(
     for field_name in STABLE_LINE_SEARCH_FIELDS:
         if line_metadata and field_name not in line_metadata:
             continue
-        term_domain = _or_terms(field_name, terms)
-        if term_domain:
+        domain = _or_terms(field_name, terms)
+        if domain:
             _run_line_query(
                 erp,
-                company_domain + term_domain,
+                company_domain + domain,
                 line_fields,
                 candidates,
                 diagnostics,
@@ -270,11 +245,11 @@ def _read_candidate_lines(
     for field_name in STABLE_MOVE_SEARCH_FIELDS:
         if move_metadata and field_name not in move_metadata:
             continue
-        term_domain = _or_terms(f"move_id.{field_name}", terms)
-        if term_domain:
+        domain = _or_terms(f"move_id.{field_name}", terms)
+        if domain:
             _run_line_query(
                 erp,
-                company_domain + term_domain,
+                company_domain + domain,
                 line_fields,
                 candidates,
                 diagnostics,
@@ -298,27 +273,19 @@ def _best_match(
     best_result = None
     best_field = ""
     best_value = ""
-
-    for field_name in line_fields:
-        value = _value_text(line.get(field_name))
-        if not value:
-            continue
-        result = explain_similarity(search_term, value)
-        if best_result is None or result.score > best_result.score:
-            best_result = result
-            best_field = f"account.move.line.{field_name}"
-            best_value = value
-
-    for field_name in move_fields:
-        value = _value_text(move.get(field_name))
-        if not value:
-            continue
-        result = explain_similarity(search_term, value)
-        if best_result is None or result.score > best_result.score:
-            best_result = result
-            best_field = f"account.move.{field_name}"
-            best_value = value
-
+    for model_name, record, fields in (
+        ("account.move.line", line, line_fields),
+        ("account.move", move, move_fields),
+    ):
+        for field_name in fields:
+            value = _value_text(record.get(field_name))
+            if not value:
+                continue
+            result = explain_similarity(search_term, value)
+            if best_result is None or result.score > best_result.score:
+                best_result = result
+                best_field = f"{model_name}.{field_name}"
+                best_value = value
     return best_result, best_field, best_value
 
 
@@ -352,10 +319,8 @@ def try_hybrid_global_account_search_v2(
     try:
         diagnostics.stage = "loading_model"
         matcher = get_local_name_matcher()
-
         diagnostics.stage = "connecting_to_odoo"
         connection, erp = _read_connection(db_session)
-
         diagnostics.stage = "reading_metadata"
         line_metadata = _read_fields(erp, "account.move.line")
         move_metadata = _read_fields(erp, "account.move")
@@ -364,7 +329,6 @@ def try_hybrid_global_account_search_v2(
 
         diagnostics.stage = "reading_partner_directory"
         partners = _read_partner_directory(erp, diagnostics)
-
         diagnostics.stage = "matching_partners"
         matched_partner_ids, matched_partner_texts = _matching_partners(
             search_term,
@@ -389,8 +353,8 @@ def try_hybrid_global_account_search_v2(
         if diagnostics.successful_queries == 0:
             return {
                 "message": (
-                    "تعذر تنفيذ استعلامات البحث المرشحة في Odoo، لكن الاتصال "
-                    "بالنظام تم بنجاح. رمز التشخيص: GLOBAL_QUERY_REJECTED."
+                    "تم الاتصال بـ Odoo، لكن النظام رفض جميع استعلامات البحث "
+                    "المرشحة. رمز التشخيص: GLOBAL_QUERY_REJECTED."
                 ),
                 "grid_data": None,
                 "intent": "hybrid_global_account_search_v2",
@@ -437,17 +401,14 @@ def try_hybrid_global_account_search_v2(
             account_id = _many2one_id(line.get("account_id"))
             account = accounts.get(account_id or -1, {})
             account_code = _value_text(account.get("code"))
-            account_name = (
-                _value_text(account.get("name"))
-                or _value_text(line.get("account_id"))
+            account_name = _value_text(account.get("name")) or _value_text(
+                line.get("account_id")
             )
-            partner_name = (
-                _value_text(line.get("partner_id"))
-                or _value_text(move.get("partner_id"))
+            partner_name = _value_text(line.get("partner_id")) or _value_text(
+                move.get("partner_id")
             )
-            entry_name = (
-                _value_text(move.get("name"))
-                or _value_text(line.get("move_id"))
+            entry_name = _value_text(move.get("name")) or _value_text(
+                line.get("move_id")
             )
             reference = (
                 _value_text(move.get("ref"))
@@ -461,7 +422,6 @@ def try_hybrid_global_account_search_v2(
                 if base_url and move_id
                 else ""
             )
-
             rows.append(
                 [
                     entry_name,
@@ -484,17 +444,15 @@ def try_hybrid_global_account_search_v2(
             )
 
         matched_count = len(rows) - 1
-        if matched_count:
-            message = (
-                "✅ تم البحث محليًا في جميع حسابات Odoo دون مزود ذكاء خارجي. "
-                f"وجدت {matched_count} سطرًا مرتبطًا بالكلمة «{search_term}»."
-            )
-        else:
-            message = (
+        message = (
+            "✅ تم البحث محليًا في جميع حسابات Odoo دون مزود ذكاء خارجي. "
+            f"وجدت {matched_count} سطرًا مرتبطًا بالكلمة «{search_term}»."
+            if matched_count
+            else (
                 "لم أجد نتائج مؤكدة في حسابات Odoo تطابق الكلمة "
                 f"«{search_term}»."
             )
-
+        )
         message += (
             f"\nتم فحص {diagnostics.partner_rows} شريكًا و"
             f"{diagnostics.candidate_rows} سطرًا مرشحًا."
@@ -523,7 +481,7 @@ def try_hybrid_global_account_search_v2(
 
     except Exception:
         logger.exception(
-            "Resilient hybrid global Odoo search failed at stage=%s",
+            "Resilient global Odoo search failed at stage=%s",
             diagnostics.stage,
         )
         return {

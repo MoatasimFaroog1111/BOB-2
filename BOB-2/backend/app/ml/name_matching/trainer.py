@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import platform
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from app.ml.name_matching.features import FEATURE_NAMES, extract_pair_features
+from app.ml.name_matching.odoo_feedback_features import load_feedback_document
 from app.ml.name_matching.runtime import LocalNameMatcher
 from app.ml.name_matching.seed_data import (
     build_training_examples,
@@ -26,10 +28,71 @@ ACCEPT_THRESHOLD = 0.80
 REVIEW_THRESHOLD = 0.65
 
 
-def _training_digest(examples: list[tuple[str, str, int]]) -> str:
-    serialized = "\n".join(
-        f"{label}\t{query}\t{candidate}"
-        for query, candidate, label in examples
+def _load_feedback_examples() -> tuple[list[list[float]], list[int], dict[str, Any]]:
+    document = load_feedback_document()
+
+    if document.get("schema_version") != 1:
+        raise ValueError("Unsupported Odoo feedback corpus schema.")
+
+    if document.get("feature_names") != FEATURE_NAMES:
+        raise ValueError("Odoo feedback feature schema does not match runtime.")
+
+    raw_examples = document.get("examples")
+    if not isinstance(raw_examples, list):
+        raise ValueError("Odoo feedback corpus examples must be a list.")
+
+    features: list[list[float]] = []
+    labels: list[int] = []
+
+    for index, example in enumerate(raw_examples):
+        if not isinstance(example, dict):
+            raise ValueError(f"Feedback example {index} must be an object.")
+
+        label = example.get("label")
+        vector = example.get("features")
+
+        if label not in (0, 1):
+            raise ValueError(f"Feedback example {index} has an invalid label.")
+
+        if not isinstance(vector, list) or len(vector) != len(FEATURE_NAMES):
+            raise ValueError(f"Feedback example {index} has an invalid vector.")
+
+        numeric_vector = [float(value) for value in vector]
+
+        if not all(math.isfinite(value) and 0.0 <= value <= 1.0 for value in numeric_vector):
+            raise ValueError(f"Feedback example {index} contains invalid values.")
+
+        features.append(numeric_vector)
+        labels.append(int(label))
+
+    return features, labels, document
+
+
+def _training_digest(
+    text_examples: list[tuple[str, str, int]],
+    feedback_document: dict[str, Any],
+) -> str:
+    payload = {
+        "text_examples": [
+            [query, candidate, label]
+            for query, candidate, label in text_examples
+        ],
+        "feature_examples": feedback_document["examples"],
+    }
+    serialized = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def _feedback_digest(feedback_document: dict[str, Any]) -> str:
+    serialized = json.dumps(
+        feedback_document["examples"],
+        sort_keys=True,
+        separators=(",", ":"),
     )
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
@@ -44,11 +107,16 @@ def train_artifact() -> dict[str, Any]:
         ) from exc
 
     examples = build_training_examples()
+    feedback_features, feedback_labels, feedback_document = _load_feedback_examples()
+
     features = [
         extract_pair_features(query, candidate)
         for query, candidate, _ in examples
     ]
     labels = [label for _, _, label in examples]
+
+    features.extend(feedback_features)
+    labels.extend(feedback_labels)
 
     classifier = LogisticRegression(
         max_iter=4_000,
@@ -58,7 +126,10 @@ def train_artifact() -> dict[str, Any]:
     )
     classifier.fit(features, labels)
 
-    digest = _training_digest(examples)
+    digest = _training_digest(examples, feedback_document)
+    feedback_positive = sum(feedback_labels)
+    feedback_negative = len(feedback_labels) - feedback_positive
+
     artifact: dict[str, Any] = {
         "schema_version": 1,
         "model_version": f"{MODEL_VERSION_PREFIX}-{digest[:12]}",
@@ -67,7 +138,7 @@ def train_artifact() -> dict[str, Any]:
             "scikit_learn": sklearn.__version__,
             "python": platform.python_version(),
         },
-        "training_examples": len(examples),
+        "training_examples": len(labels),
         "positive_examples": sum(labels),
         "negative_examples": len(labels) - sum(labels),
         "feature_names": FEATURE_NAMES,
@@ -84,6 +155,10 @@ def train_artifact() -> dict[str, Any]:
             "strict_score": 0.96,
             "relaxed_score": 0.88,
         },
+        "feedback_examples": len(feedback_labels),
+        "feedback_positive_examples": feedback_positive,
+        "feedback_negative_examples": feedback_negative,
+        "feedback_corpus_sha256": _feedback_digest(feedback_document),
         "training_digest_sha256": digest,
         "trained_at_utc": datetime.now(timezone.utc).isoformat(),
     }

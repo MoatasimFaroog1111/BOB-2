@@ -1,8 +1,8 @@
 """Read-only local Odoo search across every account.
 
-This route is intentionally separate from the account-code search. It handles
-requests such as "search all accounts for the word Ghulam" without requiring an
-external AI provider.
+The global route first identifies matching partners, then asks Odoo only for
+candidate journal lines. It deliberately avoids downloading and scoring every
+accounting line in one browser request.
 """
 
 from __future__ import annotations
@@ -18,12 +18,12 @@ from app.api.v1.deterministic_account_partner_search import (
     BASE_LINE_FIELDS,
     BASE_MOVE_FIELDS,
     FETCH_TERMS,
-    MAX_ACCOUNT_LINES,
+    SEARCH_BATCH_SIZE,
     SEARCH_TERM_PATTERN,
     STOP_WORDS,
+    TEXT_FIELD_HINTS,
     _many2one_id,
     _normalize,
-    _read_account_lines,
     _read_connection,
     _read_fields,
     _read_moves,
@@ -31,9 +31,15 @@ from app.api.v1.deterministic_account_partner_search import (
     _value_text,
 )
 from app.api.v1.erp import ChatSpreadsheetRequest
+from app.ml.name_matching.normalization import transliterate_arabic
 from app.ml.name_matching.runtime import explain_similarity, get_local_name_matcher
 
 logger = logging.getLogger(__name__)
+
+MAX_PARTNERS_TO_SCORE = 10_000
+MAX_CANDIDATE_LINES = 5_000
+MAX_DIRECT_SEARCH_FIELDS = 12
+MAX_DIRECT_SEARCH_TERMS = 20
 
 GLOBAL_SCOPE_TERMS = (
     "جميع الحسابات",
@@ -92,8 +98,6 @@ def _extract_global_request(prompt: str) -> str | None:
     if not any(_normalize(term) in normalized_prompt for term in GLOBAL_SCOPE_TERMS):
         return None
 
-    # A prompt containing a specific account code belongs to the account-scoped
-    # route, which runs before this route in the command router.
     translated_prompt = prompt.translate(ARABIC_DIGITS)
     if re.search(
         r"(?:الحساب|حساب|account)\s*[:#=\-–—]?\s*[0-9][0-9.\-]{3,20}",
@@ -103,6 +107,246 @@ def _extract_global_request(prompt: str) -> str | None:
         return None
 
     return _extract_search_term(prompt)
+
+
+def _or_domain(conditions: list[list[Any]]) -> list[Any]:
+    if not conditions:
+        return []
+    if len(conditions) == 1:
+        return conditions
+    return ["|"] * (len(conditions) - 1) + conditions
+
+
+def _partner_fields(metadata: dict[str, dict[str, Any]]) -> list[str]:
+    preferred = [
+        "id",
+        "name",
+        "display_name",
+        "commercial_company_name",
+        "ref",
+    ]
+    if not metadata:
+        return ["id", "name"]
+    return [field for field in preferred if field in metadata]
+
+
+def _read_partners(
+    erp: Any,
+    metadata: dict[str, dict[str, Any]],
+    company_id: int | None,
+) -> tuple[list[dict[str, Any]], bool]:
+    fields = _partner_fields(metadata)
+    domain: list[Any] = []
+
+    if company_id and "company_id" in metadata:
+        domain = [
+            "|",
+            ["company_id", "=", False],
+            ["company_id", "=", int(company_id)],
+        ]
+
+    partners: list[dict[str, Any]] = []
+    offset = 0
+
+    while offset < MAX_PARTNERS_TO_SCORE:
+        batch_limit = min(500, MAX_PARTNERS_TO_SCORE - offset)
+        batch = erp.execute_kw(
+            "res.partner",
+            "search_read",
+            [domain],
+            {
+                "fields": fields,
+                "order": "id asc",
+                "limit": batch_limit,
+                "offset": offset,
+            },
+        )
+        if not batch:
+            break
+
+        partners.extend(batch)
+        offset += len(batch)
+        if len(batch) < batch_limit:
+            break
+
+    return partners, len(partners) >= MAX_PARTNERS_TO_SCORE
+
+
+def _matching_partner_ids(
+    search_term: str,
+    partners: list[dict[str, Any]],
+) -> tuple[list[int], list[str]]:
+    matched_ids: list[int] = []
+    matched_texts: list[str] = []
+
+    for partner in partners:
+        partner_id = partner.get("id")
+        if not isinstance(partner_id, int):
+            continue
+
+        best_score = 0.0
+        best_text = ""
+
+        for field_name, value in partner.items():
+            if field_name == "id":
+                continue
+            text = _value_text(value)
+            if not text:
+                continue
+
+            result = explain_similarity(search_term, text)
+            if result.score > best_score:
+                best_score = result.score
+                best_text = text
+
+        if best_score >= get_local_name_matcher().accept_threshold:
+            matched_ids.append(partner_id)
+            if best_text:
+                matched_texts.append(best_text)
+
+    return matched_ids, matched_texts
+
+
+def _direct_search_terms(
+    search_term: str,
+    matched_partner_texts: list[str],
+) -> list[str]:
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str) -> None:
+        cleaned = re.sub(r"\s+", " ", value or "").strip()
+        key = cleaned.casefold()
+        if len(cleaned) < 2 or key in seen:
+            return
+        seen.add(key)
+        ordered.append(cleaned)
+
+    add(search_term)
+    add(transliterate_arabic(search_term))
+
+    for text in matched_partner_texts:
+        for token in re.findall(r"[A-Za-z\u0600-\u06FF][A-Za-z\u0600-\u06FF\-]*", text):
+            if len(token) < 3:
+                continue
+            result = explain_similarity(search_term, token)
+            if result.decision == "match":
+                add(token)
+
+        if explain_similarity(search_term, text).decision == "match":
+            add(text)
+
+        if len(ordered) >= MAX_DIRECT_SEARCH_TERMS:
+            break
+
+    return ordered[:MAX_DIRECT_SEARCH_TERMS]
+
+
+def _direct_text_fields(
+    metadata: dict[str, dict[str, Any]],
+    preferred: tuple[str, ...],
+) -> list[str]:
+    fields: list[str] = []
+
+    for field_name in preferred:
+        definition = metadata.get(field_name)
+        if definition and definition.get("type") in {"char", "text", "html", "reference"}:
+            fields.append(field_name)
+
+    for field_name, definition in metadata.items():
+        if field_name in fields:
+            continue
+        if definition.get("type") not in {"char", "text", "html", "reference"}:
+            continue
+
+        searchable = f"{field_name} {definition.get('string') or ''}".lower()
+        if not any(hint in searchable for hint in TEXT_FIELD_HINTS):
+            continue
+
+        fields.append(field_name)
+        if len(fields) >= MAX_DIRECT_SEARCH_FIELDS:
+            break
+
+    return fields[:MAX_DIRECT_SEARCH_FIELDS]
+
+
+def _candidate_domain(
+    *,
+    company_id: int | None,
+    matched_partner_ids: list[int],
+    search_terms: list[str],
+    line_metadata: dict[str, dict[str, Any]],
+    move_metadata: dict[str, dict[str, Any]],
+) -> list[Any]:
+    conditions: list[list[Any]] = []
+
+    if matched_partner_ids:
+        conditions.append(["partner_id", "in", matched_partner_ids])
+
+    line_search_fields = _direct_text_fields(line_metadata, ("name", "ref"))
+    move_search_fields = _direct_text_fields(
+        move_metadata,
+        ("ref", "payment_reference", "narration"),
+    )
+
+    for term in search_terms:
+        for field_name in line_search_fields:
+            conditions.append([field_name, "ilike", term])
+        for field_name in move_search_fields:
+            conditions.append([f"move_id.{field_name}", "ilike", term])
+
+    if not conditions:
+        return []
+
+    domain: list[Any] = []
+    if company_id:
+        domain.append(["company_id", "=", int(company_id)])
+    domain.extend(_or_domain(conditions))
+    return domain
+
+
+def _read_candidate_lines(
+    erp: Any,
+    domain: list[Any],
+    fields: list[str],
+) -> tuple[list[dict[str, Any]], int, bool]:
+    if not domain:
+        return [], 0, False
+
+    total_count = int(
+        erp.execute_kw(
+            "account.move.line",
+            "search_count",
+            [domain],
+        )
+        or 0
+    )
+    target_count = min(total_count, MAX_CANDIDATE_LINES)
+    lines: list[dict[str, Any]] = []
+    offset = 0
+
+    while offset < target_count:
+        batch_limit = min(SEARCH_BATCH_SIZE, target_count - offset)
+        batch = erp.execute_kw(
+            "account.move.line",
+            "search_read",
+            [domain],
+            {
+                "fields": fields,
+                "order": "date desc, id desc",
+                "limit": batch_limit,
+                "offset": offset,
+            },
+        )
+        if not batch:
+            break
+
+        lines.extend(batch)
+        offset += len(batch)
+        if len(batch) < batch_limit:
+            break
+
+    return lines, total_count, total_count > len(lines)
 
 
 def _read_accounts(
@@ -139,7 +383,6 @@ def try_hybrid_global_account_search(
     if not search_term:
         return None
 
-    matcher = get_local_name_matcher()
     header = [
         "رقم القيد",
         "التاريخ",
@@ -159,17 +402,33 @@ def try_hybrid_global_account_search(
     ]
 
     try:
+        matcher = get_local_name_matcher()
         connection, erp = _read_connection(db_session)
         line_metadata = _read_fields(erp, "account.move.line")
         move_metadata = _read_fields(erp, "account.move")
+        partner_metadata = _read_fields(erp, "res.partner")
         line_fields = _select_fields(line_metadata, BASE_LINE_FIELDS)
         move_fields = _select_fields(move_metadata, BASE_MOVE_FIELDS)
 
-        domain: list[Any] = []
-        if payload.company_id:
-            domain.append(["company_id", "=", int(payload.company_id)])
-
-        lines, total_lines, truncated = _read_account_lines(
+        company_id = int(payload.company_id) if payload.company_id else None
+        partners, partners_truncated = _read_partners(
+            erp,
+            partner_metadata,
+            company_id,
+        )
+        matched_partner_ids, matched_partner_texts = _matching_partner_ids(
+            search_term,
+            partners,
+        )
+        search_terms = _direct_search_terms(search_term, matched_partner_texts)
+        domain = _candidate_domain(
+            company_id=company_id,
+            matched_partner_ids=matched_partner_ids,
+            search_terms=search_terms,
+            line_metadata=line_metadata,
+            move_metadata=move_metadata,
+        )
+        lines, total_candidates, candidates_truncated = _read_candidate_lines(
             erp,
             domain,
             line_fields,
@@ -186,8 +445,7 @@ def try_hybrid_global_account_search(
             {
                 account_id
                 for line in lines
-                if (account_id := _many2one_id(line.get("account_id")))
-                is not None
+                if (account_id := _many2one_id(line.get("account_id"))) is not None
             }
         )
         moves = _read_moves(erp, move_ids, move_fields)
@@ -207,7 +465,6 @@ def try_hybrid_global_account_search(
                 value = _value_text(line.get(field_name))
                 if not value:
                     continue
-
                 result = explain_similarity(search_term, value)
                 if best_result is None or result.score > best_result.score:
                     best_result = result
@@ -218,7 +475,6 @@ def try_hybrid_global_account_search(
                 value = _value_text(move.get(field_name))
                 if not value:
                     continue
-
                 result = explain_similarity(search_term, value)
                 if best_result is None or result.score > best_result.score:
                     best_result = result
@@ -290,11 +546,18 @@ def try_hybrid_global_account_search(
                 f"«{search_term}»."
             )
 
-        message += f"\nتم فحص {len(lines)} من أصل {total_lines} سطر محاسبي."
-        if truncated:
+        message += (
+            f"\nتم فحص {len(partners)} شريكًا، ثم {len(lines)} سطرًا مرشحًا "
+            f"من أصل {total_candidates} سطر مرشح في Odoo."
+        )
+        if partners_truncated:
             message += (
-                f"\n⚠️ تجاوزت البيانات حد الأمان {MAX_ACCOUNT_LINES} سطر؛ "
-                "تم فحص أحدث السطور فقط."
+                f"\n⚠️ تجاوز عدد الشركاء حد الأمان {MAX_PARTNERS_TO_SCORE}."
+            )
+        if candidates_truncated:
+            message += (
+                f"\n⚠️ تجاوزت النتائج المرشحة حد الأمان {MAX_CANDIDATE_LINES}؛ "
+                "تم فحص أحدث المرشحين فقط."
             )
 
         return {
@@ -304,9 +567,11 @@ def try_hybrid_global_account_search(
             "intent": "hybrid_global_account_search",
             "search_term": search_term,
             "matched_count": matched_count,
+            "partner_count": len(partners),
+            "matched_partner_count": len(matched_partner_ids),
+            "candidate_count": total_candidates,
             "scanned_count": len(lines),
-            "total_account_lines": total_lines,
-            "truncated": truncated,
+            "truncated": partners_truncated or candidates_truncated,
             "model_version": matcher.model_version,
             "match_threshold": matcher.accept_threshold,
         }
@@ -316,10 +581,9 @@ def try_hybrid_global_account_search(
         return {
             "message": (
                 "فهمت طلب البحث في جميع الحسابات، لكن تعذر إكمال القراءة من "
-                "Odoo. تحقق من الاتصال وصلاحيات قراءة القيود المحاسبية."
+                "Odoo. راجع سجل Backend لمعرفة سبب الاتصال أو مهلة التنفيذ."
             ),
             "grid_data": None,
             "intent": "hybrid_global_account_search",
             "search_term": search_term,
-            "model_version": matcher.model_version,
         }

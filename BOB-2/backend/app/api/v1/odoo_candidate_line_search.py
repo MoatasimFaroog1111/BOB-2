@@ -12,6 +12,19 @@ MAX_CANDIDATE_LINES = 5_000
 MAX_RESULTS_PER_QUERY = 1_200
 STABLE_LINE_SEARCH_FIELDS = ("name", "ref")
 STABLE_MOVE_SEARCH_FIELDS = ("ref", "payment_reference", "narration")
+SAFE_LINE_FIELDS = (
+    "id",
+    "move_id",
+    "date",
+    "account_id",
+    "partner_id",
+    "name",
+    "ref",
+    "debit",
+    "credit",
+    "balance",
+    "company_id",
+)
 
 
 @dataclass(frozen=True)
@@ -40,6 +53,59 @@ def _merge_lines(
             destination[row_id] = row
 
 
+def _safe_line_fields(fields: list[str]) -> list[str]:
+    selected = [field for field in SAFE_LINE_FIELDS if field in fields]
+    if "id" not in selected:
+        selected.insert(0, "id")
+    return selected
+
+
+def _search_read(
+    erp: Any,
+    *,
+    domain: list[Any],
+    fields: list[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    return erp.execute_kw(
+        "account.move.line",
+        "search_read",
+        [domain],
+        {
+            "fields": fields,
+            "order": "date desc, id desc",
+            "limit": limit,
+        },
+    )
+
+
+def _search_then_read(
+    erp: Any,
+    *,
+    domain: list[Any],
+    fields: list[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    ids = erp.execute_kw(
+        "account.move.line",
+        "search",
+        [domain],
+        {
+            "order": "date desc, id desc",
+            "limit": limit,
+        },
+    )
+    if not ids:
+        return []
+    rows = erp.execute_kw(
+        "account.move.line",
+        "read",
+        [ids],
+        {"fields": fields},
+    )
+    return rows if isinstance(rows, list) else []
+
+
 def _run_line_query(
     erp: Any,
     *,
@@ -51,21 +117,57 @@ def _run_line_query(
         return False
 
     limit = min(MAX_RESULTS_PER_QUERY, MAX_CANDIDATE_LINES - len(destination))
+    preferred_fields = list(dict.fromkeys(fields))
+    safe_fields = _safe_line_fields(preferred_fields)
+
     try:
-        rows = erp.execute_kw(
-            "account.move.line",
-            "search_read",
-            [domain],
-            {
-                "fields": fields,
-                "order": "date desc, id desc",
-                "limit": limit,
-            },
+        rows = _search_read(
+            erp,
+            domain=domain,
+            fields=preferred_fields,
+            limit=limit,
         )
         _merge_lines(destination, rows)
         return True
     except Exception:
-        logger.warning("Candidate query rejected: %s", domain, exc_info=True)
+        logger.info(
+            "Candidate search_read rejected with expanded fields; retrying safe fields: %s",
+            domain,
+            exc_info=True,
+        )
+
+    if safe_fields != preferred_fields:
+        try:
+            rows = _search_read(
+                erp,
+                domain=domain,
+                fields=safe_fields,
+                limit=limit,
+            )
+            _merge_lines(destination, rows)
+            return True
+        except Exception:
+            logger.info(
+                "Candidate search_read rejected with safe fields; retrying search plus read: %s",
+                domain,
+                exc_info=True,
+            )
+
+    try:
+        rows = _search_then_read(
+            erp,
+            domain=domain,
+            fields=safe_fields,
+            limit=limit,
+        )
+        _merge_lines(destination, rows)
+        return True
+    except Exception:
+        logger.warning(
+            "Candidate query rejected after all fallback strategies: %s",
+            domain,
+            exc_info=True,
+        )
         return False
 
 

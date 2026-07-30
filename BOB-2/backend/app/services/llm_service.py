@@ -1,8 +1,8 @@
-"""Local-only compatibility LLM service.
+"""Loopback-first compatibility LLM service.
 
-Legacy callers may use this module without a tenant security context, so it is intentionally
-incapable of contacting an Internet provider. External LLM requests must go through
-``ExternalLLMGateway`` with explicit organization, user, purpose, DPA, and audit context.
+Legacy callers keep using this facade without depending on a concrete provider. The local
+Ollama transport remains loopback-only. An optional OpenAI secondary provider is isolated in
+``openai_fallback_provider`` and is disabled unless ``OPENAI_FALLBACK_ENABLED=true``.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from typing import Any, Optional
 from urllib.parse import urlsplit
 
 from app.core.config import settings
+from app.services.openai_fallback_provider import build_openai_fallback_provider
 
 logger = logging.getLogger(__name__)
 
@@ -201,20 +202,30 @@ def chat(
     temperature: float = 0.0,
     timeout: int = 120,
 ) -> Optional[str]:
-    """Use a configured loopback-only Ollama instance, or return ``None``.
+    """Try loopback Ollama first, then the explicitly enabled secondary provider.
 
-    ``timeout`` remains in the signature for compatibility, but the bounded configuration
-    value is authoritative. There is deliberately no external-provider fallback.
+    ``timeout`` remains in the signature for compatibility. Provider-specific bounded settings
+    are authoritative. There is deliberately no external-provider fallback transport in this
+    module; the optional secondary transport is injected through the ``ChatProvider`` contract.
     """
 
     _ = timeout
-    if not settings.LOCAL_LLM_ENABLED:
-        return None
+    if settings.LOCAL_LLM_ENABLED:
+        try:
+            result = _call_local_ollama(system_prompt, user_prompt, temperature)
+        except Exception:
+            logger.info("Local LLM unavailable; trying the configured secondary provider")
+        else:
+            if result:
+                logger.info("LLM response received from the configured local model")
+                return result
+
+    provider = build_openai_fallback_provider()
     try:
-        result = _call_local_ollama(system_prompt, user_prompt, temperature)
+        result = provider.chat(system_prompt, user_prompt, temperature)
     except Exception:
-        logger.info("Local LLM unavailable; continuing without model assistance")
+        logger.info("Secondary LLM provider unavailable; continuing without model assistance")
         return None
     if result:
-        logger.info("LLM response received from the configured local model")
+        logger.info("LLM response received from the configured secondary provider")
     return result

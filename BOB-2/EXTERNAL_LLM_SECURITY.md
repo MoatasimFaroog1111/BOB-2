@@ -9,26 +9,32 @@ Both model paths remain disabled in the production Compose profile:
 ```env
 LOCAL_LLM_ENABLED=false
 EXTERNAL_LLM_ENABLED=false
+OPENAI_FALLBACK_ENABLED=false
 ```
 
 The Telegram bot also remains disabled. Completing this stage does not authorize enabling Telegram or moving application secrets into ordinary environment variables as a final production design.
 
-## No automatic external fallback
+## Explicit loopback-first OpenAI fallback
 
-Legacy callers use `backend/app/services/llm_service.py`. That module is local-only:
+Legacy callers continue to use `backend/app/services/llm_service.py`. The facade always gives the configured loopback Ollama model first priority. If Ollama is disabled, unavailable, or returns no usable content, the facade may delegate to the isolated `openai_fallback_provider.py` adapter only when `OPENAI_FALLBACK_ENABLED=true` and an OpenAI key is configured.
 
-- it returns no model output when `LOCAL_LLM_ENABLED=false`;
-- it only accepts a loopback Ollama URL;
-- every resolved address must be loopback;
-- the socket is pinned to the validated loopback address;
+The provider separation is intentional:
+
+- `llm_service.py` owns the loopback-only Ollama transport and the provider-selection order;
+- `openai_fallback_provider.py` owns the OpenAI Responses API transport;
+- callers depend on the small `ChatProvider` contract rather than a concrete provider;
+- OpenAI fallback is disabled by default;
+- the OpenAI endpoint must use HTTPS on port 443, an exact allowlisted host, and the exact `/v1/responses` path;
+- every resolved address must be public and non-metadata;
+- the TLS socket is pinned to a validated address while hostname verification remains enabled;
 - responses are size and timeout bounded;
-- it contains no Anthropic/OpenAI/Internet fallback.
+- prompts and API keys are never logged by the provider.
 
-Therefore bank reconciliation, natural-language intent classification, and older ERP helpers cannot silently send data externally merely because an API key exists.
+This compatibility fallback is a deployment-level opt-in. It does not replace the tenant-scoped `ExternalLLMGateway` policy, DPA, redaction, and audit controls. Sensitive document reasoning that requires per-organization authorization must continue through `ExternalLLMGateway`. Enabling the compatibility fallback means the deployment owner has explicitly approved sending legacy caller prompts to OpenAI.
 
 ## Two independent external gates
 
-An external request requires both:
+A tenant-scoped external request through `ExternalLLMGateway` requires both:
 
 1. a global deployment switch, exact provider/model/host allowlists, and a technical API key; and
 2. an active tenant policy stored in `external_llm_policies`.
@@ -67,11 +73,11 @@ bank_reconciliation_matching
 
 A tenant must select each purpose explicitly. Unknown or unapproved purposes fail closed.
 
-The current Stage 6 integration uses the gateway for `accounting_reasoning`. Legacy natural-language and reconciliation callers remain local-only until they are explicitly migrated with authenticated context and tenant approval.
+The current tenant-aware integration uses the gateway for `accounting_reasoning`. Legacy natural-language and reconciliation callers remain behind the loopback-first compatibility facade. Their optional OpenAI fallback is controlled by the separate deployment switch described above and must not be treated as tenant policy authorization.
 
 ## Authenticated context
 
-Every external request must carry:
+Every gateway request must carry:
 
 - current organization ID;
 - current system user ID;
@@ -109,7 +115,7 @@ Automated redaction reduces exposure but is not a guarantee that every possible 
 
 ## Pre-disclosure audit gate
 
-Before the transport is called, the application commits an `external_llm_disclosure_started` audit event. If that commit fails, no provider request is made.
+Before the gateway transport is called, the application commits an `external_llm_disclosure_started` audit event. If that commit fails, no provider request is made.
 
 Separate append-style events record:
 
@@ -138,7 +144,7 @@ They do not contain the system prompt, user prompt, raw document text, sanitized
 
 ## External network transport
 
-The gateway accepts only an exact configured HTTPS host on port 443 and a `/v1/messages` endpoint. It rejects:
+The tenant-aware gateway accepts only an exact configured HTTPS host on port 443 and a `/v1/messages` endpoint. It rejects:
 
 - HTTP;
 - alternate/unapproved hosts;
@@ -150,6 +156,8 @@ The gateway accepts only an exact configured HTTPS host on port 443 and a `/v1/m
 - loopback, private, link-local, multicast, reserved, unspecified, metadata, and non-global DNS answers.
 
 Every DNS result is validated. The TLS socket is pinned to a validated public address while certificate verification and SNI use the original hostname. The client does not follow redirects. Request and response sizes and timeouts are bounded.
+
+The compatibility OpenAI adapter applies the same outbound principles but accepts only the exact `/v1/responses` path and the configured OpenAI host allowlist.
 
 ## Administration API and UI
 
@@ -171,9 +179,11 @@ The UI is available at:
 
 It shows only whether a technical key is configured. It never displays the key or a prefix of it. It also displays the policy, required DPA version, effective fail-closed state, and safe disclosure metadata.
 
+The compatibility OpenAI fallback is configured through deployment secrets and is not represented as tenant consent in this UI.
+
 ## Deployment procedure
 
-Before considering external processing:
+Before considering tenant-aware external processing:
 
 1. Keep `EXTERNAL_LLM_ENABLED=false` during review.
 2. Complete privacy, security, procurement, and legal review of the real provider contract.
@@ -188,21 +198,34 @@ Before considering external processing:
 11. Review logs to confirm prompts, documents, keys, and provider bodies are absent.
 12. Maintain an emergency process that sets `EXTERNAL_LLM_ENABLED=false` and disables tenant policies.
 
+Before enabling the compatibility OpenAI fallback:
+
+1. Keep `OPENAI_FALLBACK_ENABLED=false` until legacy prompt disclosure is explicitly approved.
+2. Store `OPENAI_API_KEY` only in the deployment's protected secret store.
+3. Keep `OPENAI_API_URL` on the approved regional or global OpenAI Responses endpoint and set the exact hostname in `OPENAI_ALLOWED_HOSTS`.
+4. Select the model through `OPENAI_MODEL`; the default is `gpt-5-mini`.
+5. Enable the switch and test with non-sensitive input while Ollama is unavailable.
+6. Disable the switch immediately if external disclosure is no longer approved.
+
 ## CI requirements
 
 CI must fail if:
 
-- Anthropic or another external fallback returns to `llm_service.py`;
-- the accounting reasoner directly uses an HTTP library instead of the gateway;
+- OpenAI transport logic is placed directly inside `llm_service.py` instead of the isolated provider adapter;
+- local-first ordering is removed;
+- the OpenAI fallback becomes enabled by default;
+- endpoint allowlisting, public-IP validation, DNS pinning, TLS hostname verification, response limits, or timeouts disappear;
+- the accounting reasoner directly uses an HTTP library instead of the tenant-aware gateway;
 - the global kill switch, tenant policy, DPA, provider/model/purpose checks disappear;
 - pre-send audit persistence disappears;
 - party/identifier/financial redaction disappears;
 - external endpoint validation, DNS pinning, TLS hostname verification, or size limits disappear;
-- Compose enables either local or external LLM execution;
+- Compose enables local, tenant-aware external, or compatibility fallback execution;
 - policy responses or disclosure logs expose API keys, prompts, raw text, or provider responses.
 
-The dedicated regression suite is:
+The dedicated regression suites are:
 
 ```text
 backend/tests/test_external_llm_security.py
+backend/tests/test_openai_fallback_provider.py
 ```

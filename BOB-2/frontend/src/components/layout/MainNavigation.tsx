@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+
 import { useLanguage } from "@/lib/LanguageContext";
 
 export function MainNavigation() {
@@ -13,11 +14,9 @@ export function MainNavigation() {
     ["/documents", t("sidebar.documents")],
     ["/audit", t("sidebar.audit")],
     ["/communication-tools", language === "ar" ? "أدوات الاتصال" : "Communication Tools"],
-    ["/erp", t("sidebar.erp")],
     ["/team", t("sidebar.home")],
-    ["/settings", language === "ar" ? "الإعدادات" : "Settings"],
-    ["/admin/llm", language === "ar" ? "أمان الذكاء الخارجي" : "External AI Security"],
-  ];
+    ["/settings", language === "ar" ? "الضبط والتكاملات" : "Settings & Integrations"],
+  ] as const;
 
   return (
     <aside className="min-h-screen w-72 border-r border-l border-white/10 bg-black/40 p-5 flex flex-col">

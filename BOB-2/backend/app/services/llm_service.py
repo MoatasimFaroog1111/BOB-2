@@ -4,7 +4,9 @@ Legacy callers keep using this facade without depending on a concrete provider. 
 Ollama transport remains loopback-only. When it is unavailable, the secondary provider is
 resolved through an injected configuration source: authenticated tenant requests use the
 provider, model, and credential saved from Settings, while deployment configuration retains
-only global kill switches, endpoint allowlisting, and bounded network limits.
+only global kill switches, endpoint allowlisting, and bounded network limits. There is
+deliberately no external-provider fallback transport in this module; that transport remains
+behind the injected ``ChatProvider`` boundary.
 """
 
 from __future__ import annotations

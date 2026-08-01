@@ -13,6 +13,11 @@ from app.services.openai_fallback_provider import (
     OpenAIResponsesChatProvider,
     _extract_output_text,
     _validate_endpoint,
+    build_openai_fallback_provider,
+)
+from app.services.openai_runtime_config import (
+    TenantAwareOpenAIConfigSource,
+    TenantOpenAISelection,
 )
 
 
@@ -29,6 +34,24 @@ def _config(**overrides):
     }
     values.update(overrides)
     return OpenAIFallbackConfig(**values)
+
+
+class StaticConfigSource:
+    def __init__(self, config):
+        self.config = config
+
+    def load(self):
+        return self.config
+
+
+class StaticTenantSettings:
+    def __init__(self, selection):
+        self.selection = selection
+        self.requested_organizations = []
+
+    def resolve(self, organization_id):
+        self.requested_organizations.append(organization_id)
+        return self.selection
 
 
 def test_disabled_provider_returns_none_without_network():
@@ -88,6 +111,80 @@ def test_openai_endpoint_accepts_exact_public_host(monkeypatch):
     assert endpoint.hostname == "api.openai.com"
     assert endpoint.path == "/v1/responses"
     assert endpoint.resolved_ips == ("8.8.8.8",)
+
+
+def test_tenant_settings_replace_environment_key_and_model(monkeypatch):
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ENABLED", True)
+    tenant_settings = StaticTenantSettings(
+        TenantOpenAISelection(api_key="tenant-secret", model="gpt-5.6-mini")
+    )
+    source = TenantAwareOpenAIConfigSource(
+        deployment_source=StaticConfigSource(
+            _config(api_key="environment-secret", model="environment-model")
+        ),
+        tenant_settings=tenant_settings,
+        tenant_id_resolver=lambda: 42,
+    )
+
+    resolved = source.load()
+
+    assert resolved.enabled is True
+    assert resolved.api_key == "tenant-secret"
+    assert resolved.model == "gpt-5.6-mini"
+    assert tenant_settings.requested_organizations == [42]
+
+
+def test_tenant_request_fails_closed_when_ui_credential_is_missing(monkeypatch):
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ENABLED", True)
+    tenant_settings = StaticTenantSettings(None)
+    source = TenantAwareOpenAIConfigSource(
+        deployment_source=StaticConfigSource(_config(api_key="environment-secret")),
+        tenant_settings=tenant_settings,
+        tenant_id_resolver=lambda: 7,
+    )
+
+    resolved = source.load()
+
+    assert resolved.enabled is False
+    assert resolved.api_key == ""
+    assert tenant_settings.requested_organizations == [7]
+
+
+def test_tenant_request_respects_global_kill_switch(monkeypatch):
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ENABLED", False)
+    tenant_settings = StaticTenantSettings(
+        TenantOpenAISelection(api_key="tenant-secret", model="gpt-5-mini")
+    )
+    source = TenantAwareOpenAIConfigSource(
+        deployment_source=StaticConfigSource(_config(enabled=True)),
+        tenant_settings=tenant_settings,
+        tenant_id_resolver=lambda: 9,
+    )
+
+    resolved = source.load()
+
+    assert resolved.enabled is False
+    assert resolved.api_key == ""
+    assert tenant_settings.requested_organizations == []
+
+
+def test_non_tenant_background_execution_keeps_explicit_deployment_config(monkeypatch):
+    monkeypatch.setattr(settings, "EXTERNAL_LLM_ENABLED", False)
+    deployment = _config(api_key="background-secret", model="background-model")
+    source = TenantAwareOpenAIConfigSource(
+        deployment_source=StaticConfigSource(deployment),
+        tenant_settings=StaticTenantSettings(None),
+        tenant_id_resolver=lambda: None,
+    )
+
+    assert source.load() is deployment
+
+
+def test_provider_factory_depends_on_injected_config_source():
+    provider = build_openai_fallback_provider(
+        StaticConfigSource(_config(enabled=False, api_key=""))
+    )
+    assert isinstance(provider, DisabledChatProvider)
 
 
 def test_local_result_has_priority_over_secondary_provider(monkeypatch):

@@ -27,6 +27,8 @@ from app.services.secret_store import get_tenant_secret
 
 logger = logging.getLogger(__name__)
 
+_FALLBACK_PURPOSE = "accounting_reasoning"
+
 
 def _csv_items(value: str) -> set[str]:
     return {item.strip().lower() for item in value.split(",") if item.strip()}
@@ -85,13 +87,14 @@ class SqlAlchemyTenantOpenAISettingsResolver:
         model = (policy.approved_model or "").strip()
         allowed_providers = _csv_items(settings.EXTERNAL_LLM_ALLOWED_PROVIDERS)
         allowed_models = _csv_items(settings.EXTERNAL_LLM_ALLOWED_MODELS)
+        approved_purposes = set(policy.allowed_purposes or [])
         return bool(
             policy.external_llm_enabled
             and provider == "openai"
             and provider in allowed_providers
             and model
             and f"{provider}:{model}".lower() in allowed_models
-            and bool(policy.allowed_purposes)
+            and _FALLBACK_PURPOSE in approved_purposes
             and policy.dpa_version == settings.EXTERNAL_LLM_REQUIRED_DPA_VERSION
             and policy.dpa_reference
             and policy.data_residency_region

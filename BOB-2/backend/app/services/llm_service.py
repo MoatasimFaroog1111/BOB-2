@@ -1,8 +1,10 @@
 """Loopback-first compatibility LLM service.
 
 Legacy callers keep using this facade without depending on a concrete provider. The local
-Ollama transport remains loopback-only. An optional OpenAI secondary provider is isolated in
-``openai_fallback_provider`` and is disabled unless ``OPENAI_FALLBACK_ENABLED=true``.
+Ollama transport remains loopback-only. When it is unavailable, the secondary provider is
+resolved through an injected configuration source: authenticated tenant requests use the
+provider, model, and credential saved from Settings, while deployment configuration retains
+only global kill switches, endpoint allowlisting, and bounded network limits.
 """
 
 from __future__ import annotations
@@ -202,11 +204,11 @@ def chat(
     temperature: float = 0.0,
     timeout: int = 120,
 ) -> Optional[str]:
-    """Try loopback Ollama first, then the explicitly enabled secondary provider.
+    """Try loopback Ollama first, then the tenant-configured secondary provider.
 
     ``timeout`` remains in the signature for compatibility. Provider-specific bounded settings
-    are authoritative. There is deliberately no external-provider fallback transport in this
-    module; the optional secondary transport is injected through the ``ChatProvider`` contract.
+    are authoritative. Transport and configuration lookup are injected behind small contracts,
+    so this facade is not coupled to OpenAI, database access, or the secret-store implementation.
     """
 
     _ = timeout

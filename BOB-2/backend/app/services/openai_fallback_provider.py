@@ -1,8 +1,8 @@
 """Opt-in OpenAI fallback for the loopback-first legacy chat facade.
 
 The module owns only the OpenAI Responses API transport. It is intentionally
-separate from the local Ollama transport so callers depend on a small chat
-provider contract and new providers can be added without changing them.
+separate from configuration lookup so callers depend on small contracts and new
+configuration sources can be added without changing the transport.
 """
 
 from __future__ import annotations
@@ -108,6 +108,19 @@ class OpenAIFallbackConfig:
                 maximum=16_384,
             ),
         )
+
+
+class OpenAIFallbackConfigSource(Protocol):
+    """Configuration dependency consumed by the OpenAI provider factory."""
+
+    def load(self) -> OpenAIFallbackConfig: ...
+
+
+class EnvironmentOpenAIFallbackConfigSource:
+    """Deployment-only source retained for non-tenant background execution."""
+
+    def load(self) -> OpenAIFallbackConfig:
+        return OpenAIFallbackConfig.from_environment()
 
 
 @dataclass(frozen=True, slots=True)
@@ -357,8 +370,16 @@ class OpenAIResponsesChatProvider:
         return _extract_output_text(response_payload)
 
 
-def build_openai_fallback_provider() -> ChatProvider:
-    config = OpenAIFallbackConfig.from_environment()
+def build_openai_fallback_provider(
+    config_source: OpenAIFallbackConfigSource | None = None,
+) -> ChatProvider:
+    if config_source is None:
+        # Lazy import avoids coupling the transport module to database-backed
+        # configuration while still making tenant settings the runtime default.
+        from app.services.openai_runtime_config import TenantAwareOpenAIConfigSource
+
+        config_source = TenantAwareOpenAIConfigSource()
+    config = config_source.load()
     if not config.enabled:
         return DisabledChatProvider()
     return OpenAIResponsesChatProvider(config)

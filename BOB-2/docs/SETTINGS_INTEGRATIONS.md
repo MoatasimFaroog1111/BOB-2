@@ -17,10 +17,10 @@ For authenticated tenant requests, the runtime resolves:
 
 - provider and model from the tenant policy saved in Settings;
 - API key from the tenant secret store;
-- consent and DPA validity from the tenant policy;
+- consent, DPA validity, and the explicit `accounting_reasoning` purpose from the tenant policy;
 - endpoint, host allowlist, timeout, response size, and output limits from deployment configuration.
 
-An environment `OPENAI_API_KEY` is never used as a substitute when a tenant scope exists. Missing, revoked, invalid, or cross-tenant settings fail closed.
+An environment `OPENAI_API_KEY` is never used as a substitute when a tenant scope exists. Missing, revoked, invalid, cross-tenant, or purpose-ineligible settings fail closed.
 
 Background processes without a tenant scope retain the explicitly configured deployment-only fallback for compatibility.
 
@@ -38,7 +38,7 @@ EXTERNAL_LLM_ALLOWED_PROVIDERS=openai
 EXTERNAL_LLM_ALLOWED_MODELS=openai:gpt-5-mini
 ```
 
-Then select **openai / gpt-5-mini** and save the API key from `/settings/ai`.
+Then select **openai / gpt-5-mini**, enable the **accounting_reasoning** purpose, and save the API key from `/settings/ai`.
 
 `ACCOUNTING_LLM_PROVIDER` and `ACCOUNTING_LLM_API_URL` belong to the separately audited external accounting-reasoning gateway; they do not configure the local-first fallback.
 

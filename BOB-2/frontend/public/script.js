@@ -24,7 +24,6 @@ const logoutBtn = document.getElementById("logout-btn");
 // 2. إدارة الجلسة (Session Management)
 // ==========================================
 
-// التثبت التلقائي عند فتح الصفحة
 document.addEventListener("DOMContentLoaded", () => {
     const savedToken = localStorage.getItem("bob2_token");
     if (savedToken) {
@@ -44,7 +43,6 @@ function showChatScreen() {
     chatScreen.classList.remove("hidden");
 }
 
-// تسجيل الخروج
 logoutBtn.addEventListener("click", () => {
     localStorage.removeItem("bob2_token");
     showLoginScreen();
@@ -60,34 +58,36 @@ loginForm.addEventListener("submit", async (e) => {
     const username = usernameInput.value.trim();
     const password = passwordInput.value.trim();
 
-    // تعديل هام لحل خطأ 422 (Unprocessable Entity)
-    // FastAPI يتوقع البيانات بصيغة x-www-form-urlencoded بدلاً من FormData
-    const loginData = new URLSearchParams();
-    loginData.append("username", username);
-    loginData.append("password", password);
+    // تجهيز البيانات كـ JSON (الاحتمال الأكبر لسبب خطأ 422)
+    const loginData = {
+        username: username,
+        password: password
+    };
 
     try {
         const response = await fetch(LOGIN_URL, {
             method: "POST",
             headers: {
-                "Content-Type": "application/x-www-form-urlencoded"
+                "Content-Type": "application/json"
             },
-            body: loginData
+            body: JSON.stringify(loginData)
         });
 
+        // صيد الخطأ 422 وعرض تفاصيله الدقيقة من الباك إند لمعرفة وش ناقصه
         if (response.status === 422) {
-            throw new Error("خطأ 422: الباك إند لا يقبل صيغة البيانات المرسلة.");
+            const errorData = await response.json();
+            const exactReason = JSON.stringify(errorData.detail || errorData);
+            throw new Error(`خطأ 422 - تفاصيل الباك إند: ${exactReason}`);
         }
 
         if (!response.ok) {
-            throw new Error("اسم المستخدم أو كلمة المرور غير صحيحة، يرجى المحاولة مجدداً.");
+            throw new Error(`خطأ ${response.status}: اسم المستخدم أو كلمة المرور غير صحيحة.`);
         }
 
         const data = await response.json();
         const token = data.access_token || data.token;
 
         if (token) {
-            // حفظ التوكن والانتقال للواجهة الرئيسية
             localStorage.setItem("bob2_token", token);
             showChatScreen();
         } else {
@@ -132,7 +132,6 @@ async function sendMessage() {
     if (text) appendMessage("user", text);
     if (file) appendMessage("user", `📁 تم إرفاق ملف: ${file.name}`);
 
-    // تفريغ الحقول بعد الإرسال
     userInput.value = "";
     fileInput.value = "";
 

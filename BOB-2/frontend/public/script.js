@@ -1,5 +1,5 @@
-// 1. ضع رابط الباك إند (BOB-2) هنا لكي يرسل له الطلبات
-const BACKEND_URL = "https://bob-2-production.up.railway.app"; 
+// تم التحديث بالرابط النهائي الصحيح للباك إند
+const BACKEND_URL = "https://bob-2-production.up.railway.app/api/v1/erp/chat-spreadsheet";
 
 // جلب العناصر من واجهة المستخدم
 const chatBox = document.getElementById("chatBox");

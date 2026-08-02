@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>الوكيل المحاسبي الذكي</title>
+    <style>
+        /* إعدادات الخطوط والصفحة الأساسية */
+        @import url('https://fonts.googleapis.com/css2?family=Tajawal:wght@400;500;700&display=swap');
+        
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: 'Tajawal', sans-serif;
+            background-color: #ffffff;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* القسم العلوي: 75% من مساحة الشاشة */
+        .workspace-area {
+            flex: 3;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+            background-color: #ffffff;
+            color: #333333;
+        }
+
+        .workspace-area h1 {
+            font-size: 2.5rem;
+            font-weight: 500;
+            margin: 0;
+            color: #333333;
+            letter-spacing: 1px;
+        }
+        
+        .workspace-area p {
+            font-size: 1.1rem;
+            color: #555555;
+            margin-top: 10px;
+        }
+
+        /* القسم السفلي: 25% من مساحة الشاشة (المحادثة) */
+        .chat-agent-area {
+            flex: 1;
+            background-color: #fbfbfb;
+            border-top: 1px solid #eaeaea;
+            box-shadow: 0 -4px 15px rgba(0,0,0,0.02);
+            display: flex;
+            flex-direction: column;
+            padding: 15px 25px;
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        /* مساحة عرض الرسائل */
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            padding-right: 5px;
+        }
+
+        /* تصميم الفقاعات */
+        .msg-bubble {
+            padding: 10px 16px;
+            border-radius: 12px;
+            max-width: 75%;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            word-wrap: break-word;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .msg-user {
+            background-color: #2b5c8f;
+            color: white;
+            align-self: flex-start;
+            border-bottom-right-radius: 2px;
+        }
+
+        .msg-agent {
+            background-color: #ffffff;
+            color: #333;
+            align-self: flex-end;
+            border: 1px solid #e0e0e0;
+            border-bottom-left-radius: 2px;
+        }
+
+        /* منطقة الإدخال */
+        .input-group {
+            display: flex;
+            gap: 10px;
+            background: #ffffff;
+            padding: 5px;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.02);
+        }
+
+        .input-group input[type="text"] {
+            flex: 1;
+            border: none;
+            padding: 10px 15px;
+            font-size: 1rem;
+            font-family: inherit;
+            outline: none;
+            background: transparent;
+        }
+
+        .input-group button {
+            background-color: #2b5c8f;
+            color: white;
+            border: none;
+            padding: 10px 25px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: 500;
+            transition: background-color 0.2s;
+        }
+
+        .input-group button:hover {
+            background-color: #1a3f66;
+        }
+
+        /* شريط التمرير */
+        .messages-container::-webkit-scrollbar { width: 6px; }
+        .messages-container::-webkit-scrollbar-track { background: transparent; }
+        .messages-container::-webkit-scrollbar-thumb { background: #d0d0d0; border-radius: 10px; }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- المنطقة العلوية: مساحة بيضاء للعمليات والتقارير المستقبلية -->
+    <div class="workspace-area">
+        <h1>مساحة العمل</h1>
+        <p>التقارير ولوحات البيانات ستعرض هنا</p>
+    </div>
+
+    <!-- المنطقة السفلية: وكيل المحادثة -->
+    <div class="chat-agent-area">
+        <div class="messages-container" id="chatBox">
+            <!-- سيتم تحميل الرسائل هنا بواسطة IndexedDB -->
+        </div>
+
+        <div class="input-group">
+            <input type="text" id="commandInput" placeholder="أدخل الأمر أو الاستعلام (مثال: اسحب ميزان المراجعة من Odoo)..." autocomplete="off">
+            <button onclick="handleCommand()">إرسال</button>
+        </div>
+    </div>
+
+    <script>
+        // إعداد IndexedDB لتخزين محادثات الوكيل محلياً
+        const dbName = "AccountingAgentDB";
+        let db;
+
+        const request = indexedDB.open(dbName, 1);
+
+        request.onerror = (event) => {
+            console.error("خطأ في فتح قاعدة البيانات:", event.target.errorCode);
+        };
+
+        request.onupgradeneeded = (event) => {
+            db = event.target.result;
+            // إنشاء مساحة تخزين (Table) للرسائل
+            const objectStore = db.createObjectStore("messages", { keyPath: "id", autoIncrement: true });
+            objectStore.createIndex("timestamp", "timestamp", { unique: false });
+        };
+
+        request.onsuccess = (event) => {
+            db = event.target.result;
+            loadMessages(); // جلب المحادثات السابقة عند تحميل الصفحة
+        };
+
+        // دالة حفظ الرسالة في IndexedDB
+        function saveMessage(sender, text) {
+            const transaction = db.transaction(["messages"], "readwrite");
+            const store = transaction.objectStore("messages");
+            const msg = {
+                sender: sender,
+                text: text,
+                timestamp: new Date().getTime()
+            };
+            store.add(msg);
+        }
+
+        // دالة تحميل وعرض الرسائل من قاعدة البيانات
+        function loadMessages() {
+            const chatBox = document.getElementById('chatBox');
+            chatBox.innerHTML = ''; // تفريغ الصندوق
+            
+            const transaction = db.transaction(["messages"], "readonly");
+            const store = transaction.objectStore("messages");
+            const cursorRequest = store.openCursor();
+
+            cursorRequest.onsuccess = (event) => {
+                const cursor = event.target.result;
+                if (cursor) {
+                    renderMessage(cursor.value.sender, cursor.value.text);
+                    cursor.continue();
+                } else {
+                    // التمرير للأسفل عند انتهاء تحميل كل الرسائل
+                    chatBox.scrollTop = chatBox.scrollHeight;
+                }
+            };
+        }
+
+        // دالة عرض الفقاعة في الواجهة
+        function renderMessage(sender, text) {
+            const chatBox = document.getElementById('chatBox');
+            const msgDiv = document.createElement('div');
+            msgDiv.classList.add('msg-bubble');
+            msgDiv.classList.add(sender === 'user' ? 'msg-user' : 'msg-agent');
+            msgDiv.textContent = text;
+            chatBox.appendChild(msgDiv);
+        }
+
+        // معالجة الأمر المرسل والتخاطب مع الباك إند
+        async function handleCommand() {
+            const inputField = document.getElementById('commandInput');
+            const text = inputField.value.trim();
+            
+            if (text === '') return;
+
+            // 1. عرض وحفظ رسالة المستخدم
+            renderMessage('user', text);
+            saveMessage('user', text);
+            inputField.value = '';
+            scrollToBottom();
+
+            // إظهار رسالة انتظار
+            renderMessage('agent', 'جاري معالجة الأمر عبر خادم Railway...');
+            scrollToBottom();
+
+            try {
+                // 2. التخاطب الفعلي مع الباك إند المستضاف على Railway
+                const response = await fetch('https://bob-2-production.up.railway.app/api/v1/agents/run-accounting-workflow', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        // ⚠️ هام: عند تفعيل المصادقة في نظامك، قم بإزالة علامتي التعليق (//) من السطر التالي وضع التوكن الخاص بك
+                        // 'Authorization': 'Bearer YOUR_TOKEN_HERE' 
+                    },
+                    // إرسال البيانات بالشكل الذي يطلبه نموذج Pydantic في الخادم
+                    body: JSON.stringify({ 
+                        text: text,
+                        source_type: "manual_text",
+                        language: "auto"
+                    })
+                });
+
+                if (!response.ok) {
+                    // إذا كان الخطأ 401 أو 403، فهذا يعني أنك بحاجة لتفعيل التوكن
+                    if (response.status === 401 || response.status === 403) {
+                        throw new Error(`مرفوض: غير مصرح لك (تحقق من إرسال التوكن Authorization) - ${response.status}`);
+                    }
+                    throw new Error(`خطأ في الخادم: ${response.status}`);
+                }
+
+                const data = await response.json();
+                
+                // عرض رد الباك إند (يحاول قراءة الرد بأكثر من صيغة تحسباً لاختلاف الهيكل)
+                const finalReply = data.reply || data.message || JSON.stringify(data);
+                
+                renderMessage('agent', finalReply);
+                saveMessage('agent', finalReply);
+                scrollToBottom();
+
+            } catch (error) {
+                console.error('Error:', error);
+                renderMessage('agent', `عذراً، فشل الاتصال: ${error.message}`);
+                saveMessage('agent', `عذراً، فشل الاتصال: ${error.message}`);
+                scrollToBottom();
+            }
+        }
+
+        // تفعيل الإرسال عند ضغط مفتاح Enter
+        document.getElementById('commandInput').addEventListener('keypress', function (e) {
+            if (e.key === 'Enter') {
+                handleCommand();
+            }
+        });
+
+        function scrollToBottom() {
+            const chatBox = document.getElementById('chatBox');
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+    </script>
+</body>
+</html>

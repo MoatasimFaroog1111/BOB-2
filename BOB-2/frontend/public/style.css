@@ -95,7 +95,29 @@ button:hover {
     font-weight: bold;
 }
 
-/* الكلاس الخاص بإخفاء الشاشات بدون مخالفة سياسة CSP */
+/* تنسيقات الهيدر الجديدة لتجنب أخطاء CSP */
+.chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+
+.chat-title {
+    margin: 0;
+}
+
+.logout-btn {
+    background: #dc3545;
+}
+
+.logout-btn:hover {
+    background: #c82333;
+}
+
+/* الكلاس الخاص بإخفاء الشاشات */
 .hidden {
     display: none !important;
 }

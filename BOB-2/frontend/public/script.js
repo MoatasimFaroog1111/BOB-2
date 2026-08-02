@@ -2,7 +2,7 @@
 // 1. الإعدادات والمتغيرات الأساسية
 // ==========================================
 const BASE_URL = "https://bob-2-production.up.railway.app";
-const LOGIN_URL = `${BASE_URL}/api/v1/auth/login`; // أو /api/v1/auth/token حسب المسار المعتمد في الباك إند
+const LOGIN_URL = `${BASE_URL}/api/v1/auth/login`; 
 const CHAT_URL = `${BASE_URL}/api/v1/erp/chat-spreadsheet`;
 
 // عناصر واجهة تسجيل الدخول
@@ -35,13 +35,13 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 function showLoginScreen() {
-    loginScreen.style.display = "block";
-    chatScreen.style.display = "none";
+    loginScreen.classList.remove("hidden");
+    chatScreen.classList.add("hidden");
 }
 
 function showChatScreen() {
-    loginScreen.style.display = "none";
-    chatScreen.style.display = "block";
+    loginScreen.classList.add("hidden");
+    chatScreen.classList.remove("hidden");
 }
 
 // تسجيل الخروج
@@ -55,27 +55,32 @@ logoutBtn.addEventListener("click", () => {
 // ==========================================
 loginForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    loginError.style.display = "none";
+    loginError.classList.add("hidden"); 
 
     const username = usernameInput.value.trim();
     const password = passwordInput.value.trim();
 
-    // تجهيز بيانات الدخول (FastAPI يتوقع عادة FormData مع OAuth2)
-    const loginData = new FormData();
+    // تعديل هام لحل خطأ 422 (Unprocessable Entity)
+    // FastAPI يتوقع البيانات بصيغة x-www-form-urlencoded بدلاً من FormData
+    const loginData = new URLSearchParams();
     loginData.append("username", username);
     loginData.append("password", password);
 
     try {
         const response = await fetch(LOGIN_URL, {
             method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
             body: loginData
-            // ملاحظة: قد تحتاج لتغيير الجسد إلى JSON إذا كان الباك إند يتوقع JSON:
-            // headers: { 'Content-Type': 'application/json' },
-            // body: JSON.stringify({ username, password })
         });
 
+        if (response.status === 422) {
+            throw new Error("خطأ 422: الباك إند لا يقبل صيغة البيانات المرسلة.");
+        }
+
         if (!response.ok) {
-            throw new Error("اسم المستخدم أو كلمة المرور غير صحيحة");
+            throw new Error("اسم المستخدم أو كلمة المرور غير صحيحة، يرجى المحاولة مجدداً.");
         }
 
         const data = await response.json();
@@ -86,12 +91,12 @@ loginForm.addEventListener("submit", async (e) => {
             localStorage.setItem("bob2_token", token);
             showChatScreen();
         } else {
-            throw new Error("لم يتم استلام التوكن من الخادم.");
+            throw new Error("تم الدخول ولكن لم يتم استلام مفتاح التوثيق (Token) من الخادم.");
         }
 
     } catch (err) {
         loginError.innerText = err.message;
-        loginError.style.display = "block";
+        loginError.classList.remove("hidden");
     }
 });
 
@@ -108,7 +113,7 @@ function appendMessage(sender, text) {
     messageDiv.classList.add("message", sender === "user" ? "user-message" : "bot-message");
     messageDiv.innerText = text;
     chatBox.appendChild(messageDiv);
-    chatBox.scrollTop = chatBox.scrollHeight;
+    chatBox.scrollTop = chatBox.scrollHeight; 
 }
 
 async function sendMessage() {
@@ -125,8 +130,9 @@ async function sendMessage() {
     if (!text && !file) return;
 
     if (text) appendMessage("user", text);
-    if (file) appendMessage("user", `📁 ملف: ${file.name}`);
+    if (file) appendMessage("user", `📁 تم إرفاق ملف: ${file.name}`);
 
+    // تفريغ الحقول بعد الإرسال
     userInput.value = "";
     fileInput.value = "";
 
@@ -148,11 +154,11 @@ async function sendMessage() {
 
         if (response.status === 401) {
             localStorage.removeItem("bob2_token");
-            throw new Error("انتهت صلاحية التوكن، يرجى تسجيل الدخول مجدداً.");
+            throw new Error("انتهت صلاحية الجلسة، يرجى تسجيل الدخول مجدداً.");
         }
 
         if (!response.ok) {
-            throw new Error(`خطأ من الخادم (${response.status})`);
+            throw new Error(`واجه الخادم مشكلة (رمز الخطأ: ${response.status})`);
         }
 
         const data = await response.json();
@@ -166,7 +172,8 @@ async function sendMessage() {
             chatBox.removeChild(loadingMessage);
         }
         appendMessage("bot", `❌ ${error.message}`);
-        if (error.message.includes("401") || error.message.includes("انتهت صلاحية")) {
+        
+        if (error.message.includes("401") || error.message.includes("صلاحية")) {
             showLoginScreen();
         }
     }

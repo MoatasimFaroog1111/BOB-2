@@ -58,7 +58,6 @@ loginForm.addEventListener("submit", async (e) => {
     const username = usernameInput.value.trim();
     const password = passwordInput.value.trim();
 
-    // التعديل السحري هنا: تغيير username إلى email بناءً على طلب السيرفر
     const loginData = {
         email: username, 
         password: password
@@ -135,6 +134,7 @@ async function sendMessage() {
     fileInput.value = "";
 
     const formData = new FormData();
+    // حالياً نرسلها كـ prompt، لو طلع خطأ 422 بيعلمنا السيرفر وش الاسم اللي يبغاه
     if (text) formData.append("prompt", text);
     if (file) formData.append("file", file);
 
@@ -149,6 +149,13 @@ async function sendMessage() {
             },
             body: formData
         });
+
+        // اصطياد تفاصيل خطأ 422 للمحادثة لمعرفة المسميات المطلوبة
+        if (response.status === 422) {
+            const errorData = await response.json();
+            const exactReason = JSON.stringify(errorData.detail || errorData);
+            throw new Error(`خطأ 422: السيرفر يطلب مسميات أخرى للبيانات -> ${exactReason}`);
+        }
 
         if (response.status === 401) {
             localStorage.removeItem("bob2_token");

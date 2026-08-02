@@ -14,7 +14,6 @@
         <form id="login-form">
             <div class="input-group">
                 <label for="username">اسم المستخدم / البريد:</label>
-                <!-- يمكنك تغيير type إلى email إذا كان الدخول بالبريد فقط -->
                 <input type="text" id="username" required autocomplete="username">
             </div>
             <div class="input-group">
@@ -26,11 +25,11 @@
         </form>
     </div>
 
-    <!-- 2. واجهة المحادثة (تكون مخفية افتراضياً عبر كلاس hidden) -->
+    <!-- 2. واجهة المحادثة -->
     <div id="chat-screen" class="container hidden">
-        <header style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #eee; padding-bottom: 10px; margin-bottom: 15px;">
-            <h2 style="margin: 0;">المساعد المحاسبي الذكي (BOB-2)</h2>
-            <button id="logout-btn" style="background: #dc3545;">تسجيل الخروج</button>
+        <header class="chat-header">
+            <h2 class="chat-title">المساعد المحاسبي الذكي (BOB-2)</h2>
+            <button id="logout-btn" class="logout-btn">تسجيل الخروج</button>
         </header>
         
         <div id="chat-box" class="chat-box"></div>

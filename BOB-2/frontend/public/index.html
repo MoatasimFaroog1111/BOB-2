@@ -3,33 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>مساحة العمل - الروبوت المحاسبي</title>
-    <!-- ربط ملف التصميم -->
+    <title>BOB-2 Accounting Robot</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="chat-container">
-        <header class="chat-header">
-            <h1>الروبوت المحاسبي BOB-2</h1>
-            <p>مساحة العمل: تقارير ولوحات البيانات ستعرض هنا</p>
-        </header>
-        
-        <main class="chat-box" id="chatBox">
-            <!-- ستظهر الرسائل هنا -->
-            <div class="message bot-message">مرحباً بك. أنا جاهز لتلقي الأوامر المحاسبية والملفات.</div>
-        </main>
 
-        <footer class="chat-input-area">
-            <!-- زر إرفاق الملفات -->
-            <input type="file" id="fileInput" class="file-input" title="إرفاق ملف">
-            <!-- مربع النص -->
-            <input type="text" id="messageInput" placeholder="اكتب أمرك المحاسبي هنا..." autofocus>
-            <!-- زر الإرسال بدون أي أكواد مضمنة -->
-            <button id="sendBtn">إرسال</button>
-        </footer>
+    <!-- 1. شاشة تسجيل الدخول -->
+    <div id="login-screen" class="container">
+        <h2>تسجيل الدخول - BOB-2</h2>
+        <form id="login-form">
+            <div class="input-group">
+                <label for="username">اسم المستخدم / البريد:</label>
+                <input type="text" id="username" required autocomplete="username">
+            </div>
+            <div class="input-group">
+                <label for="password">كلمة المرور:</label>
+                <input type="password" id="password" required autocomplete="current-password">
+            </div>
+            <button type="submit" id="login-btn">دخول</button>
+            <p id="login-error" class="error-msg" style="display: none; color: red; margin-top: 10px;"></p>
+        </form>
     </div>
 
-    <!-- ربط ملف الجافاسكربت -->
+    <!-- 2. واجهة المحادثة (تكون مخفية افتراضياً) -->
+    <div id="chat-screen" class="container" style="display: none;">
+        <header>
+            <h2>المساعد المحاسبي الذكي (BOB-2)</h2>
+            <button id="logout-btn" style="float: left;">تسجيل الخروج</button>
+        </header>
+        
+        <div id="chat-box" class="chat-box"></div>
+
+        <div class="input-area">
+            <input type="file" id="file-input" />
+            <input type="text" id="user-input" placeholder="اكتب أمرك المحاسبي هنا..." />
+            <button id="send-btn">إرسال</button>
+        </div>
+    </div>
+
     <script src="script.js"></script>
 </body>
 </html>

@@ -58,9 +58,9 @@ loginForm.addEventListener("submit", async (e) => {
     const username = usernameInput.value.trim();
     const password = passwordInput.value.trim();
 
-    // تجهيز البيانات كـ JSON (الاحتمال الأكبر لسبب خطأ 422)
+    // التعديل السحري هنا: تغيير username إلى email بناءً على طلب السيرفر
     const loginData = {
-        username: username,
+        email: username, 
         password: password
     };
 
@@ -73,7 +73,6 @@ loginForm.addEventListener("submit", async (e) => {
             body: JSON.stringify(loginData)
         });
 
-        // صيد الخطأ 422 وعرض تفاصيله الدقيقة من الباك إند لمعرفة وش ناقصه
         if (response.status === 422) {
             const errorData = await response.json();
             const exactReason = JSON.stringify(errorData.detail || errorData);
@@ -81,7 +80,7 @@ loginForm.addEventListener("submit", async (e) => {
         }
 
         if (!response.ok) {
-            throw new Error(`خطأ ${response.status}: اسم المستخدم أو كلمة المرور غير صحيحة.`);
+            throw new Error(`خطأ ${response.status}: البريد الإلكتروني أو كلمة المرور غير صحيحة.`);
         }
 
         const data = await response.json();

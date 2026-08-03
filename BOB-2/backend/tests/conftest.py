@@ -1,11 +1,18 @@
 """Shared fixtures for the backend test suite."""
-
 import os
+import tempfile
 
-# Force non-production, non-persistent test services before importing the app.
+# Force non-production, non-persistent, network-isolated test services before
+# importing the app. Embedding tests must use the deterministic local fallback
+# instead of downloading multi-gigabyte Hugging Face models during CI.
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("DATABASE_URL", "sqlite:///./test.db")
 os.environ.setdefault("SECRET_STORE_PROVIDER", "memory")
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+_test_hf_home = os.path.join(tempfile.gettempdir(), "guardianai-test-huggingface")
+os.environ["HF_HOME"] = _test_hf_home
+os.environ["SENTENCE_TRANSFORMERS_HOME"] = _test_hf_home
 
 import pytest
 from fastapi.testclient import TestClient

@@ -100,6 +100,16 @@ deployment logs.
 - Audit logging middleware
 - Bilingual UI (Arabic RTL / English LTR)
 
+## Sale and Buyer Due Diligence
+
+Buyer-facing preparation documents are maintained under `sale/`:
+
+- [`sale/ACQUIRE_LISTING_DRAFT.md`](sale/ACQUIRE_LISTING_DRAFT.md) — factual listing copy with owner-supplied fields clearly marked `TBD`.
+- [`sale/SELLER_READINESS_CHECKLIST.md`](sale/SELLER_READINESS_CHECKLIST.md) — prioritized technical, legal, commercial, and transfer checklist.
+- [`sale/DATA_ROOM_INDEX.md`](sale/DATA_ROOM_INDEX.md) — staged due-diligence index with rules for protecting credentials and customer data.
+
+These documents are drafts and do not represent verified revenue, completed legal approval, signed accounting UAT, or an offer to sell.
+
 ## Accounting AI Matching Engine
 
 BOB includes an audit-safe Accounting & Finance AI Matching Engine for invoices, receipts, payment vouchers, purchase orders, bank statements, journal entries, trial balances, and vendor bills.

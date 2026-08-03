@@ -145,8 +145,7 @@ app.add_middleware(AuditLogMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    # التعديل تم هنا بدمج رابط الفرونت إند الخاص بك مع قائمة الإعدادات الأساسية
-    allow_origins=settings.cors_origin_list + ["https://bob-front-end-production.up.railway.app"],
+    allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=[

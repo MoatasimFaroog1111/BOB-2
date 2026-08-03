@@ -1,0 +1,2287 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "version": 1,
+  "metadata": {
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "npm",
+          "version": "10.9.8"
+        },
+        {
+          "type": "library",
+          "name": "cyclonedx-library",
+          "group": "@cyclonedx",
+          "version": "10.1.0",
+          "author": "Jan Kowalleck",
+          "description": "Core functionality of CycloneDX for JavaScript (Node.js or WebBrowser).",
+          "licenses": [
+            {
+              "license": {
+                "id": "Apache-2.0"
+              }
+            }
+          ],
+          "externalReferences": [
+            {
+              "url": "https://github.com/CycloneDX/cyclonedx-javascript-library/issues",
+              "type": "issue-tracker",
+              "comment": "as detected from PackageJson property \"bugs.url\""
+            },
+            {
+              "url": "git+https://github.com/CycloneDX/cyclonedx-javascript-library.git",
+              "type": "vcs",
+              "comment": "as detected from PackageJson property \"repository.url\""
+            },
+            {
+              "url": "https://github.com/CycloneDX/cyclonedx-javascript-library#readme",
+              "type": "website",
+              "comment": "as detected from PackageJson property \"homepage\""
+            }
+          ]
+        },
+        {
+          "type": "application",
+          "name": "cyclonedx-npm",
+          "group": "@cyclonedx",
+          "version": "6.0.0",
+          "author": "Jan Kowalleck",
+          "description": "Create CycloneDX Software Bill of Materials (SBOM) from NPM projects.",
+          "licenses": [
+            {
+              "license": {
+                "id": "Apache-2.0"
+              }
+            }
+          ],
+          "externalReferences": [
+            {
+              "url": "https://github.com/CycloneDX/cyclonedx-node-npm/issues",
+              "type": "issue-tracker",
+              "comment": "as detected from PackageJson property \"bugs.url\""
+            },
+            {
+              "url": "git+https://github.com/CycloneDX/cyclonedx-node-npm.git",
+              "type": "vcs",
+              "comment": "as detected from PackageJson property \"repository.url\""
+            },
+            {
+              "url": "https://github.com/CycloneDX/cyclonedx-node-npm#readme",
+              "type": "website",
+              "comment": "as detected from PackageJson property \"homepage\""
+            }
+          ]
+        }
+      ]
+    },
+    "component": {
+      "type": "application",
+      "name": "frontend",
+      "version": "0.1.0",
+      "bom-ref": "frontend@0.1.0",
+      "purl": "pkg:npm/frontend@0.1.0",
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": ""
+        },
+        {
+          "name": "cdx:npm:package:private",
+          "value": "true"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "cdx:reproducible",
+        "value": "true"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "runtime",
+      "group": "@emnapi",
+      "version": "1.11.3",
+      "bom-ref": "frontend@0.1.0|@emnapi/runtime@1.11.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40emnapi/runtime@1.11.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@emnapi/runtime/-/runtime-1.11.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "5f3e13a72922ed7caba5b50ad6347502174075a5f2861638959de778ba1d9a1a6e59fcb63c040de41e3ab00894e2588e5c62e41f2a67fea53e8ef7d64826182c"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@emnapi/runtime"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "colour",
+      "group": "@img",
+      "version": "1.1.0",
+      "bom-ref": "frontend@0.1.0|@img/colour@1.1.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/colour@1.1.0",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/colour/-/colour-1.1.0.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "4ddefaabb8f9ee8fed2d57604bbe3a7180117d2cb193c8847d1c5ec0bf61e0e3336216d6e1301ca69974993e1ecaa5dd761e8bfe3c2833be66a3b8b16bfa4279"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/colour"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-darwin-arm64",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-darwin-arm64@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-darwin-arm64@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-darwin-arm64/-/sharp-darwin-arm64-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "44c9c55fb610b0ca21ee559f70ce0d1071f29815ffacbb8a34f54cf385c4f4e34f71a4820e013b087207a5280f70edb1711b61801cb51df34edf5f66c2120092"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-darwin-arm64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-darwin-x64",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-darwin-x64@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-darwin-x64@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-darwin-x64/-/sharp-darwin-x64-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "5e8fb9b8506d2cdd012aa89e4f1885cc53d00149416db1f98812b2457ff3d49adb9d8b074df2899d47cbf3ea764cf5ebd695ea6a8e1e78be11975e38b83a4af7"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-darwin-x64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-freebsd-wasm32",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-freebsd-wasm32@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-freebsd-wasm32@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-freebsd-wasm32/-/sharp-freebsd-wasm32-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "954c5ca96223db0310f41af03639e072bd60594af9c606864e1051a8f3da9480b69faec2aa3d6e3e1f0d9c0fd984083c8546ca97e9151cac20508c1ee9960fae"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-freebsd-wasm32"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-libvips-darwin-arm64",
+      "group": "@img",
+      "version": "1.3.2",
+      "bom-ref": "frontend@0.1.0|@img/sharp-libvips-darwin-arm64@1.3.2",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-3.0-or-later",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-libvips-darwin-arm64@1.3.2",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-libvips-darwin-arm64/-/sharp-libvips-darwin-arm64-1.3.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "f49eb2a591694018f862778f1a8abf4b7f30ea7cfebea8395992eb2c663862e49e99d32ae3b18c2c13cee36333c1d1b0a60fda819ef1cd97051dae3cc65cb07e"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-libvips-darwin-arm64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-libvips-darwin-x64",
+      "group": "@img",
+      "version": "1.3.2",
+      "bom-ref": "frontend@0.1.0|@img/sharp-libvips-darwin-x64@1.3.2",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-3.0-or-later",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-libvips-darwin-x64@1.3.2",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-libvips-darwin-x64/-/sharp-libvips-darwin-x64-1.3.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "9b6a56d67e9c9ecf556ae6cdc2c67e737091623c4d416809e603e59cbd676c1729901bc59ba48214de68d29b051c8f30f67d7534a84591e1039ecf7cb62a9b13"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-libvips-darwin-x64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-libvips-linux-arm",
+      "group": "@img",
+      "version": "1.3.2",
+      "bom-ref": "frontend@0.1.0|@img/sharp-libvips-linux-arm@1.3.2",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-3.0-or-later",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-libvips-linux-arm@1.3.2",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-libvips-linux-arm/-/sharp-libvips-linux-arm-1.3.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "d5e30bcf2f7623827aae68b89804fcc82dc7c4eb678b21842e5cc66cd30b2dea9ed39d9a84543487a2c5abe961e43b0321d6158880ecb74f1a6ef49b70474b5d"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-libvips-linux-arm"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-libvips-linux-arm64",
+      "group": "@img",
+      "version": "1.3.2",
+      "bom-ref": "frontend@0.1.0|@img/sharp-libvips-linux-arm64@1.3.2",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-3.0-or-later",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-libvips-linux-arm64@1.3.2",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-libvips-linux-arm64/-/sharp-libvips-linux-arm64-1.3.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "76a5521729c2a31e02fc9f244f5e95ed2205027b3422380bc24bd84fba7c2d0566279392e5bead23d2067e5c537ae052fffcd77852146f0b79770c72675edc9c"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-libvips-linux-arm64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-libvips-linux-ppc64",
+      "group": "@img",
+      "version": "1.3.2",
+      "bom-ref": "frontend@0.1.0|@img/sharp-libvips-linux-ppc64@1.3.2",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-3.0-or-later",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-libvips-linux-ppc64@1.3.2",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-libvips-linux-ppc64/-/sharp-libvips-linux-ppc64-1.3.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "df3d0d1c3c43ea7e48f60734e54d5e5b5032466f86ce7ceade768caed84f36a13aa18ca4728816d25fe37e925d8d89ee365f11ef223da4d6c4d578947b2ab403"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-libvips-linux-ppc64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-libvips-linux-riscv64",
+      "group": "@img",
+      "version": "1.3.2",
+      "bom-ref": "frontend@0.1.0|@img/sharp-libvips-linux-riscv64@1.3.2",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-3.0-or-later",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-libvips-linux-riscv64@1.3.2",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-libvips-linux-riscv64/-/sharp-libvips-linux-riscv64-1.3.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "6ec6f8ac8f8d95d18eb17b9e8f6afc39d492f3ecd70d56825b1c96adcbfa9277933a58001ed640051cc1042c1db0f883f742789b2349b87a60ea4036d08996ff"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-libvips-linux-riscv64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-libvips-linux-s390x",
+      "group": "@img",
+      "version": "1.3.2",
+      "bom-ref": "frontend@0.1.0|@img/sharp-libvips-linux-s390x@1.3.2",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-3.0-or-later",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-libvips-linux-s390x@1.3.2",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-libvips-linux-s390x/-/sharp-libvips-linux-s390x-1.3.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "fc006c8728fc802a7222b3579c79f82e8ac32741c79b55615cf065c59f3302d7d53c069269f5cf1a7fac5122118b0692072d269858d28e25c8e6691cc1d0a129"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-libvips-linux-s390x"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-libvips-linux-x64",
+      "group": "@img",
+      "version": "1.3.2",
+      "bom-ref": "frontend@0.1.0|@img/sharp-libvips-linux-x64@1.3.2",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-3.0-or-later",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-libvips-linux-x64@1.3.2",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.3.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "2133c4b607df189d12e86f5d472c3fdfaead250a8545c1d63c7842f92b6983767c00432b0eb4ebda585dcf87ff63f1cc6d187fffb679981cc4a55762eb639cdf"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-libvips-linux-x64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-libvips-linuxmusl-arm64",
+      "group": "@img",
+      "version": "1.3.2",
+      "bom-ref": "frontend@0.1.0|@img/sharp-libvips-linuxmusl-arm64@1.3.2",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-3.0-or-later",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-libvips-linuxmusl-arm64@1.3.2",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-arm64/-/sharp-libvips-linuxmusl-arm64-1.3.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "cc4f447625335268399834f96b5ae4e5f609e8658f9684f05816034b5e276aa1ec2fe11a3290e3d405a7a4b821deed1808e46fd93b79d30adcae962a90ff7b2b"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-libvips-linuxmusl-arm64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-libvips-linuxmusl-x64",
+      "group": "@img",
+      "version": "1.3.2",
+      "bom-ref": "frontend@0.1.0|@img/sharp-libvips-linuxmusl-x64@1.3.2",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "LGPL-3.0-or-later",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-libvips-linuxmusl-x64@1.3.2",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-x64/-/sharp-libvips-linuxmusl-x64-1.3.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "9b496b2e252dfa50589c216bf2a57feb9c8c47813f73bff07fbf08e5e29376411a90502567d425cc433740886103055e5212c01cb702abb6bb56cceafe814d65"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-libvips-linuxmusl-x64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-linux-arm",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-linux-arm@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-linux-arm@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-linux-arm/-/sharp-linux-arm-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "69f7d55824cba28cbc4d2c5b0f1daa933b8379a58b355040f8ffff14d062ac7b17a4fd9fb81864e40b9ba18527ac39f3a177acf06163a53c7448114e09183e14"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-linux-arm"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-linux-arm64",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-linux-arm64@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-linux-arm64@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-linux-arm64/-/sharp-linux-arm64-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "420283b291cf9eb53e190e795cf846c32842f1a70b54e392c80be8d6855f166ac85cb903366196cc07c3678c4af28480d6a050ac02dc1d7d06e546678bf4ae15"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-linux-arm64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-linux-ppc64",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-linux-ppc64@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-linux-ppc64@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-linux-ppc64/-/sharp-linux-ppc64-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "b0c77cac3c66a4b3b0bffecde38925163383e4350eec52dd8e25c3234868c5869fec0af6eb6750204928b04f7c6e9b3ee473cbb69fc4bcda9ea90b4ec9c3ff20"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-linux-ppc64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-linux-riscv64",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-linux-riscv64@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-linux-riscv64@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-linux-riscv64/-/sharp-linux-riscv64-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "d04a1befcca39583df2f9bcc356016e7997747d63a0504bf80e7ded1970ff66133f68861292b788a6d616b28a49d781ff005ab16a32f25c2887662e611eef279"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-linux-riscv64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-linux-s390x",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-linux-s390x@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-linux-s390x@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-linux-s390x/-/sharp-linux-s390x-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "2a00314340f1a4d3aad6b1b6b797204e04a1245192b94ed73b8e5ca82fb53553ae6673fab6581946e49839f36ea46907203d28ddc24eb30e0355e269328bdc1b"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-linux-s390x"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-linux-x64",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-linux-x64@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-linux-x64@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-linux-x64/-/sharp-linux-x64-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "f29aafc6e6cbd8f19d8653f2e862eacc360c523c9198a03028760a8b1a5d2580542bb3c9d02d36f5776c9e91487604591baf1f66219d1d559c28fbed88f07870"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-linux-x64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-linuxmusl-arm64",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-linuxmusl-arm64@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-linuxmusl-arm64@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-linuxmusl-arm64/-/sharp-linuxmusl-arm64-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "573d22423cf37125f71c26dfc057c2486ffd48222ac8ed261f6b17ca21da0187c1934711b025974724185f4a2f08afcf01005b4f343476c3d01e1e4c0052f9f7"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-linuxmusl-arm64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-linuxmusl-x64",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-linuxmusl-x64@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-linuxmusl-x64@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-linuxmusl-x64/-/sharp-linuxmusl-x64-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "e8ed4d3ca703563f5011d83b1f1e78f445fc534ae9eb25d0111aabbbac9137b7c6067df652f2112549569e4fbcc430a21bbea15d505b5fcd8d67f64aaf47ae22"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-linuxmusl-x64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-wasm32",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-wasm32@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 AND LGPL-3.0-or-later AND MIT",
+          "acknowledgement": "declared"
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-wasm32@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-wasm32/-/sharp-wasm32-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "719d1791c606a47664a96ea20a4a93726502d020fd0e10f977fa9e6656647d1067e869c79e26572d4a39fbdc70f08bfbe9813a2d014df5834194a4447021bbeb"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-wasm32"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-webcontainers-wasm32",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-webcontainers-wasm32@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-webcontainers-wasm32@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-webcontainers-wasm32/-/sharp-webcontainers-wasm32-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "dab9eaedb5f7373791d93e185a0cfcaa21b88774d274c7bebcdd62417a4995e489dd2339cd0f05cb64b2c9701695bc69119d98f99e2ed4178f8091186d2cbcd1"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-webcontainers-wasm32"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-win32-arm64",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-win32-arm64@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 AND LGPL-3.0-or-later",
+          "acknowledgement": "declared"
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-win32-arm64@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-win32-arm64/-/sharp-win32-arm64-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "e1b3f015d31b782e0943c2fc2cec96a7a9ec1dc6e83f97f1929ea23ce5f3d95838f51e364ee32cdb08642793803f8fd4974df9a8ecf2d0079c385f553ac727e3"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-win32-arm64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-win32-ia32",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-win32-ia32@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 AND LGPL-3.0-or-later",
+          "acknowledgement": "declared"
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-win32-ia32@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-win32-ia32/-/sharp-win32-ia32-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "af9de65ec04dea51540e2493efae12be0c1474702a338acf0220f30267f87cba01e97feb91fc93acb0a0ebe835ef0249882981dc96201ee5257425942111525f"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-win32-ia32"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp-win32-x64",
+      "group": "@img",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|@img/sharp-win32-x64@0.35.3",
+      "scope": "optional",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 AND LGPL-3.0-or-later",
+          "acknowledgement": "declared"
+        }
+      ],
+      "purl": "pkg:npm/%40img/sharp-win32-x64@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@img/sharp-win32-x64/-/sharp-win32-x64-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "0f8cb5bcd799ac820908dfae1da595b47f3a07e682add31862389ccbda571ef6c665e1982cb49ddf0755b82dfb171557954d4046c93ce1e2967d631719812abc"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@img/sharp-win32-x64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "env",
+      "group": "@next",
+      "version": "16.3.0-preview.9",
+      "bom-ref": "frontend@0.1.0|@next/env@16.3.0-preview.9",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40next/env@16.3.0-preview.9",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@next/env/-/env-16.3.0-preview.9.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "05c0fefec5437e81dc907704c7a7b845a2df5ab51bf83a5780bf6339ce9fdbd453caf370555b6701a3e58e9de8938cc541a9fa461144eeadf69525c01638d5f4"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@next/env"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swc-darwin-arm64",
+      "group": "@next",
+      "version": "16.3.0-preview.9",
+      "bom-ref": "frontend@0.1.0|@next/swc-darwin-arm64@16.3.0-preview.9",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40next/swc-darwin-arm64@16.3.0-preview.9",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@next/swc-darwin-arm64/-/swc-darwin-arm64-16.3.0-preview.9.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "e36395fe30e11e82aeaaafa4a74458ad6d6e92cca42e15d0797fb3c784981441b8e5e73d1e72c79ec1a01b5bf2e56f8b6920ef8f704f3013d328c0a1d6f97513"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@next/swc-darwin-arm64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swc-darwin-x64",
+      "group": "@next",
+      "version": "16.3.0-preview.9",
+      "bom-ref": "frontend@0.1.0|@next/swc-darwin-x64@16.3.0-preview.9",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40next/swc-darwin-x64@16.3.0-preview.9",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@next/swc-darwin-x64/-/swc-darwin-x64-16.3.0-preview.9.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "8fa76f6478e18c1de5fae0d08819ae6a3cf30b209eb56750c3e7a8bb0474984e39e5bf8ebcf637d9d50d218f83df7a1339eddfd0ccbdc12c38526e61c72c1494"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@next/swc-darwin-x64"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swc-linux-arm64-gnu",
+      "group": "@next",
+      "version": "16.3.0-preview.9",
+      "bom-ref": "frontend@0.1.0|@next/swc-linux-arm64-gnu@16.3.0-preview.9",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40next/swc-linux-arm64-gnu@16.3.0-preview.9",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@next/swc-linux-arm64-gnu/-/swc-linux-arm64-gnu-16.3.0-preview.9.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "dbed56ccfdbe9e0cc29178b2cc1c28c2006261a532723001ffd6f96a1e538cfd227011ce1dfee868f9e3499959f22abac761ba42e47d4bce348e438a3489d40b"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@next/swc-linux-arm64-gnu"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swc-linux-arm64-musl",
+      "group": "@next",
+      "version": "16.3.0-preview.9",
+      "bom-ref": "frontend@0.1.0|@next/swc-linux-arm64-musl@16.3.0-preview.9",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40next/swc-linux-arm64-musl@16.3.0-preview.9",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@next/swc-linux-arm64-musl/-/swc-linux-arm64-musl-16.3.0-preview.9.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "d93aba1f42ed39b1908f6b3bbb9e9361a9132773660ce5a7351693d93235ee840451f3efdcee1adb68ede31203564c6f6987c1d8be32da197c0c6004c35595ea"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@next/swc-linux-arm64-musl"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swc-linux-x64-gnu",
+      "group": "@next",
+      "version": "16.3.0-preview.9",
+      "bom-ref": "frontend@0.1.0|@next/swc-linux-x64-gnu@16.3.0-preview.9",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40next/swc-linux-x64-gnu@16.3.0-preview.9",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@next/swc-linux-x64-gnu/-/swc-linux-x64-gnu-16.3.0-preview.9.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "1f66c24f6c361ff5bac512d1c38a1680e10c23259cd6d9fae5ce3abb4cc2eb4a262a283d84f5a3eefae1301ab038c4e665c159c0da814e92531742eea2911f1c"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@next/swc-linux-x64-gnu"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swc-linux-x64-musl",
+      "group": "@next",
+      "version": "16.3.0-preview.9",
+      "bom-ref": "frontend@0.1.0|@next/swc-linux-x64-musl@16.3.0-preview.9",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40next/swc-linux-x64-musl@16.3.0-preview.9",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@next/swc-linux-x64-musl/-/swc-linux-x64-musl-16.3.0-preview.9.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "58ad0223c932d680c6c2ace2f28263b42e6b7cc34e531e03301895af5a3d9afb0cc2409491587b9faf80031d90c64f25951271a5a1a5059bf57e11f2b6c10d57"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@next/swc-linux-x64-musl"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swc-win32-arm64-msvc",
+      "group": "@next",
+      "version": "16.3.0-preview.9",
+      "bom-ref": "frontend@0.1.0|@next/swc-win32-arm64-msvc@16.3.0-preview.9",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40next/swc-win32-arm64-msvc@16.3.0-preview.9",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@next/swc-win32-arm64-msvc/-/swc-win32-arm64-msvc-16.3.0-preview.9.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "08e1705ec310b12b7206fe2a067e84ded287b8f5627cc92956f176936fc8d07b0b030b9e9608fee6e3bc8d2e1efac7d371dbdccddbee886f018c9cf76806b421"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@next/swc-win32-arm64-msvc"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "swc-win32-x64-msvc",
+      "group": "@next",
+      "version": "16.3.0-preview.9",
+      "bom-ref": "frontend@0.1.0|@next/swc-win32-x64-msvc@16.3.0-preview.9",
+      "scope": "optional",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40next/swc-win32-x64-msvc@16.3.0-preview.9",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@next/swc-win32-x64-msvc/-/swc-win32-x64-msvc-16.3.0-preview.9.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "446e2b129837ca71b04cfea69ec0d91cbb856ca92c5e440277d0393039203d8f7ec186b022b736de92581d9c720718acb95fedf9dc0281ba59a1c956f22704ec"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@next/swc-win32-x64-msvc"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "helpers",
+      "group": "@swc",
+      "version": "0.5.15",
+      "bom-ref": "frontend@0.1.0|@swc/helpers@0.5.15",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/%40swc/helpers@0.5.15",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/@swc/helpers/-/helpers-0.5.15.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "250e53b8c8b8e4ec22e3f048300241a12428389bb5da83a4fe0003aa57142fd24474707cbf28d44acc6a78d5e79971e360a322d96718b5ecc610486a508fc4da"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/@swc/helpers"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "baseline-browser-mapping",
+      "version": "2.11.4",
+      "bom-ref": "frontend@0.1.0|baseline-browser-mapping@2.11.4",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/baseline-browser-mapping@2.11.4",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/baseline-browser-mapping/-/baseline-browser-mapping-2.11.4.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "b38fac2ebf6667f0b2a9e46b8ad15e615fd9c7bdce02d99a1e7ea49014b55d1a099f586b837c480d472989c0045faf2d91c20dd2204282d8b7d42f33c6d921b1"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/baseline-browser-mapping"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "caniuse-lite",
+      "version": "1.0.30001806",
+      "bom-ref": "frontend@0.1.0|caniuse-lite@1.0.30001806",
+      "licenses": [
+        {
+          "license": {
+            "id": "CC-BY-4.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/caniuse-lite@1.0.30001806",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001806.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "ef60aebddf79cdb4983caaba16183c7832519738160dfeff9ada19bfa41efc360d08405d371a00dfead9014d998460a96659ecdc4b2c15abda66899c913e54bb"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/caniuse-lite"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "client-only",
+      "version": "0.0.1",
+      "bom-ref": "frontend@0.1.0|client-only@0.0.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/client-only@0.0.1",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/client-only/-/client-only-0.0.1.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "215dcebb48d233366b777a59e3c9cb913f4303b020d699cfcda8908695bb73745b72aab3bf3cd5bbe2fc81fa8ca7ff08336310b528aa682c6badc7eef08f2b30"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/client-only"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "detect-libc",
+      "version": "2.1.2",
+      "bom-ref": "frontend@0.1.0|detect-libc@2.1.2",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/detect-libc@2.1.2",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "06d8f604e38ef37a375b21f9f5ef0c817b3111055c6ab9143a9118aee6c1d2eaf09cdd74c90dfae2bb22072535d67665a966199b4e62fe87fb8a8e26ce2841b5"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/detect-libc"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "nanoid",
+      "version": "3.3.16",
+      "bom-ref": "frontend@0.1.0|nanoid@3.3.16",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/nanoid@3.3.16",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.16.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "6f394a4f2349efe2dd188230cbc8a316922a11022f69f6a157b798ca427c0af878d8474978e0e827a814257a5026f7a3d4175d1fc3aa4d764d13f29f6d602ef1"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/nanoid"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "next",
+      "version": "16.3.0-preview.9",
+      "bom-ref": "frontend@0.1.0|next@16.3.0-preview.9",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/next@16.3.0-preview.9",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/next/-/next-16.3.0-preview.9.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "aee7aff8ad4da340a6ff4e614ab80a2edcda05d5084fed88fc18fcc7e2bcfef9378ff756fbd6093aa19d0c492a341397b5094bc6e1207931fbd6382c2937d689"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/next"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "picocolors",
+      "version": "1.1.1",
+      "bom-ref": "frontend@0.1.0|picocolors@1.1.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/picocolors@1.1.1",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "c5c787dac9e1b5be4cf658aa0ec984c39ea57b7efa993664117fe311bfd1c4d1727a036e97b78db250973fd1438ff2dcbb45fc284c8c71e3f69eda5a1eb0c454"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/picocolors"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "postcss",
+      "version": "8.5.23",
+      "bom-ref": "frontend@0.1.0|postcss@8.5.23",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/postcss@8.5.23",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/postcss/-/postcss-8.5.23.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "839d39f3acebe1b666c0589395f94cbbc1346c34dbe48e607abb60c002a6b1d5254d022166dba7cd4943d564b3c1c5563e8015a6cac0eaf95f083ee85ef47082"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/postcss"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "react-dom",
+      "version": "19.2.7",
+      "bom-ref": "frontend@0.1.0|react-dom@19.2.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/react-dom@19.2.7",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/react-dom/-/react-dom-19.2.7.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "b74051557bdb884fe8db41dfc3aebdacb6cc0835ad6192ef9898a0cb67f4331b1717eef5a71851df13a4b299ac3bc877665373ca26c09ad09ade5e2560a93a81"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/react-dom"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "react",
+      "version": "19.2.7",
+      "bom-ref": "frontend@0.1.0|react@19.2.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/react@19.2.7",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/react/-/react-19.2.7.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "1cd7bd5ac9536d79852bca3c726c2001e245481bedd5b3dd1c254ab5a695f96940377ea6a53e21711a706dfddf639e9aaf6a085f3b01a4e0222111c0758d0e95"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/react"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "scheduler",
+      "version": "0.27.0",
+      "bom-ref": "frontend@0.1.0|scheduler@0.27.0",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/scheduler@0.27.0",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/scheduler/-/scheduler-0.27.0.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "78dbfe5ab55b2aed5fdef6d8253ff1b62179b320391cf20cb5ff48818fe72a0d2c5aacc0504bea63fc66ece71973fa9a7cbc7f88ef4580e99e480a78bf9b62fd"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/scheduler"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "sharp",
+      "version": "0.35.3",
+      "bom-ref": "frontend@0.1.0|sharp@0.35.3",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/sharp@0.35.3",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/sharp/-/sharp-0.35.3.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "7a3d33547b991870a20015dc3717988694673cd3c072f6c6f1131d0408430312ca9024554a92b7232bbba9bab0dc9333a23d1111e33a7f7b492ed570974d36dd"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/sharp"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "semver",
+      "version": "7.8.5",
+      "bom-ref": "frontend@0.1.0|sharp@0.35.3|semver@7.8.5",
+      "licenses": [
+        {
+          "license": {
+            "id": "ISC",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/semver@7.8.5",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/semver/-/semver-7.8.5.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "63bfca0ec6fc2e3a28669c1aa86cae94ee8342592c8029dc7211c693eb19218e1206f52870c044147e54af57c8e1d57e26f974c3a723bee71a222e34a6e462a0"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/sharp/node_modules/semver"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "source-map-js",
+      "version": "1.2.1",
+      "bom-ref": "frontend@0.1.0|source-map-js@1.2.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSD-3-Clause",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/source-map-js@1.2.1",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "51758c2a12cec1529bef6f0852d40f5f17d853ebac7726ed52b2bff2e184f0240cbeb84ea70bf30c1c23d108522fb31073bbc8b084811bc550f3e203431a5f40"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/source-map-js"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "styled-jsx",
+      "version": "5.1.6",
+      "bom-ref": "frontend@0.1.0|styled-jsx@5.1.6",
+      "licenses": [
+        {
+          "license": {
+            "id": "MIT",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/styled-jsx@5.1.6",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/styled-jsx/-/styled-jsx-5.1.6.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "a925720d378ca2d76f418a0758b346c111491c2fa2f99bdd051628b0e1600be5a0d6fc787eb376fd11bf340ed262aaaf28d2dfdfd3f62d2440da9bba9f45d864"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/styled-jsx"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "name": "tslib",
+      "version": "2.8.1",
+      "bom-ref": "frontend@0.1.0|tslib@2.8.1",
+      "licenses": [
+        {
+          "license": {
+            "id": "0BSD",
+            "acknowledgement": "declared"
+          }
+        }
+      ],
+      "purl": "pkg:npm/tslib@2.8.1",
+      "externalReferences": [
+        {
+          "url": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+          "type": "distribution",
+          "hashes": [
+            {
+              "alg": "SHA-512",
+              "content": "a0916ef781d06fe29576e49440bef09e99aa9df98bb0e03f9c087a6fa107d30084a0ad3f98f79753a737c0a0d5f373243ae1cf447b525ca294f7d2016b34bfdb"
+            }
+          ],
+          "comment": "as detected from npm-ls property \"resolved\" and property \"integrity\""
+        }
+      ],
+      "properties": [
+        {
+          "name": "cdx:npm:package:path",
+          "value": "node_modules/tslib"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "frontend@0.1.0",
+      "dependsOn": [
+        "frontend@0.1.0|next@16.3.0-preview.9",
+        "frontend@0.1.0|react-dom@19.2.7",
+        "frontend@0.1.0|react@19.2.7",
+        "frontend@0.1.0|sharp@0.35.3"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@emnapi/runtime@1.11.3",
+      "dependsOn": [
+        "frontend@0.1.0|tslib@2.8.1"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/colour@1.1.0"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-darwin-arm64@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-libvips-darwin-arm64@1.3.2"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-darwin-x64@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-libvips-darwin-x64@1.3.2"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-freebsd-wasm32@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-wasm32@0.35.3"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-libvips-darwin-arm64@1.3.2"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-libvips-darwin-x64@1.3.2"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-libvips-linux-arm@1.3.2"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-libvips-linux-arm64@1.3.2"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-libvips-linux-ppc64@1.3.2"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-libvips-linux-riscv64@1.3.2"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-libvips-linux-s390x@1.3.2"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-libvips-linux-x64@1.3.2"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-libvips-linuxmusl-arm64@1.3.2"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-libvips-linuxmusl-x64@1.3.2"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-linux-arm@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-libvips-linux-arm@1.3.2"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-linux-arm64@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-libvips-linux-arm64@1.3.2"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-linux-ppc64@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-libvips-linux-ppc64@1.3.2"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-linux-riscv64@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-libvips-linux-riscv64@1.3.2"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-linux-s390x@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-libvips-linux-s390x@1.3.2"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-linux-x64@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-libvips-linux-x64@1.3.2"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-linuxmusl-arm64@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-libvips-linuxmusl-arm64@1.3.2"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-linuxmusl-x64@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-libvips-linuxmusl-x64@1.3.2"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-wasm32@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@emnapi/runtime@1.11.3"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-webcontainers-wasm32@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/sharp-wasm32@0.35.3"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-win32-arm64@0.35.3"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-win32-ia32@0.35.3"
+    },
+    {
+      "ref": "frontend@0.1.0|@img/sharp-win32-x64@0.35.3"
+    },
+    {
+      "ref": "frontend@0.1.0|@next/env@16.3.0-preview.9"
+    },
+    {
+      "ref": "frontend@0.1.0|@next/swc-darwin-arm64@16.3.0-preview.9"
+    },
+    {
+      "ref": "frontend@0.1.0|@next/swc-darwin-x64@16.3.0-preview.9"
+    },
+    {
+      "ref": "frontend@0.1.0|@next/swc-linux-arm64-gnu@16.3.0-preview.9"
+    },
+    {
+      "ref": "frontend@0.1.0|@next/swc-linux-arm64-musl@16.3.0-preview.9"
+    },
+    {
+      "ref": "frontend@0.1.0|@next/swc-linux-x64-gnu@16.3.0-preview.9"
+    },
+    {
+      "ref": "frontend@0.1.0|@next/swc-linux-x64-musl@16.3.0-preview.9"
+    },
+    {
+      "ref": "frontend@0.1.0|@next/swc-win32-arm64-msvc@16.3.0-preview.9"
+    },
+    {
+      "ref": "frontend@0.1.0|@next/swc-win32-x64-msvc@16.3.0-preview.9"
+    },
+    {
+      "ref": "frontend@0.1.0|@swc/helpers@0.5.15",
+      "dependsOn": [
+        "frontend@0.1.0|tslib@2.8.1"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|baseline-browser-mapping@2.11.4"
+    },
+    {
+      "ref": "frontend@0.1.0|caniuse-lite@1.0.30001806"
+    },
+    {
+      "ref": "frontend@0.1.0|client-only@0.0.1"
+    },
+    {
+      "ref": "frontend@0.1.0|detect-libc@2.1.2"
+    },
+    {
+      "ref": "frontend@0.1.0|nanoid@3.3.16"
+    },
+    {
+      "ref": "frontend@0.1.0|next@16.3.0-preview.9",
+      "dependsOn": [
+        "frontend@0.1.0|@next/env@16.3.0-preview.9",
+        "frontend@0.1.0|@next/swc-darwin-arm64@16.3.0-preview.9",
+        "frontend@0.1.0|@next/swc-darwin-x64@16.3.0-preview.9",
+        "frontend@0.1.0|@next/swc-linux-arm64-gnu@16.3.0-preview.9",
+        "frontend@0.1.0|@next/swc-linux-arm64-musl@16.3.0-preview.9",
+        "frontend@0.1.0|@next/swc-linux-x64-gnu@16.3.0-preview.9",
+        "frontend@0.1.0|@next/swc-linux-x64-musl@16.3.0-preview.9",
+        "frontend@0.1.0|@next/swc-win32-arm64-msvc@16.3.0-preview.9",
+        "frontend@0.1.0|@next/swc-win32-x64-msvc@16.3.0-preview.9",
+        "frontend@0.1.0|@swc/helpers@0.5.15",
+        "frontend@0.1.0|baseline-browser-mapping@2.11.4",
+        "frontend@0.1.0|caniuse-lite@1.0.30001806",
+        "frontend@0.1.0|postcss@8.5.23",
+        "frontend@0.1.0|react-dom@19.2.7",
+        "frontend@0.1.0|react@19.2.7",
+        "frontend@0.1.0|sharp@0.35.3",
+        "frontend@0.1.0|styled-jsx@5.1.6"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|picocolors@1.1.1"
+    },
+    {
+      "ref": "frontend@0.1.0|postcss@8.5.23",
+      "dependsOn": [
+        "frontend@0.1.0|nanoid@3.3.16",
+        "frontend@0.1.0|picocolors@1.1.1",
+        "frontend@0.1.0|source-map-js@1.2.1"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|react-dom@19.2.7",
+      "dependsOn": [
+        "frontend@0.1.0|react@19.2.7",
+        "frontend@0.1.0|scheduler@0.27.0"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|react@19.2.7"
+    },
+    {
+      "ref": "frontend@0.1.0|scheduler@0.27.0"
+    },
+    {
+      "ref": "frontend@0.1.0|sharp@0.35.3",
+      "dependsOn": [
+        "frontend@0.1.0|@img/colour@1.1.0",
+        "frontend@0.1.0|@img/sharp-darwin-arm64@0.35.3",
+        "frontend@0.1.0|@img/sharp-darwin-x64@0.35.3",
+        "frontend@0.1.0|@img/sharp-freebsd-wasm32@0.35.3",
+        "frontend@0.1.0|@img/sharp-libvips-darwin-arm64@1.3.2",
+        "frontend@0.1.0|@img/sharp-libvips-darwin-x64@1.3.2",
+        "frontend@0.1.0|@img/sharp-libvips-linux-arm@1.3.2",
+        "frontend@0.1.0|@img/sharp-libvips-linux-arm64@1.3.2",
+        "frontend@0.1.0|@img/sharp-libvips-linux-ppc64@1.3.2",
+        "frontend@0.1.0|@img/sharp-libvips-linux-riscv64@1.3.2",
+        "frontend@0.1.0|@img/sharp-libvips-linux-s390x@1.3.2",
+        "frontend@0.1.0|@img/sharp-libvips-linux-x64@1.3.2",
+        "frontend@0.1.0|@img/sharp-libvips-linuxmusl-arm64@1.3.2",
+        "frontend@0.1.0|@img/sharp-libvips-linuxmusl-x64@1.3.2",
+        "frontend@0.1.0|@img/sharp-linux-arm@0.35.3",
+        "frontend@0.1.0|@img/sharp-linux-arm64@0.35.3",
+        "frontend@0.1.0|@img/sharp-linux-ppc64@0.35.3",
+        "frontend@0.1.0|@img/sharp-linux-riscv64@0.35.3",
+        "frontend@0.1.0|@img/sharp-linux-s390x@0.35.3",
+        "frontend@0.1.0|@img/sharp-linux-x64@0.35.3",
+        "frontend@0.1.0|@img/sharp-linuxmusl-arm64@0.35.3",
+        "frontend@0.1.0|@img/sharp-linuxmusl-x64@0.35.3",
+        "frontend@0.1.0|@img/sharp-webcontainers-wasm32@0.35.3",
+        "frontend@0.1.0|@img/sharp-win32-arm64@0.35.3",
+        "frontend@0.1.0|@img/sharp-win32-ia32@0.35.3",
+        "frontend@0.1.0|@img/sharp-win32-x64@0.35.3",
+        "frontend@0.1.0|detect-libc@2.1.2",
+        "frontend@0.1.0|sharp@0.35.3|semver@7.8.5"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|sharp@0.35.3|semver@7.8.5"
+    },
+    {
+      "ref": "frontend@0.1.0|source-map-js@1.2.1"
+    },
+    {
+      "ref": "frontend@0.1.0|styled-jsx@5.1.6",
+      "dependsOn": [
+        "frontend@0.1.0|client-only@0.0.1",
+        "frontend@0.1.0|react@19.2.7"
+      ]
+    },
+    {
+      "ref": "frontend@0.1.0|tslib@2.8.1"
+    }
+  ]
+}

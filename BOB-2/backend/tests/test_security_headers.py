@@ -1,5 +1,10 @@
 """Tests for security headers middleware."""
 
+from starlette.middleware.cors import CORSMiddleware
+
+from app.core.config import settings
+from app.main import app
+
 
 class TestSecurityHeaders:
     def test_security_headers_present(self, client):
@@ -24,6 +29,14 @@ class TestSecurityHeaders:
 
 
 class TestCORS:
+    def test_cors_origins_come_only_from_runtime_settings(self):
+        cors = next(
+            middleware
+            for middleware in app.user_middleware
+            if middleware.cls is CORSMiddleware
+        )
+        assert cors.kwargs["allow_origins"] == settings.cors_origin_list
+
     def test_cors_allows_configured_origin(self, client):
         resp = client.options(
             "/health",

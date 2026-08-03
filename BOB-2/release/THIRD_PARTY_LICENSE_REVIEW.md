@@ -8,22 +8,19 @@
 
 The repository must not be marketed as a closed-source proprietary SaaS until every runtime dependency has a recorded license and all copyleft/commercial obligations are resolved.
 
-### Material finding — PyMuPDF / MuPDF
+### Resolved finding — PyMuPDF / MuPDF removed
 
-The current dependency set includes `PyMuPDF==1.28.0`. PyMuPDF's official documentation states that PyMuPDF and MuPDF are dual-licensed under AGPL and commercial license agreements. Artifex states that server/SaaS use under the AGPL requires the applicable source-code disclosure obligations, and that a commercial license is required when those obligations cannot be met.
+The former `PyMuPDF` / MuPDF runtime dependency was replaced with `pypdf`, `pdfplumber`, and `pypdfium2`. The current Python dependency manifests do not contain `PyMuPDF`, and application source files do not import `fitz`.
 
-Approved resolution must be one of:
+**Selected path:** ☒ Replacement
 
-1. **Commercial license:** obtain written Artifex terms covering the intended SaaS/OEM use and retain the agreement reference below; or
-2. **AGPL distribution:** obtain legal approval for the complete product and network-source-offer obligations; or
-3. **Replacement:** remove PyMuPDF/MuPDF from runtime and replace it with dependencies whose licenses are approved for the selected commercial model, with regression tests for PDF validation, extraction, OCR and bank-statement parsing.
+**Implementation evidence:** `backend/scripts/remove_pymupdf_dependency.py`, the current dependency manifests, and `backend/tests/test_pdf_replacement_regressions.py`
 
-**Selected path:** ☐ Commercial license ☐ AGPL model ☐ Replacement  
-**Agreement / legal opinion / replacement PR:** ____________________  
-**Approved by:** ____________________  
-**Date:** ____________________
+**Testing status:** Dedicated regression coverage verifies pypdf text extraction, encrypted-PDF rejection, rendered-page OCR fallback with resource cleanup, and positional PDF bank-statement parsing.
 
-Until one box is completed with evidence, status is **BLOCKED FOR CLOSED-SOURCE SALE**.
+**Commercial-license blocker from PyMuPDF:** RESOLVED IN CURRENT SOURCE
+
+This resolution removes the identified PyMuPDF blocker only. It does not complete the full license review. A release-specific dependency inventory, SBOM, vulnerability scan, notice bundle, product-code ownership confirmation, and counsel review remain mandatory before marking the project `READY` below.
 
 ## Automated inventory requirements
 
@@ -35,6 +32,17 @@ For each release, generate and retain:
 - SBOM in CycloneDX or SPDX format;
 - vulnerability scan results;
 - copies or links to required notices and license texts.
+
+Current generated CycloneDX 1.6 inventories and scoped dependency vulnerability results:
+
+- `release/sbom/backend-runtime.cdx.json` — direct packages declared in the lightweight production manifest (`requirements.runtime.txt`).
+- `release/sbom/backend-full-lock.cdx.json` — all 98 pinned components represented in the full backend lock, including the optional ML/development stack.
+- `release/sbom/frontend-production.cdx.json` — flattened npm production graph derived from `package-lock.json`, validated with no dangling component references.
+- `release/security/backend-pip-audit.json` — 0 known vulnerabilities in `requirements.runtime.txt` at generation time.
+- `release/security/backend-full-lock-pip-audit.json` — all 96 auditable pinned packages in `requirements.lock`, including `sentence-transformers` and `transformers`; 0 known vulnerabilities at generation time.
+- `release/security/frontend-npm-audit.json` — 0 known npm production dependency vulnerabilities at generation time.
+
+The lock-based Python SBOM is a complete pinned-package inventory, not a license-approved dependency relationship graph. Container/OS inventory, image scanning, verified license metadata, notices, and manual license decisions remain incomplete. Results are time-bound and must be regenerated for each release.
 
 ## Policy classifications
 

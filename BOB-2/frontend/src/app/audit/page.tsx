@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { useLanguage } from "@/lib/LanguageContext";
 import { useCompany } from "@/lib/CompanyContext";
 import { API_BASE_URL } from "@/lib/api";
 import { escapeHtml } from "@/lib/escapeHtml";
@@ -33,7 +32,6 @@ interface MoveTransaction {
 }
 
 export default function AuditPage() {
-  const { t, language } = useLanguage();
   const { selectedCompanyId } = useCompany();
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 

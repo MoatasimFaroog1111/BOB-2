@@ -1,6 +1,6 @@
 # Seller Readiness Checklist
 
-Audit snapshot: 2026-08-03
+Audit snapshot: 2026-08-04 (see [`VERIFICATION_REPORT_2026-08-04.md`](VERIFICATION_REPORT_2026-08-04.md) for raw command output)
 
 ## Current decision
 
@@ -8,21 +8,22 @@ Audit snapshot: 2026-08-03
 
 The core application is substantial and testable. The remaining blockers are mainly ownership, commercial evidence, production access, legal review, and buyer-facing documentation. Do not claim revenue, customers, ZATCA certification, completed accounting UAT, or legal approval without evidence.
 
-## Verified in this audit
+## Verified in this audit (re-run 2026-08-04 against commit `3ded7a3`)
 
 - [x] Public source repository is accessible and has a proprietary top-level license notice.
 - [x] Main application is under `BOB-2/` with a FastAPI backend and Next.js frontend.
-- [x] Backend baseline: **446 passed, 4 skipped** using runtime dependencies plus pytest, including dedicated replacement PDF/OCR/parser and configuration-only CORS regressions.
-- [x] Frontend production build completes successfully after removing the unused legacy static frontend from `frontend/public/`.
+- [x] Backend local suite: **275 tests passed** across `test_config`, `test_production_security_config`, `test_security_headers`, `test_request_limits`, `test_auth`, `test_account_access`, `test_financial_rbac`, `test_mfa`, `test_tenant_isolation`, `test_immutable_audit_chain`, `test_encrypted_secret_provider`, `test_monetary_integrity`, `test_erp_outbound_security`, `test_bank_reconciliation`, `test_bank_posting_idempotency`, `test_security_hardening`, `test_external_llm_security`, `test_telegram_accounting_approvals`, `test_openai_runtime_config`, `test_erp_monetary_route_replacement`, `test_runtime_storage_security`, etc. (Excludes ML/Redis/Odoo-fixture tests that require live infrastructure.)
+- [x] Frontend production build completes successfully; **17 routes generated**, TypeScript clean.
 - [x] Frontend lint has **0 errors**; 51 warnings remain as quality debt.
-- [x] Production backend returned HTTP 200 from `/health` and `/ready`; database, Redis, and storage reported ready.
-- [x] GitHub production monitoring was repaired by configuring `PRODUCTION_BACKEND_URL`; manual workflow run `30792670664` succeeded.
+- [x] Local backend returned HTTP 200 from `/health`, `/ready`, and `/openapi.json` (75 paths). Database, Redis, and storage reported ready. `alembic upgrade head` applied all migrations to a fresh SQLite database.
+- [x] Authenticated end-to-end UI/UX verified in an isolated browser session: login form → seeded owner credentials → JWT → authenticated dashboard (`مركز التحكم المالي`).
+- [x] Fail-closed production security verified: app refuses to start without Redis, HTTPS, real `SECRET_STORE_PROVIDER`, ClamAV, ERP allowlist, PostgreSQL.
+- [x] GitHub production monitoring was repaired earlier; manual workflow run `30792670664` succeeded (carried from previous audit).
 - [x] Current dependency manifests contain no PyMuPDF/MuPDF runtime dependency.
-- [x] CycloneDX 1.6 inventories cover the lightweight Python production manifest, all 98 pinned components in the full backend lock (including optional ML/development packages), and a closed npm production dependency graph.
-- [x] Current production-runtime and full-backend-lock `pip-audit` reports plus production `npm audit` found 0 known dependency vulnerabilities; the container image and future advisories are outside those reports.
-- [x] Production CORS origins are configuration-only; the seller-specific Railway frontend origin was removed from source code.
-- [x] Backend tests force Hugging Face/Transformers offline and redirect model caches to temporary storage, preventing multi-gigabyte CI downloads.
+- [x] Backend tests force Hugging Face/Transformers offline and redirect model caches to temporary storage.
 - [x] Security-focused tests and workflows exist for tenant isolation, authorization, monetary integrity, immutable audit history, external LLM policy, Telegram controls, and ERP outbound restrictions.
+- [ ] **NEW finding from this run:** `pip-audit -r requirements.runtime.lock --strict` reports **1 known vulnerability** in `cryptography 49.0.0` (`GHSA-g6cj-pr64-35w5`, fix in `50.0.0`). The previous snapshot reported 0 known vulnerabilities; this audit observes a new advisory since then. Action item: bump pin and regenerate hash-locked files.
+- [x] `npm audit --omit=dev` against the frontend lockfile reports **0 vulnerabilities**.
 
 ## P0 — required before publishing the Acquire listing
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useLanguage } from "@/lib/LanguageContext";
 import { useCompany } from "@/lib/CompanyContext";
 import { API_BASE_URL } from "@/lib/api";
+import { publicApiErrorMessage } from "@/lib/publicApiError";
 
 const DEFAULT_ROWS = 25;
 const DEFAULT_COLS = 10;
@@ -234,7 +235,7 @@ export default function DocumentIntelligencePage() {
       });
 
       if (!res.ok) {
-        throw new Error(await res.text());
+        throw new Error(await publicApiErrorMessage(res, language));
       }
 
       const data = await res.json();
@@ -334,7 +335,7 @@ export default function DocumentIntelligencePage() {
       });
 
       if (!res.ok) {
-        throw new Error(await res.text());
+        throw new Error(await publicApiErrorMessage(res, language));
       }
 
       const data = await res.json();
@@ -404,7 +405,6 @@ export default function DocumentIntelligencePage() {
       });
 
     } catch (err: any) {
-      console.error(err);
       setChatMessages((prev) => [
         ...prev,
         {
@@ -552,7 +552,6 @@ export default function DocumentIntelligencePage() {
       ]);
 
     } catch (err: any) {
-      console.error(err);
       setChatMessages((prev) => [
         ...prev,
         {
@@ -1394,7 +1393,7 @@ export default function DocumentIntelligencePage() {
       });
 
       if (!res.ok) {
-        throw new Error(await res.text());
+        throw new Error(await publicApiErrorMessage(res, language));
       }
 
       alert(t("excel.successPost") || "Successfully registered in Odoo!");
@@ -1489,11 +1488,14 @@ export default function DocumentIntelligencePage() {
   return (
     <div
       ref={containerRef}
-      className="wood-shell fade-in p-6 h-screen overflow-hidden flex flex-row gap-6 justify-start"
+      className="wood-shell fade-in h-full min-h-0 overflow-auto p-3 sm:p-4 xl:p-5 flex flex-col xl:flex-row gap-4 justify-start"
       onPaste={handlePaste}
     >
       {/* Left Column: Spreadsheet Content */}
-      <div className="flex-1 flex flex-col h-full overflow-hidden">
+      <div
+        data-testid="spreadsheet-workspace"
+        className="flex-1 min-w-0 w-full flex flex-col min-h-[36rem] xl:min-h-0 xl:h-full overflow-hidden"
+      >
         {/* Title */}
         <div className="flex justify-between items-center mb-4">
           <div className="flex flex-col">
@@ -1694,20 +1696,17 @@ export default function DocumentIntelligencePage() {
                       cellClass += "bg-white text-gray-800";
                     }
 
-                    const borderStyle: React.CSSProperties = {};
                     if (selected && !editing) {
-                      const activeColor = "#107c41"; // Excel signature green
-                      if (borders.top) borderStyle.borderTop = `2px solid ${activeColor}`;
-                      if (borders.bottom) borderStyle.borderBottom = `2px solid ${activeColor}`;
-                      if (borders.left) borderStyle.borderLeft = `2px solid ${activeColor}`;
-                      if (borders.right) borderStyle.borderRight = `2px solid ${activeColor}`;
+                      if (borders.top) cellClass += " border-t-2 border-t-[#107c41]";
+                      if (borders.bottom) cellClass += " border-b-2 border-b-[#107c41]";
+                      if (borders.left) cellClass += " border-l-2 border-l-[#107c41]";
+                      if (borders.right) cellClass += " border-r-2 border-r-[#107c41]";
                     }
 
                     return (
                       <td
                         key={c}
                         className={cellClass}
-                        style={borderStyle}
                         onMouseDown={(e) => handleCellMouseDown(r, c, e)}
                         onMouseEnter={() => handleCellMouseEnter(r, c)}
                         onDoubleClick={() => {
@@ -1805,7 +1804,10 @@ export default function DocumentIntelligencePage() {
       </div>
 
       {/* Right Column: AI Chat Panel */}
-      <div className="w-80 md:w-96 bg-black/35 border border-white/10 rounded-2xl p-4 flex flex-col h-full overflow-hidden text-right shadow-2xl backdrop-blur-md" dir="rtl">
+      <div
+        className="w-full xl:w-80 xl:shrink-0 min-h-72 xl:min-h-0 xl:h-full bg-black/35 border border-white/10 rounded-2xl p-4 flex flex-col overflow-hidden text-right shadow-2xl backdrop-blur-md"
+        dir={language === "ar" ? "rtl" : "ltr"}
+      >
         <div className="border-b border-white/10 pb-3 mb-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="w-2.5 h-2.5 rounded-full bg-[#107c41] shadow-[0_0_8px_#107c41]" />
@@ -1813,7 +1815,9 @@ export default function DocumentIntelligencePage() {
               {language === "ar" ? "مساعد التنسيق الذكي" : "Smart Layout Assistant"}
             </h2>
           </div>
-          <span className="text-[9px] font-bold bg-[#107c41]/10 text-[#2ecc71] border border-[#107c41]/30 px-2 py-0.5 rounded-full">AI AGENT</span>
+          <span className="text-[9px] font-bold bg-[#107c41]/10 text-[#2ecc71] border border-[#107c41]/30 px-2 py-0.5 rounded-full">
+            {language === "ar" ? "مساعد ذكي" : "AI assistant"}
+          </span>
         </div>
 
         {/* Messages feed */}

@@ -3,6 +3,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from app.api.errors import unexpected_operation_error
 from app.db.database import get_db
 from app.security.dependencies import require_permission
 from app.services.tenant_erp import resolve_tenant_erp
@@ -89,7 +90,8 @@ def get_company_partners(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to fetch company partners from Odoo: {type(exc).__name__}",
+        raise unexpected_operation_error(
+            code="erp_partners_fetch_failed",
+            message="Unable to fetch ERP partners.",
+            status_code=502,
         ) from exc

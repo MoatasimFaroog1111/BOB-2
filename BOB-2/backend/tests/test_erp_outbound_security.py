@@ -254,6 +254,21 @@ def test_xmlrpc_declared_response_size_is_rejected_before_read(monkeypatch):
     assert response.closed is True
 
 
+def test_xmlrpc_response_rejects_dtd_entity_expansion(monkeypatch):
+    monkeypatch.setattr(settings, "ERP_OUTBOUND_MAX_RESPONSE_BYTES", 4096)
+    transport = PinnedSafeTransport("https://odoo.example.com")
+    payload = b"""<?xml version='1.0'?>
+<!DOCTYPE methodResponse [<!ENTITY injected 'sensitive-expanded-value'>]>
+<methodResponse><params><param><value><string>&injected;</string></value></param></params></methodResponse>
+"""
+    response = _FakeResponse([payload])
+
+    with pytest.raises(Exception):
+        transport.parse_response(response)
+
+    assert response.closed is True
+
+
 def test_production_erp_policy_configuration_is_fail_closed(monkeypatch):
     monkeypatch.setattr(settings, "ERP_OUTBOUND_REQUIRE_ALLOWLIST", False)
     monkeypatch.setattr(settings, "ERP_OUTBOUND_ALLOWED_HOSTS", "")

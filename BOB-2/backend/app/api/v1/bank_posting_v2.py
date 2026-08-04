@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.errors import unexpected_operation_error
 from app.core.money import (
     Money,
     MoneyValidationError,
@@ -463,6 +464,10 @@ def register_bank_reconciliation_entry_v2(
             action="odoo_bank_reconciliation_entry_failed",
             result="failed",
             request=request,
-            details={"error": str(e), "ref": payload.ref},
+            details={"error_code": "bank_posting_failed", "ref": payload.ref},
         )
-        raise HTTPException(status_code=400, detail=f"Failed to create bank reconciliation entry in Odoo: {str(e)}")
+        raise unexpected_operation_error(
+            code="bank_posting_failed",
+            message="Unable to create the bank reconciliation entry in ERP.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e

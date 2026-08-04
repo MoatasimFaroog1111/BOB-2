@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.errors import unexpected_operation_error
 from app.core.money import (
     MoneyValidationError,
     NonNegativeMoney,
@@ -161,8 +162,10 @@ def _read_matching_move(
             },
         ) or []
     except Exception as exc:
-        raise HTTPException(
-            status_code=400, detail=f"Failed to read Odoo journal entry: {exc}"
+        raise unexpected_operation_error(
+            code="erp_journal_entry_read_failed",
+            message="Unable to read the ERP journal entry.",
+            status_code=502,
         ) from exc
     if not moves:
         raise HTTPException(status_code=404, detail="Matching Odoo journal entry was not found.")
@@ -290,7 +293,11 @@ def _find_account_id(
                 {"fields": ["id", "code", "name"], "limit": 2},
             ) or []
         except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Failed to search account {code}: {exc}") from exc
+            raise unexpected_operation_error(
+                code="erp_account_search_failed",
+                message="Unable to search ERP accounts.",
+                status_code=502,
+            ) from exc
     if not accounts:
         raise HTTPException(status_code=404, detail=f"Account code {code} was not found in Odoo.")
     if len(accounts) > 1:
@@ -424,7 +431,11 @@ def _create_draft_move(erp, move_vals: dict[str, Any]) -> int:
             move_id = move_id[0]
         return int(move_id)
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Failed to create Odoo journal entry: {exc}") from exc
+        raise unexpected_operation_error(
+            code="erp_journal_entry_create_failed",
+            message="Unable to create the ERP journal entry.",
+            status_code=502,
+        ) from exc
 
 
 def _post_move_and_verify(erp, move_id: int, label: str) -> dict[str, Any]:
@@ -434,7 +445,11 @@ def _post_move_and_verify(erp, move_id: int, label: str) -> dict[str, Any]:
         refreshed = _read_refreshed_move(erp, move_id, {"id": move_id})
         if (refreshed.get("state") or "") == "posted":
             return refreshed
-        raise HTTPException(status_code=400, detail=f"Failed to post {label}: {exc}") from exc
+        raise unexpected_operation_error(
+            code="erp_journal_entry_post_failed",
+            message="Unable to post the ERP journal entry.",
+            status_code=502,
+        ) from exc
     return _read_refreshed_move(erp, move_id, {"id": move_id, "state": "posted"})
 
 
@@ -498,7 +513,11 @@ def reset_journal_entry_to_draft(
         refreshed = _read_refreshed_move(erp, move_id, move)
         if (refreshed.get("state") or "") == "draft":
             return _move_payload(conn, refreshed, _read_move_lines(erp, move_id), "Journal entry was reset to draft in Odoo.")
-        raise HTTPException(status_code=400, detail=f"Failed to reset Odoo journal entry to draft: {exc}") from exc
+        raise unexpected_operation_error(
+            code="erp_journal_entry_reset_failed",
+            message="Unable to reset the ERP journal entry to draft.",
+            status_code=502,
+        ) from exc
     move = _read_refreshed_move(erp, move_id, {**move, "state": "draft"})
     return _move_payload(conn, move, _read_move_lines(erp, move_id), "Journal entry was reset to draft in Odoo.")
 
@@ -590,7 +609,11 @@ def update_journal_entry_from_sheet(
         for line, vals in zip(current_lines, prospective):
             erp.execute_kw("account.move.line", "write", [[int(line["id"])], vals])
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Failed to update Odoo journal entry from sheet: {exc}") from exc
+        raise unexpected_operation_error(
+            code="erp_journal_entry_update_failed",
+            message="Unable to update the ERP journal entry.",
+            status_code=502,
+        ) from exc
     move = _read_refreshed_move(erp, move_id, move)
     return _move_payload(
         conn,

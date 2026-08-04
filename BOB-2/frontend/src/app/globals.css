@@ -2,6 +2,8 @@
 
 :root {
   color-scheme: dark;
+  --font-cairo: Tahoma, Arial, sans-serif;
+  --font-outfit: "Segoe UI", Arial, sans-serif;
   --wood-dark: #160b04;
   --wood-mid: #5a2f12;
   --wood-gold: #d9a441;

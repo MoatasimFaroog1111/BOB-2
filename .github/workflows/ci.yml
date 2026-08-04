@@ -252,6 +252,10 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Lint
         run: npm run lint
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Unit tests
+        run: npm run test
       - name: Build
         env:
           NEXT_PUBLIC_API_BASE_URL: https://api.example.invalid

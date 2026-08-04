@@ -46,10 +46,13 @@ GuardianAI Accountant & Auditor Enterprise (working repository name: BOB-2) is a
 
 ## Verified technical evidence
 
-- Backend audit baseline: 446 tests passed and 4 skipped, including dedicated replacement PDF/OCR/parser and configuration-only CORS regressions.
-- Frontend lint: 0 errors after removal of unused legacy assets; warnings remain.
+- Backend test suite: **452 passed, 4 skipped** (pytest, Python 3.12, runtime dependency set), covering authentication, MFA, tenant isolation, monetary integrity, ERP outbound SSRF policy, immutable audit chain, Telegram authorization/approval boundaries, and worker contracts.
+- Frontend unit tests: **5 passed** (vitest). TypeScript `tsc --noEmit`: **clean**. Production `next build`: **succeeds** (15 routes).
+- Frontend lint: **0 errors**; 51 warnings remain as disclosed quality debt.
+- Continuous integration enforces backend full tests, eight isolated backend security suites, and frontend lint, typecheck, unit tests, and production build.
+
 - Next.js production build completed successfully.
-- Public backend health and readiness endpoints returned healthy/ready.
+- Live production probes (2026-08-04): backend `GET /health` returned HTTP 200 (`healthy`) and `GET /ready` returned HTTP 200 with `database`, `redis`, and `storage` all true; the frontend origin returned HTTP 200. Railway `production` environment reports SUCCESS deployments for both the backend and frontend services.
 - GitHub production-monitor workflow succeeded after configuration repair.
 - Full pinned backend lock audit: 96 auditable packages, including the optional ML/development stack, with 0 known findings at the audit snapshot.
 - Production npm audit: 0 known findings at the audit snapshot.

@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.errors import unexpected_operation_error
 from app.db.database import get_db
 from app.erp.factory import get_erp_provider
 from app.models.core import ERPConnection
@@ -361,4 +362,8 @@ def suggest_bank_reconciliation_entries(payload: HistoricalEntrySuggestionReques
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Failed to build historical journal entry suggestions: {exc}") from exc
+        raise unexpected_operation_error(
+            code="bank_history_suggestions_failed",
+            message="Unable to build historical journal entry suggestions.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from exc

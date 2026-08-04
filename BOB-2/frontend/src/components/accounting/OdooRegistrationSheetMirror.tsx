@@ -66,6 +66,7 @@ const headerMatches = (header: string, aliases: string[]): boolean => {
 
 const findColumn = (headers: string[], aliases: string[]): number => headers.findIndex((header) => headerMatches(header, aliases));
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const findByAliases = (headers: string[], row: SheetRow, aliases: string[]): string => {
   const idx = findColumn(headers, aliases);
   return idx >= 0 ? String(row.cells[idx] || "").trim() : "";

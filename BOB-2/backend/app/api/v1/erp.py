@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File,
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.errors import ai_provider_unavailable, unexpected_operation_error
 from app.core.config import settings
 from app.db.database import get_db
 from app.models.core import ERPConnection
@@ -62,10 +63,11 @@ def test_erp_connection(payload: ERPConnectionRequest):
         )
         return erp.test_connection()
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Connection test failed: {str(e)}"
-        )
+        raise unexpected_operation_error(
+            code="erp_connection_test_failed",
+            message="Unable to verify the ERP connection.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 @router.post("/connection", response_model=ERPConnectionResponse)
@@ -82,10 +84,11 @@ def save_erp_connection(payload: ERPConnectionRequest, db: Session = Depends(get
         if not test_result.get("connected"):
             raise ValueError("Authentication failed on the ERP provider.")
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Cannot save connection: verification failed ({str(e)})"
-        )
+        raise unexpected_operation_error(
+            code="erp_connection_save_failed",
+            message="Unable to verify and save the ERP connection.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
     secret_data = {
         "username": payload.username,
@@ -189,10 +192,11 @@ def test_saved_connection(db: Session = Depends(get_db)):
         )
         return erp.test_connection()
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Connection test on saved credentials failed: {str(e)}"
-        )
+        raise unexpected_operation_error(
+            code="erp_saved_connection_test_failed",
+            message="Unable to verify the saved ERP connection.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 @router.get("/company-info-saved")
@@ -228,10 +232,11 @@ def get_saved_company_info(db: Session = Depends(get_db)):
         )
         return erp.get_company_info()
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to fetch company info: {str(e)}"
-        )
+        raise unexpected_operation_error(
+            code="erp_company_fetch_failed",
+            message="Unable to fetch ERP company information.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 @router.get("/companies")
@@ -311,10 +316,11 @@ def trigger_erp_discovery(db: Session = Depends(get_db)):
         )
         return run_discovery_orchestrator(erp)
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"ERP Discovery failed: {str(e)}"
-        )
+        raise unexpected_operation_error(
+            code="erp_discovery_failed",
+            message="Unable to discover ERP capabilities.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 @router.get("/discovery")
@@ -1033,7 +1039,11 @@ def attach_document(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to attach document to Odoo: {str(e)}")
+        raise unexpected_operation_error(
+            code="erp_attachment_upload_failed",
+            message="Unable to attach the document to ERP.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 class JournalLineRequest(BaseModel):
@@ -1109,7 +1119,11 @@ def get_partners(db_session: Session = Depends(get_db), company_id: Optional[int
         partners.sort(key=lambda x: (x.get("name") or "").lower())
         return partners
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to fetch partners from Odoo: {str(e)}")
+        raise unexpected_operation_error(
+            code="erp_partners_fetch_failed",
+            message="Unable to fetch ERP partners.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 def _normalize_text(value: str) -> str:
@@ -1907,7 +1921,11 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
         }
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to propose transaction: {str(e)}")
+        raise unexpected_operation_error(
+            code="erp_transaction_proposal_failed",
+            message="Unable to prepare the ERP transaction proposal.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 
@@ -2532,7 +2550,11 @@ def register_document(payload: RegisterDocumentRequest, db_session: Session = De
         }
 
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to create transaction in Odoo: {str(e)}")
+        raise unexpected_operation_error(
+            code="erp_transaction_create_failed",
+            message="Unable to create the ERP transaction.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 class SheetPayload(BaseModel):
@@ -2769,10 +2791,7 @@ def chat_spreadsheet(payload: ChatSpreadsheetRequest, db_session: Session = Depe
 
     result = llm_chat(system_prompt, user_prompt)
     if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI provider is not configured. Please set ANTHROPIC_API_KEY or start Ollama locally.",
-        )
+        raise ai_provider_unavailable()
 
     content = result
     # Clean markdown code blocks if present
@@ -2911,10 +2930,7 @@ def parse_manual_text(payload: ParseManualTextRequest, db_session: Session = Dep
 
     result = llm_chat(system_prompt, user_prompt)
     if result is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="AI provider is not configured. Please set ANTHROPIC_API_KEY or start Ollama locally.",
-        )
+        raise ai_provider_unavailable()
 
     content = result
     # Clean markdown code blocks if present
@@ -3193,7 +3209,11 @@ def detect_attachments(payload: DetectAttachmentsRequest, db_session: Session = 
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Odoo query failed: {str(e)}")
+        raise unexpected_operation_error(
+            code="erp_query_failed",
+            message="Unable to complete the ERP query.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 @router.get("/accounts")
@@ -3248,7 +3268,11 @@ def get_accounts(db_session: Session = Depends(get_db), company_id: Optional[int
         )
         return accounts
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch accounts: {str(e)}")
+        raise unexpected_operation_error(
+            code="erp_accounts_fetch_failed",
+            message="Unable to fetch ERP accounts.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 @router.get("/analytic-accounts")
@@ -3288,7 +3312,11 @@ def get_analytic_accounts(db_session: Session = Depends(get_db), company_id: Opt
         )
         return analytic_accounts
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch analytic accounts: {str(e)}")
+        raise unexpected_operation_error(
+            code="erp_analytic_accounts_fetch_failed",
+            message="Unable to fetch ERP analytic accounts.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 @router.get("/attachment/{attachment_id}")
@@ -3343,7 +3371,11 @@ def get_attachment(attachment_id: int, db_session: Session = Depends(get_db)):
             "Content-Disposition": f"inline; filename={name}"
         })
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch attachment: {str(e)}")
+        raise unexpected_operation_error(
+            code="erp_attachment_fetch_failed",
+            message="Unable to fetch the ERP attachment.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
 @router.get("/journals")
@@ -3397,245 +3429,10 @@ def get_journals(db_session: Session = Depends(get_db), company_id: Optional[int
         )
         return journals
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch journals: {str(e)}")
+        raise unexpected_operation_error(
+            code="erp_journals_fetch_failed",
+            message="Unable to fetch ERP journals.",
+            status_code=status.HTTP_502_BAD_GATEWAY,
+        ) from e
 
 
-class TelegramConfigRequest(BaseModel):
-    token: str
-    is_active: bool = True
-
-
-@router.get("/telegram-config")
-def get_telegram_config():
-    import urllib.request
-
-    from app.services.telegram_bot import get_telegram_token
-
-    token = get_telegram_token()
-    config_path = settings.storage_path / "telegram_config.json"
-
-    is_active = False
-    if config_path.exists():
-        try:
-            config = json.loads(config_path.read_text(encoding="utf-8"))
-            is_active = config.get("is_active", False)
-        except Exception:
-            pass
-
-    if not token:
-        return {"token": "", "is_active": is_active, "bot_info": None}
-
-    bot_info = None
-    try:
-        url = f"https://api.telegram.org/bot{token}/getMe"
-        with urllib.request.urlopen(url, timeout=5) as res:
-            res_data = json.loads(res.read().decode("utf-8"))
-            if res_data.get("ok"):
-                bot_info = {
-                    "username": res_data["result"].get("username"),
-                    "first_name": res_data["result"].get("first_name"),
-                }
-    except Exception as e:
-        logger.info(f"[Telegram Config] Failed to fetch getMe: {e}")
-
-    # Mask the token for the frontend (only show first 10 chars)
-    masked_token = token[:10] + "..." if len(token) > 10 else token
-
-    return {
-        "token": masked_token,
-        "is_active": is_active,
-        "bot_info": bot_info,
-    }
-
-
-@router.post("/telegram-config")
-def save_telegram_config(payload: TelegramConfigRequest):
-    import urllib.request
-    from pathlib import Path
-    
-    token = payload.token.strip()
-    if token:
-        url = f"https://api.telegram.org/bot{token}/getMe"
-        try:
-            with urllib.request.urlopen(url, timeout=10) as res:
-                res_data = json.loads(res.read().decode("utf-8"))
-                if not res_data.get("ok"):
-                    raise Exception("Invalid token response")
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Invalid Telegram Bot Token: {str(e)}")
-            
-    from app.services.telegram_bot import save_telegram_config as bot_save_config
-    from app.services.telegram_bot import start_telegram_bot, stop_telegram_bot
-
-    is_active = payload.is_active if token else False
-    if not bot_save_config(token, is_active):
-        raise HTTPException(status_code=500, detail="Failed to save Telegram configuration.")
-
-    stop_telegram_bot()
-    if is_active:
-        start_telegram_bot()
-
-    return {"status": "success", "message": "Telegram configuration saved successfully."}
-
-
-@router.post("/bank-reconciliation")
-def bank_reconciliation(
-    statement: UploadFile = File(...),
-    db: Session = Depends(get_db),
-    date_from: Optional[str] = Form(None),
-    date_to: Optional[str] = Form(None),
-    company_id: Optional[int] = Form(None),
-):
-    """Compare bank statement vs Odoo bank account and return discrepancies."""
-    import tempfile
-    statement_path = ""
-    try:
-        # Save uploaded statement to temp file
-        stmt_suffix = Path(statement.filename).suffix if statement.filename else ".csv"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=stmt_suffix) as f:
-            shutil.copyfileobj(statement.file, f)
-            statement_path = f.name
-
-        # Load Odoo connection and fetch bank transactions
-        conn = db.query(ERPConnection).filter(
-            ERPConnection.organization_id == current_organization_id(required=True),
-            ERPConnection.is_active == True
-        ).first()
-        if not conn:
-            raise ValueError("لا يوجد اتصال نشط بنظام ERP. يرجى إعداد اتصال Odoo أولاً من صفحة ERP.")
-
-        secret_data = json.loads(decrypt_value(conn.encrypted_secret_ref))
-        erp = get_erp_provider(
-            provider=conn.provider,
-            url=conn.base_url,
-            db=conn.database_name or "",
-            username=secret_data.get("username", ""),
-            password=secret_data.get("password", ""),
-        )
-
-        # Use user-supplied date range if provided, otherwise extract from statement
-        statement_txns = parse_statement_file(statement_path)
-        if not date_from or not date_to:
-            auto_from, auto_to = get_date_range(statement_txns)
-            date_from = date_from or auto_from
-            date_to = date_to or auto_to
-
-        odoo_move_lines = erp.fetch_bank_transactions(
-            date_from=date_from,
-            date_to=date_to,
-            company_id=company_id,
-        )
-        ledger_txns = transactions_from_odoo_move_lines(odoo_move_lines)
-        result = _run_matching(statement_txns, ledger_txns)
-
-        return {
-            "status": "success",
-            "statement_only": [t.model_dump() for t in result.statement_only],
-            "ledger_only": [t.model_dump() for t in result.ledger_only],
-            "matched": [mp.model_dump() for mp in result.matched],
-            "smart_matched": [sm.model_dump() for sm in result.smart_matched],
-            "statement_total": result.statement_total,
-            "ledger_total": result.ledger_total,
-            "difference": result.difference,
-            "statement_count": result.statement_count,
-            "ledger_count": result.ledger_count,
-            "odoo_raw_count": len(odoo_move_lines),
-            "date_range_used": {"from": date_from, "to": date_to},
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bank reconciliation failed: {str(e)}"
-        )
-    finally:
-        if statement_path and os.path.exists(statement_path):
-            os.remove(statement_path)
-
-
-@router.post("/bank-statement-parse")
-async def parse_bank_statement_only(
-    statement: UploadFile = File(...),
-    date_from: Optional[str] = Form(None),
-    date_to: Optional[str] = Form(None),
-    company_id: Optional[int] = Form(None),
-):
-    """Parse bank statement file only — no Odoo connection required."""
-    import tempfile
-    import time
-    statement_path = ""
-    logger.info("bank-statement-parse: received file=%s size=%s", statement.filename, getattr(statement, 'size', 'unknown'))
-    try:
-        stmt_suffix = Path(statement.filename).suffix.lower() if statement.filename else ".csv"
-        logger.info("bank-statement-parse: file extension=%s", stmt_suffix)
-
-        # Read content to check size and reset
-        raw_content = await statement.read()
-        await statement.seek(0)
-        if not raw_content:
-            raise HTTPException(status_code=400, detail="الملف فارغ — يرجى رفع ملف كشف حساب صحيح")
-        logger.info("bank-statement-parse: file_bytes=%d", len(raw_content))
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=stmt_suffix) as f:
-            f.write(raw_content)
-            statement_path = f.name
-
-        import os as _os
-        file_size = _os.path.getsize(statement_path)
-        logger.info("bank-statement-parse: saved to temp=%s size_bytes=%d", statement_path, file_size)
-
-        t0 = time.time()
-        statement_txns = parse_statement_file(statement_path)
-        elapsed = time.time() - t0
-        logger.info("bank-statement-parse: parsed %d transactions in %.2fs", len(statement_txns), elapsed)
-
-        return {
-            "status": "success",
-            "statement_only": [t.model_dump() for t in statement_txns],
-            "ledger_only": [],
-            "matched": [],
-            "smart_matched": [],
-            "statement_total": round(sum(t.amount for t in statement_txns), 2),
-            "ledger_total": 0.0,
-            "difference": round(sum(t.amount for t in statement_txns), 2),
-            "statement_count": len(statement_txns),
-            "ledger_count": 0,
-            "odoo_raw_count": 0,
-            "date_range_used": {"from": date_from, "to": date_to},
-        }
-    except ValueError as e:
-        logger.warning("bank-statement-parse: ValueError: %s", str(e))
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e)
-        )
-    except Exception as e:
-        logger.exception("bank-statement-parse: unexpected error: %s", str(e))
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Bank statement parsing failed: {str(e)}"
-        )
-    finally:
-        if statement_path and os.path.exists(statement_path):
-            os.remove(statement_path)
-
-@router.get("/debug-parse-status")
-def debug_parse_status():
-    """Debug endpoint — verify bank-statement-parse is reachable and check dependencies."""
-    import sys
-    deps = {}
-    for lib in ["openpyxl", "xlrd", "fitz", "pytesseract", "PIL"]:
-        try:
-            __import__(lib)
-            deps[lib] = "OK"
-        except ImportError as e:
-            deps[lib] = f"MISSING: {e}"
-    return {
-        "status": "reachable",
-        "parse_endpoint": "/api/v1/erp/bank-statement-parse",
-        "allowed_extensions": list(settings.allowed_upload_extensions_list),
-        "max_upload_mb": settings.MAX_UPLOAD_SIZE_MB,
-        "python_version": sys.version,
-        "dependencies": deps,
-        "env": settings.APP_ENV,
-        "cors_origins": settings.cors_origin_list,
-    }

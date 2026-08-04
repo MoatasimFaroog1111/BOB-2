@@ -1,9 +1,9 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { useLanguage } from "@/lib/LanguageContext";
 import { useCompany } from "@/lib/CompanyContext";
 import { API_BASE_URL } from "@/lib/api";
+import { escapeHtml } from "@/lib/escapeHtml";
 
 interface Attachment {
   id: number;
@@ -32,7 +32,6 @@ interface MoveTransaction {
 }
 
 export default function AuditPage() {
-  const { t, language } = useLanguage();
   const { selectedCompanyId } = useCompany();
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
@@ -174,13 +173,18 @@ export default function AuditPage() {
 
     const totalDebit = move.lines ? move.lines.reduce((sum, line) => sum + line.debit, 0) : 0;
     const totalCredit = move.lines ? move.lines.reduce((sum, line) => sum + line.credit, 0) : 0;
+    const safeMoveName = escapeHtml(move.name || `قيد #${move.id}`);
+    const safeMoveDate = escapeHtml(move.date);
+    const safeJournalName = escapeHtml(move.journal_name);
+    const safeReference = escapeHtml(move.ref || "-");
+    const safePartnerName = escapeHtml(move.partner_name || "غير محدد");
 
     const linesHTML = move.lines && move.lines.length > 0 
       ? move.lines.map(line => `
           <tr>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right; font-family: 'Cairo', sans-serif;">${line.account_code || ""}</td>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right; font-family: 'Cairo', sans-serif;">${line.account_name || ""}</td>
-            <td style="padding: 10px; border: 1px solid #ddd; text-align: right; font-family: 'Cairo', sans-serif;">${line.name || ""}</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right; font-family: 'Cairo', sans-serif;">${escapeHtml(line.account_code)}</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right; font-family: 'Cairo', sans-serif;">${escapeHtml(line.account_name)}</td>
+            <td style="padding: 10px; border: 1px solid #ddd; text-align: right; font-family: 'Cairo', sans-serif;">${escapeHtml(line.name)}</td>
             <td style="padding: 10px; border: 1px solid #ddd; text-align: center; font-weight: bold; color: #1e3a8a; font-family: 'Cairo', sans-serif;">
               ${line.debit > 0 ? line.debit.toLocaleString(undefined, { minimumFractionDigits: 2 }) + " ر.س" : "-"}
             </td>
@@ -193,19 +197,20 @@ export default function AuditPage() {
 
     const attachmentsHTML = move.attachments && move.attachments.length > 0
       ? move.attachments.map(att => {
-          const fileUrl = `${API_BASE_URL}/api/v1/erp/attachment/${att.id}`;
+          const fileUrl = `${API_BASE_URL}/api/v1/erp/attachment/${encodeURIComponent(String(att.id))}`;
+          const safeAttachmentName = escapeHtml(att.name);
           const isPdf = att.name.toLowerCase().endsWith(".pdf");
           if (isPdf) {
             return `
               <div style="margin-top: 30px; page-break-before: always; text-align: center;">
-                <h3 style="color: #333; margin-bottom: 15px; font-family: 'Cairo', sans-serif; font-size: 13px;">مستند مرفق PDF: ${att.name}</h3>
+                <h3 style="color: #333; margin-bottom: 15px; font-family: 'Cairo', sans-serif; font-size: 13px;">مستند مرفق PDF: ${safeAttachmentName}</h3>
                 <iframe src="${fileUrl}" style="width: 100%; height: 850px; border: 2px solid #ddd; border-radius: 8px;"></iframe>
               </div>
             `;
           } else {
             return `
               <div style="margin-top: 30px; page-break-before: always; text-align: center;">
-                <h3 style="color: #333; margin-bottom: 15px; font-family: 'Cairo', sans-serif; font-size: 13px;">مستند مرفق صورة: ${att.name}</h3>
+                <h3 style="color: #333; margin-bottom: 15px; font-family: 'Cairo', sans-serif; font-size: 13px;">مستند مرفق صورة: ${safeAttachmentName}</h3>
                 <img src="${fileUrl}" style="max-width: 100%; max-height: 800px; border: 2px solid #ddd; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);" />
               </div>
             `;
@@ -218,7 +223,7 @@ export default function AuditPage() {
       <html dir="rtl" lang="ar">
       <head>
         <meta charset="utf-8">
-        <title>طباعة قيد محاسبي - ${move.name || "معاملة"}</title>
+        <title>طباعة قيد محاسبي - ${safeMoveName}</title>
         <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap" rel="stylesheet">
         <style>
           body {
@@ -282,15 +287,15 @@ export default function AuditPage() {
 
         <table class="header-table">
           <tr>
-            <td style="width: 50%;">رقم القيد: <strong style="color:#000;">${move.name || `قيد #${move.id}`}</strong></td>
-            <td style="width: 50%;">تاريخ القيد: <strong style="color:#000;">${move.date}</strong></td>
+            <td style="width: 50%;">رقم القيد: <strong style="color:#000;">${safeMoveName}</strong></td>
+            <td style="width: 50%;">تاريخ القيد: <strong style="color:#000;">${safeMoveDate}</strong></td>
           </tr>
           <tr>
-            <td>دفتر اليومية: <strong style="color:#000;">${move.journal_name}</strong></td>
-            <td>المرجع/البيان: <strong style="color:#000;">${move.ref || "-"}</strong></td>
+            <td>دفتر اليومية: <strong style="color:#000;">${safeJournalName}</strong></td>
+            <td>المرجع/البيان: <strong style="color:#000;">${safeReference}</strong></td>
           </tr>
           <tr>
-            <td colspan="2">الشريك (المورد/العميل): <strong style="color:#000;">${move.partner_name || "غير محدد"}</strong></td>
+            <td colspan="2">الشريك (المورد/العميل): <strong style="color:#000;">${safePartnerName}</strong></td>
           </tr>
         </table>
 

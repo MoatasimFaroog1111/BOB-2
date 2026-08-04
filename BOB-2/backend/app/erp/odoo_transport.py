@@ -5,9 +5,11 @@ from __future__ import annotations
 import http.client
 import socket
 import ssl
-import xmlrpc.client
+import xmlrpc.client  # nosec B411 - hardened below with defused_xmlrpc.monkey_patch()
 from typing import Any
 from urllib.parse import urlsplit
+
+from defusedxml import xmlrpc as defused_xmlrpc
 
 from app.core.config import settings
 from app.security.outbound_network import (
@@ -15,6 +17,10 @@ from app.security.outbound_network import (
     ValidatedOutboundTarget,
     validate_erp_base_url,
 )
+
+# Odoo responses are network-controlled XML. Harden the stdlib XML-RPC parser
+# process-wide before any transport creates a parser.
+defused_xmlrpc.monkey_patch()
 
 
 def _connect_validated_socket(

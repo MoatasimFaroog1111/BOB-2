@@ -1,9 +1,10 @@
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.errors import unexpected_operation_error
 from app.db.database import get_db
 from app.models.ai_accounting import AIDecisionAuditLog
 from app.security.dependencies import require_permission
@@ -93,9 +94,9 @@ def analyze_accounting_text(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Accounting analysis failed ({type(exc).__name__}).",
+        raise unexpected_operation_error(
+            code="accounting_analysis_failed",
+            message="Unable to analyze the accounting document.",
         ) from exc
 
 
@@ -117,9 +118,9 @@ def update_match_status(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Match status update failed ({type(exc).__name__}).",
+        raise unexpected_operation_error(
+            code="accounting_match_update_failed",
+            message="Unable to update the accounting match.",
         ) from exc
 
 
@@ -141,9 +142,9 @@ def update_suggestion_status(
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Suggestion status update failed ({type(exc).__name__}).",
+        raise unexpected_operation_error(
+            code="accounting_suggestion_update_failed",
+            message="Unable to update the accounting suggestion.",
         ) from exc
 
 

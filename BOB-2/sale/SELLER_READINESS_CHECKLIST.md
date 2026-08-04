@@ -12,9 +12,11 @@ The core application is substantial and testable. The remaining blockers are mai
 
 - [x] Public source repository is accessible and has a proprietary top-level license notice.
 - [x] Main application is under `BOB-2/` with a FastAPI backend and Next.js frontend.
-- [x] Backend baseline: **446 passed, 4 skipped** using runtime dependencies plus pytest, including dedicated replacement PDF/OCR/parser and configuration-only CORS regressions.
+- [x] Backend baseline: **452 passed, 4 skipped** (pytest, Python 3.12, runtime dependency set), including replacement PDF/OCR/parser and configuration-only CORS regressions.
 - [x] Frontend production build completes successfully after removing the unused legacy static frontend from `frontend/public/`.
+- [x] Frontend unit tests: **5 passed** (vitest); TypeScript `tsc --noEmit` is clean.
 - [x] Frontend lint has **0 errors**; 51 warnings remain as quality debt.
+- [x] CI enforces frontend lint, typecheck, unit tests, and production build (typecheck and unit tests added 2026-08-04).
 - [x] Production backend returned HTTP 200 from `/health` and `/ready`; database, Redis, and storage reported ready.
 - [x] GitHub production monitoring was repaired by configuring `PRODUCTION_BACKEND_URL`; manual workflow run `30792670664` succeeded.
 - [x] Current dependency manifests contain no PyMuPDF/MuPDF runtime dependency.

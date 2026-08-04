@@ -352,7 +352,7 @@ def _date_change_answer(
     else:
         if changed_count:
             message = (
-                f"Understood: you want to change the date of the entries currently shown in the sheet to {display_date}.\n\n"
+                f"Understood: you want to change the date of the entries currently shown in the sheet to {display_date}.\n\n"  # nosec B608 - user message, not SQL
                 f"I prepared a draft update in the sheet and set the date column to {iso_date} for {changed_count} journal-entry line(s).\n\n"
                 "I did not write anything to Odoo directly. Review the sheet first, then approve/submit only if intended."
             )

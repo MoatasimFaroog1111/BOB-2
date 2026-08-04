@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, s
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.errors import unexpected_operation_error
 from app.core.config import settings
 from app.db.database import get_db
 from app.erp.bank_reconciliation import (
@@ -399,11 +400,14 @@ async def bank_reconciliation(
                     date_from=date_from,
                     date_to=date_to,
                     company_id=company_id,
-                    error_message=str(exc),
+                    error_message="bank_reconciliation_failed",
                 )
         except Exception:
             db.rollback()
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Bank reconciliation failed: {exc}") from exc
+        raise unexpected_operation_error(
+            code="bank_reconciliation_failed",
+            message="Unable to complete bank reconciliation.",
+        ) from exc
     finally:
         if statement_path and os.path.exists(statement_path):
             os.remove(statement_path)

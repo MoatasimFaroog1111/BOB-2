@@ -10,7 +10,7 @@ alembic==1.18.5
 
 PyJWT[crypto]==2.13.0
 bcrypt==4.3.0
-cryptography==49.0.0
+cryptography==50.0.0  # P2: bump for GHSA-79v9-vfq7-xg6j and GHSA-9h9v-7c5q-fpwv (CVE-2024-26130 family)
 pyotp==2.10.0
 redis==5.3.1
 arq==0.28.0

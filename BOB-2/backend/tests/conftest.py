@@ -53,7 +53,11 @@ def _setup_db():
 
 @pytest.fixture()
 def client():
-    return TestClient(app)
+    # Use the context manager so the lifespan (which populates
+    # ``app.state.frame`` and ``app.state.billing_provider`` for P3)
+    # actually runs. Bare ``TestClient(app)`` does not.
+    with TestClient(app) as c:
+        yield c
 
 
 @pytest.fixture()

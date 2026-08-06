@@ -37,8 +37,9 @@ jobs:
           cache: pip
       - name: Generate locks with hashes
         run: |
-          python -m pip install --upgrade "pip>=24.2"
-          python -m pip install --upgrade "pip-tools>=7.5.0,<8"
+          python -m pip install --upgrade --force-reinstall "pip>=24.2"
+          python -m pip install --upgrade --force-reinstall "pip-tools==7.5.3"
+          pip-compile --version
           pip-compile --allow-unsafe --generate-hashes --output-file=requirements.lock requirements.txt
           pip-compile --allow-unsafe --generate-hashes --output-file=requirements.runtime.lock requirements.runtime.txt
       - name: Verify clean installs

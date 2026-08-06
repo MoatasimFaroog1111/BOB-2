@@ -35,13 +35,15 @@ jobs:
           cache: pip
           cache-dependency-path: BOB-2/backend/requirements.lock
       - name: Install hash-locked dependencies
-        # Pin pip to < 26.2. pip 26.2 changed an internal pip API that
-        # pip-audit's transitive deps still call without the new
-        # required keyword argument (jazzband/pip-tools#2437 tracks the
-        # same issue family for pip-compile). Until the toolchain catches
-        # up we hold pip on the last known-good release line.
+        # pip is already pinned to 26.1.2 by setup-python's pip-version.
+        # Do NOT re-pin pip here: a bare `python -m pip install --upgrade
+        # pip <pkg>` will silently re-upgrade pip past the cap. pip 26.2+
+        # changed an internal pip API that pip-audit's transitive deps
+        # still call without the new required keyword argument; see
+        # jazzband/pip-tools#2437 (open as of 2026-08) for the same
+        # issue family on pip-compile.
         run: |
-          python -m pip install --quiet --upgrade --force-reinstall "pip>=24.2,<26.2"
+          pip --version
           pip install --quiet --require-hashes -r requirements.lock
           pip install --quiet pip-audit==2.9.0
       - name: Audit complete Python dependency graph

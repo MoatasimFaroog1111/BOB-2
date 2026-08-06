@@ -31,15 +31,14 @@ jobs:
           pip-version: "26.1.2"
           cache: pip
       - name: Install pip-tools
-        # Pin pip to < 26.2 and pip-tools to the latest 7.x. pip 26.2
-        # changed an internal `RequirementCommand.make_requirement_preparer`
-        # signature (added a required `allow_editables` keyword argument)
-        # that pip-tools 7.x has not yet caught up with — see
-        # jazzband/pip-tools issue #2437 (open as of 2026-08).
-        # `--upgrade --force-reinstall` ensures the pinned version wins
-        # over any pre-existing image-installed pip / pip-tools.
+        # Pin pip-tools to the latest 7.x. pip is already pinned to
+        # 26.1.2 by setup-python's pip-version input. Do NOT include
+        # `pip` in this install command, even with a version cap, because
+        # a bare `python -m pip install --upgrade pip <pkg>` will
+        # silently re-upgrade pip past the cap before installing <pkg>.
+        # pip 26.2+ changed an internal pip API that pip-tools 7.x has
+        # not yet caught up with — see jazzband/pip-tools#2437 (open).
         run: |
-          python -m pip install --upgrade --force-reinstall "pip>=24.2,<26.2"
           python -m pip install --upgrade --force-reinstall "pip-tools>=7.6.0,<8"
           pip --version
           pip-compile --version

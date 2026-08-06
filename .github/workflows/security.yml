@@ -36,16 +36,20 @@ jobs:
           cache-dependency-path: BOB-2/backend/requirements.lock
       - name: Install hash-locked dependencies
         # pip is already pinned to 26.1.2 by setup-python's pip-version.
-        # Do NOT re-pin pip here: a bare `python -m pip install --upgrade
-        # pip <pkg>` will silently re-upgrade pip past the cap. pip 26.2+
-        # changed an internal pip API that pip-audit's transitive deps
-        # still call without the new required keyword argument; see
-        # jazzband/pip-tools#2437 (open as of 2026-08) for the same
-        # issue family on pip-compile.
+        # We install the audit toolchain into an isolated venv so that
+        # `pip install pip-audit` does not drag pip back to the latest
+        # cached release (26.2.x). pip 26.2+ changed an internal pip
+        # API that pip-audit's transitive deps still call without the
+        # new required keyword argument; see jazzband/pip-tools#2437
+        # (open as of 2026-08) for the same issue family on
+        # pip-compile.
         run: |
           pip --version
-          pip install --quiet --require-hashes -r requirements.lock
-          pip install --quiet pip-audit==2.9.0
+          python -m venv /tmp/security-venv
+          /tmp/security-venv/bin/pip install --upgrade --force-reinstall "pip>=24.2,<26.2"
+          /tmp/security-venv/bin/pip install --require-hashes -r requirements.lock
+          /tmp/security-venv/bin/pip install pip-audit==2.9.0
+          echo "/tmp/security-venv/bin" >> "$GITHUB_PATH"
       - name: Audit complete Python dependency graph
         run: pip-audit -r requirements.lock --strict
       - name: Compile Python sources

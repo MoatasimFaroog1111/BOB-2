@@ -41,7 +41,9 @@ jobs:
       - name: Verify one Alembic head
         run: |
           test "$(alembic heads | grep -c '(head)')" -eq 1
-          alembic heads | grep 'f9c4d1a7b253'
+          # The single head must be the merge revision that unifies
+          # c6f1a8d4e920 (encrypted_db) and f9c4d1a7b253 (offboarding).
+          alembic heads | grep '7a0c1e8b9d23'
       - name: Prepare parent schema with legacy audit data
         run: |
           rm -f ci-migrations.db

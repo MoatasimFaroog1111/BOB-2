@@ -54,7 +54,7 @@ jobs:
           /tmp/security-venv/bin/pip install --upgrade --force-reinstall "pip>=24.2,<26.2"
           /tmp/security-venv/bin/pip install --require-hashes -r requirements.lock
           /tmp/security-venv/bin/pip install --no-deps "pip-audit==2.9.0"
-          /tmp/security-venv/bin/pip install "cyclonedx-python-lib>=5,<10" "pip-requirements-parser>=32.0.0" "platformdirs>=4.2.0" "toml>=0.10" "packaging>=24.0" "defusedxml" "rich" "requests"
+          /tmp/security-venv/bin/pip install "cyclonedx-python-lib>=5,<10" "pip-requirements-parser>=32.0.0" "platformdirs>=4.2.0" "toml>=0.10" "packaging>=24.0" "defusedxml" "rich" "requests" "pip-api>=0.0.28" "CacheControl[filecache]>=0.13.0"
           /tmp/security-venv/bin/pip install --force-reinstall "pip>=24.2,<26.2"
           echo "/tmp/security-venv/bin" >> "$GITHUB_PATH"
       - name: Audit complete Python dependency graph

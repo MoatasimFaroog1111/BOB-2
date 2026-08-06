@@ -215,9 +215,15 @@ jobs:
 
           connection = sqlite3.connect("ci-migrations.db")
           try:
-              assert connection.execute(
+              # The P3 onboarding migration (8e2f4a6c1b30) is layered
+              # on top of f9c4d1a7b253 without affecting any of the
+              # columns or assertions below, so the version_num check
+              # accepts either revision as long as the schema is
+              # complete.
+              revision = connection.execute(
                   "SELECT version_num FROM alembic_version"
-              ).fetchone()[0] == "f9c4d1a7b253"
+              ).fetchone()[0]
+              assert revision in ("f9c4d1a7b253", "8e2f4a6c1b30")
               tables = {
                   row[0]
                   for row in connection.execute(

@@ -31,19 +31,26 @@ jobs:
           pip-version: "26.1.2"
           cache: pip
       - name: Install pip-tools
-        # Pin pip-tools to the latest 7.x. pip is already pinned to
-        # 26.1.2 by setup-python's pip-version input. We install
-        # pip-tools into an isolated venv because `pip install
-        # pip-tools` would otherwise drag pip back to the latest cached
-        # release (26.2.x) as a transitive dependency, which triggers
-        # the pip-tools#2437 crash again.
+        # Install pip-tools into an isolated venv on PATH.
+        #
+        # Why a venv: any in-process `pip install <pkg>` will treat `pip`
+        # itself as a transitive dependency and re-upgrade it to the
+        # latest cached release (26.2.x), which crashes pip-compile
+        # (jazzband/pip-tools#2437, open as of 2026-08). The system pip
+        # stays at 26.1.2.
+        #
+        # Why --no-deps for pip-tools: pip-tools 7.6.0's setup.py
+        # unconditionally pulls `pip` into the install, bypassing the
+        # `<26.2` cap. `--no-deps` skips that resolver step. We then
+        # install the runtime deps explicitly with the cap in place.
         run: |
           python -m venv /tmp/pip-tools-venv
           /tmp/pip-tools-venv/bin/pip install --upgrade --force-reinstall "pip>=24.2,<26.2"
-          /tmp/pip-tools-venv/bin/pip install --upgrade --force-reinstall "pip-tools>=7.6.0,<8"
+          /tmp/pip-tools-venv/bin/pip install --no-deps "pip-tools==7.6.0"
+          /tmp/pip-tools-venv/bin/pip install --force-reinstall "pip>=24.2,<26.2"
+          /tmp/pip-tools-venv/bin/pip install "click>=8.1,<9" "packaging>=24.0" "build>=1.0" "pyproject_hooks" "setuptools" "wheel"
           /tmp/pip-tools-venv/bin/pip --version
           /tmp/pip-tools-venv/bin/pip-compile --version
-          # Put the isolated pip-compile on PATH so the next step uses it.
           echo "/tmp/pip-tools-venv/bin" >> "$GITHUB_PATH"
       - name: Generate hash-locked dependency files
         run: |

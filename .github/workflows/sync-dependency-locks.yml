@@ -40,15 +40,15 @@ jobs:
           pip-version: "26.1.2"
           cache: pip
       - name: Install pip-tools
-        # Install pip-tools into an isolated venv on PATH. Without the
-        # venv, `pip install pip-tools` would drag pip back to the latest
-        # cached release (26.2.x) as a transitive dependency, which
-        # crashes pip-compile (jazzband/pip-tools#2437, open as of
-        # 2026-08). The system pip stays at 26.1.2.
+        # Install pip-tools into an isolated venv on PATH. See the
+        # longer rationale in generate-dependency-locks.yml: --no-deps
+        # is required to keep pip pinned below 26.2.
         run: |
           python -m venv /tmp/pip-tools-venv
           /tmp/pip-tools-venv/bin/pip install --upgrade --force-reinstall "pip>=24.2,<26.2"
-          /tmp/pip-tools-venv/bin/pip install --upgrade --force-reinstall "pip-tools>=7.6.0,<8"
+          /tmp/pip-tools-venv/bin/pip install --no-deps "pip-tools==7.6.0"
+          /tmp/pip-tools-venv/bin/pip install --force-reinstall "pip>=24.2,<26.2"
+          /tmp/pip-tools-venv/bin/pip install "click>=8.1,<9" "packaging>=24.0" "build>=1.0" "pyproject_hooks" "setuptools" "wheel"
           /tmp/pip-tools-venv/bin/pip --version
           /tmp/pip-tools-venv/bin/pip-compile --version
           echo "/tmp/pip-tools-venv/bin" >> "$GITHUB_PATH"

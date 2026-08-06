@@ -35,20 +35,19 @@ jobs:
           cache: pip
           cache-dependency-path: BOB-2/backend/requirements.lock
       - name: Install hash-locked dependencies
-        # pip is already pinned to 26.1.2 by setup-python's pip-version.
-        # We install the audit toolchain into an isolated venv so that
-        # `pip install pip-audit` does not drag pip back to the latest
-        # cached release (26.2.x). pip 26.2+ changed an internal pip
-        # API that pip-audit's transitive deps still call without the
-        # new required keyword argument; see jazzband/pip-tools#2437
-        # (open as of 2026-08) for the same issue family on
-        # pip-compile.
+        # pip is pinned to 26.1.2 by setup-python's pip-version input.
+        # Install the audit toolchain into an isolated venv so the
+        # resolver cannot drag pip back to 26.2.x via transitive
+        # pip-audit dependencies. See jazzband/pip-tools#2437 for the
+        # underlying pip-internal API change.
         run: |
           pip --version
           python -m venv /tmp/security-venv
           /tmp/security-venv/bin/pip install --upgrade --force-reinstall "pip>=24.2,<26.2"
           /tmp/security-venv/bin/pip install --require-hashes -r requirements.lock
-          /tmp/security-venv/bin/pip install pip-audit==2.9.0
+          /tmp/security-venv/bin/pip install --no-deps "pip-audit==2.9.0"
+          /tmp/security-venv/bin/pip install "packaging>=24.0" "cyclonedx-python-lib>=7.0" "defusedxml" "rich" "requests"
+          /tmp/security-venv/bin/pip install --force-reinstall "pip>=24.2,<26.2"
           echo "/tmp/security-venv/bin" >> "$GITHUB_PATH"
       - name: Audit complete Python dependency graph
         run: pip-audit -r requirements.lock --strict

@@ -8,7 +8,7 @@ created_at / updated_at timestamps. The unique index on ``token_digest``
 is what makes the verifier safe under concurrent signup attempts.
 
 Revision ID: 8e2f4a6c1b30
-Revises: 7a0c1e8b9d23
+Revises: f9c4d1a7b253
 Create Date: 2026-08-05 14:35:00.000000
 """
 from collections.abc import Sequence

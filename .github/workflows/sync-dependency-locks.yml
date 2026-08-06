@@ -38,7 +38,7 @@ jobs:
       - name: Generate locks with hashes
         run: |
           python -m pip install --upgrade "pip>=24.2"
-          python -m pip install --upgrade "pip-tools>=7.4.1,<8"
+          python -m pip install --upgrade "pip-tools>=7.5.0,<8"
           pip-compile --allow-unsafe --generate-hashes --output-file=requirements.lock requirements.txt
           pip-compile --allow-unsafe --generate-hashes --output-file=requirements.runtime.lock requirements.runtime.txt
       - name: Verify clean installs

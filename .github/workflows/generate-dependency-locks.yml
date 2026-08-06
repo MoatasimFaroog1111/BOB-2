@@ -25,14 +25,14 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install pip-tools
-        # Pin pip-tools to a version compatible with the latest pip. The
-        # unconstrained `--upgrade pip pip-tools` form pulls pip-tools
-        # releases that break against pip >= 24.x because of an internal
-        # signature change in `RequirementCommand.make_requirement_preparer`
-        # (missing `allow_editables` keyword argument).
+        # Pin pip-tools to a version whose internal `RequirementCommand`
+        # call signature still matches the installed `pip`. Versions
+        # earlier than 7.5.0 call `make_requirement_preparer` without the
+        # required `allow_editables` keyword argument that pip >= 24.x
+        # introduced.
         run: |
           python -m pip install --upgrade "pip>=24.2"
-          python -m pip install --upgrade "pip-tools>=7.4.1,<8"
+          python -m pip install --upgrade "pip-tools>=7.5.0,<8"
       - name: Generate hash-locked dependency files
         run: |
           pip-compile --allow-unsafe --generate-hashes --output-file=requirements.lock requirements.txt

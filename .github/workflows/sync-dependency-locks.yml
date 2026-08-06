@@ -34,6 +34,10 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          # See comment in generate-dependency-locks.yml: pin pip
+          # bootstrap to 26.1.2 to avoid the pip-tools#2437 incompatibility
+          # with pip 26.2+.
+          pip-version: "26.1.2"
           cache: pip
       - name: Generate locks with hashes
         # See the comment in generate-dependency-locks.yml: pin pip to

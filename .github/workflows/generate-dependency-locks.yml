@@ -23,6 +23,12 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+          # Pin pip to 26.1.2 via setup-python's own bootstrap input so the
+          # version is established before any `pip install` step runs.
+          # pip 26.2+ changed an internal pip API that pip-tools 7.x still
+          # calls without the new required keyword argument; see
+          # jazzband/pip-tools#2437 (open as of 2026-08).
+          pip-version: "26.1.2"
           cache: pip
       - name: Install pip-tools
         # Pin pip to < 26.2 and pip-tools to the latest 7.x. pip 26.2

@@ -40,13 +40,21 @@ jobs:
         # resolver cannot drag pip back to 26.2.x via transitive
         # pip-audit dependencies. See jazzband/pip-tools#2437 for the
         # underlying pip-internal API change.
+        #
+        # pip-audit 2.9.0's transitive deps are pinned strictly:
+        #   cyclonedx-python-lib<10,>=5
+        #   pip-requirements-parser>=32.0.0
+        #   platformdirs>=4.2.0
+        #   toml>=0.10
+        # Pull those bounds (not >=7.0) so we don't drift to a
+        # cyclonedx-python-lib 11.x that's incompatible with pip-audit.
         run: |
           pip --version
           python -m venv /tmp/security-venv
           /tmp/security-venv/bin/pip install --upgrade --force-reinstall "pip>=24.2,<26.2"
           /tmp/security-venv/bin/pip install --require-hashes -r requirements.lock
           /tmp/security-venv/bin/pip install --no-deps "pip-audit==2.9.0"
-          /tmp/security-venv/bin/pip install "packaging>=24.0" "cyclonedx-python-lib>=7.0" "defusedxml" "rich" "requests"
+          /tmp/security-venv/bin/pip install "cyclonedx-python-lib>=5,<10" "pip-requirements-parser>=32.0.0" "platformdirs>=4.2.0" "toml>=0.10" "packaging>=24.0" "defusedxml" "rich" "requests"
           /tmp/security-venv/bin/pip install --force-reinstall "pip>=24.2,<26.2"
           echo "/tmp/security-venv/bin" >> "$GITHUB_PATH"
       - name: Audit complete Python dependency graph

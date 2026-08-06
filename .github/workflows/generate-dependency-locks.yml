@@ -25,15 +25,17 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: Install pip-tools
-        # Pin pip-tools to a version whose internal `RequirementCommand`
-        # call signature still matches the installed `pip`. Versions
-        # earlier than 7.6.0 call `make_requirement_preparer` without the
-        # required `allow_editables` keyword argument that pip >= 24.x
-        # introduced. `--upgrade --force-reinstall` ensures the pinned
-        # version wins over any pre-existing image-installed pip-tools.
+        # Pin pip to < 26.2 and pip-tools to the latest 7.x. pip 26.2
+        # changed an internal `RequirementCommand.make_requirement_preparer`
+        # signature (added a required `allow_editables` keyword argument)
+        # that pip-tools 7.x has not yet caught up with — see
+        # jazzband/pip-tools issue #2437 (open as of 2026-08).
+        # `--upgrade --force-reinstall` ensures the pinned version wins
+        # over any pre-existing image-installed pip / pip-tools.
         run: |
-          python -m pip install --upgrade --force-reinstall "pip>=24.2"
-          python -m pip install --upgrade --force-reinstall "pip-tools==7.6.0"
+          python -m pip install --upgrade --force-reinstall "pip>=24.2,<26.2"
+          python -m pip install --upgrade --force-reinstall "pip-tools>=7.6.0,<8"
+          pip --version
           pip-compile --version
       - name: Generate hash-locked dependency files
         run: |

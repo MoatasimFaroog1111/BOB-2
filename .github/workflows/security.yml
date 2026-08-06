@@ -31,12 +31,13 @@ jobs:
           cache: pip
           cache-dependency-path: BOB-2/backend/requirements.lock
       - name: Install hash-locked dependencies
-        # The `pip install --upgrade pip` step in older versions of this
-        # workflow pulled pip releases that break the hash-locked resolver
-        # used downstream by pip-tools and pip-audit. Pin both pip and the
-        # workflow's own toolchain.
+        # Pin pip to < 26.2. pip 26.2 changed an internal pip API that
+        # pip-audit's transitive deps still call without the new
+        # required keyword argument (jazzband/pip-tools#2437 tracks the
+        # same issue family for pip-compile). Until the toolchain catches
+        # up we hold pip on the last known-good release line.
         run: |
-          python -m pip install --quiet --upgrade "pip>=24.2,<25"
+          python -m pip install --quiet --upgrade --force-reinstall "pip>=24.2,<26.2"
           pip install --quiet --require-hashes -r requirements.lock
           pip install --quiet pip-audit==2.9.0
       - name: Audit complete Python dependency graph

@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - "BOB-2/backend/app/worker/**"
+      - "BOB-2/backend/app/services/job_*.py"
+      - "BOB-2/backend/app/services/long_running_operations.py"
+      - "BOB-2/backend/app/models/job_run.py"
+      - "BOB-2/backend/migrations/versions/*job_runs*.py"
       - "BOB-2/backend/tests/test_worker_*.py"
       - "BOB-2/backend/requirements*.txt"
       - "BOB-2/backend/requirements*.lock"
@@ -15,6 +19,10 @@ on:
     branches: [main]
     paths:
       - "BOB-2/backend/app/worker/**"
+      - "BOB-2/backend/app/services/job_*.py"
+      - "BOB-2/backend/app/services/long_running_operations.py"
+      - "BOB-2/backend/app/models/job_run.py"
+      - "BOB-2/backend/migrations/versions/*job_runs*.py"
       - "BOB-2/backend/tests/test_worker_*.py"
       - "BOB-2/backend/requirements*.txt"
       - "BOB-2/backend/requirements*.lock"
@@ -80,6 +88,11 @@ jobs:
       - name: Apply database migrations
         run: alembic upgrade head
       - name: Compile worker package
-        run: python -m compileall -q app/worker
+        run: python -m compileall -q app/worker app/services/job_runs.py app/services/job_queue.py app/services/long_running_operations.py
       - name: Run worker contract and subprocess tests
-        run: python -m pytest tests/test_worker_contract.py tests/test_worker_arq.py -q
+        run: >-
+          python -m pytest
+          tests/test_worker_contract.py
+          tests/test_worker_arq.py
+          tests/test_worker_long_running_jobs.py
+          -q

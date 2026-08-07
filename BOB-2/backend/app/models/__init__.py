@@ -22,6 +22,7 @@ from app.models.core import (
 )
 from app.models.encrypted_secret import EncryptedSecretVersion
 from app.models.external_llm import ExternalLLMPolicy
+from app.models.job_run import JobRun
 from app.models.mfa_challenge import MFAChallenge
 from app.models.organization_offboarding import OrganizationOffboardingCase
 from app.models.tenant_secret import TenantSecretBinding, TenantSecretVersion
@@ -42,6 +43,7 @@ __all__ = [
     "EncryptedSecretVersion",
     "ExternalLLMPolicy",
     "ExtractedFinancialObject",
+    "JobRun",
     "JournalEntryRecord",
     "MFAChallenge",
     "Organization",

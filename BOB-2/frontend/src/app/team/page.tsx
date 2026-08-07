@@ -3,6 +3,7 @@
 import React, { useRef, useState } from "react";
 import Link from "next/link";
 import { API_BASE_URL } from "@/lib/api";
+import { resolveJobResponse } from "@/lib/jobs";
 import { useCompany } from "@/lib/CompanyContext";
 import { useLanguage } from "@/lib/LanguageContext";
 
@@ -101,11 +102,7 @@ export default function TeamPage() {
         body: formData,
       });
 
-      if (!response.ok) {
-        throw new Error(`Backend unavailable: ${response.status}`);
-      }
-
-      const data = await response.json();
+      const data = await resolveJobResponse<any>(response);
       const results: ReadResult[] = (data.results || []).map((item: any) => {
         if (item.status !== "analyzed") {
           return {
@@ -165,8 +162,7 @@ export default function TeamPage() {
         method: "POST",
         body: formData,
       });
-      if (!response.ok) throw new Error(`Match failed: ${response.status}`);
-      const data = await response.json();
+      const data = await resolveJobResponse<any>(response);
       const count = Array.isArray(data.results) ? data.results.length : 0;
       setMatchMessage(`${t("team.matchAttach")}: ${count} document(s) processed.`);
     } catch {

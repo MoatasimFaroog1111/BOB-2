@@ -19,9 +19,14 @@ from app.api.v1.erp_monetary_legacy import (
     router as erp_monetary_legacy_router,
 )
 from app.api.v1.erp_partners import router as erp_partners_router
+from app.api.v1.jobs import router as jobs_router
 from app.api.v1.journal import router as journal_router
 from app.api.v1.journal_entry_actions import router as journal_entry_actions_router
 from app.api.v1.llm_admin import router as llm_admin_router
+from app.api.v1.long_running_jobs import (
+    replace_long_running_routes,
+    router as long_running_jobs_router,
+)
 from app.api.v1.mfa import router as mfa_router
 from app.api.v1.system import router as system_router
 from app.api.v1.telegram_admin import router as telegram_admin_router
@@ -63,10 +68,12 @@ api_router.include_router(
     tags=["Communication Tools"],
 )
 
-# Remove the two historical float-based route objects before the broad ERP
-# router is copied into the application. Compatible tenant-scoped Decimal
-# replacements are included immediately after it.
+# Remove every synchronous implementation before any broad ERP router is copied
+# into the application. The queued replacements preserve the hardened behavior.
 replace_unsafe_legacy_routes(erp_router)
+replace_long_running_routes(erp_router)
+replace_long_running_routes(bank_reconciliation_compat_router)
+replace_long_running_routes(bank_reconciliation_hardening_router)
 
 # The centralized dependency is method-aware: reads require view_financials,
 # mutations require create_entries by default, settings require manage_settings,
@@ -80,6 +87,7 @@ api_router.include_router(accounting_command_router, prefix="/erp", tags=["ERP A
 api_router.include_router(chat_spreadsheet_intent_guard_router, prefix="/erp", tags=["ERP Smart Chat Intent Guard"], dependencies=financial_access)
 api_router.include_router(chat_journal_lookup_router, prefix="/erp", tags=["ERP Smart Chat Journal Lookup"], dependencies=financial_access)
 api_router.include_router(erp_router, prefix="/erp", tags=["ERP"], dependencies=financial_access)
+api_router.include_router(long_running_jobs_router, prefix="/erp", tags=["ERP Background Jobs"], dependencies=financial_access)
 api_router.include_router(
     erp_monetary_legacy_router,
     prefix="/erp",
@@ -88,5 +96,6 @@ api_router.include_router(
 )
 api_router.include_router(journal_entry_actions_router, prefix="/erp", tags=["ERP Journal Entry Actions"], dependencies=financial_access)
 api_router.include_router(bank_posting_v2_router, prefix="/erp", tags=["ERP Bank Posting"], dependencies=financial_access)
+api_router.include_router(jobs_router, prefix="/jobs", tags=["Background Jobs"], dependencies=financial_access)
 api_router.include_router(accounting_ai_router, prefix="/accounting-ai", tags=["Accounting AI Matching"], dependencies=financial_access)
 api_router.include_router(agents_router, prefix="/agents", tags=["GMAWS Accounting Agents"], dependencies=financial_access)

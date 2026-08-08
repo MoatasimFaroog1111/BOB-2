@@ -5,6 +5,7 @@ from app.api.v1.accounting_ai import router as accounting_ai_router
 from app.api.v1.accounting_command_router import router as accounting_command_router
 from app.api.v1.agents import router as agents_router
 from app.api.v1.auth import router as auth_router
+from app.api.v1.billing import router as billing_router
 from app.api.v1.bank_posting_v2 import router as bank_posting_v2_router
 from app.api.v1.bank_reconciliation_compat import router as bank_reconciliation_compat_router
 from app.api.v1.bank_reconciliation_entry_suggestions import router as bank_reconciliation_entry_suggestions_router
@@ -23,16 +24,23 @@ from app.api.v1.journal import router as journal_router
 from app.api.v1.journal_entry_actions import router as journal_entry_actions_router
 from app.api.v1.llm_admin import router as llm_admin_router
 from app.api.v1.mfa import router as mfa_router
+from app.api.v1.signup import router as signup_router
 from app.api.v1.system import router as system_router
 from app.api.v1.telegram_admin import router as telegram_admin_router
 from app.api.v1.telegram_approvals import router as telegram_approvals_router
 from app.api.v1.telegram_authorizations import router as telegram_authorizations_router
+from app.capabilities.router import router as capabilities_router
 from app.security.dependencies import enforce_financial_route_permission
 
 api_router = APIRouter()
 financial_access = [Depends(enforce_financial_route_permission)]
 
 api_router.include_router(system_router, prefix="/system", tags=["System"])
+api_router.include_router(
+    capabilities_router, prefix="/system", tags=["Capabilities"]
+)
+api_router.include_router(signup_router, prefix="/auth", tags=["Onboarding"])
+api_router.include_router(billing_router, prefix="/billing", tags=["Billing"])
 api_router.include_router(auth_router, prefix="/auth", tags=["Security"])
 api_router.include_router(account_access_router, prefix="/auth", tags=["Account Access"])
 api_router.include_router(mfa_router, prefix="/auth", tags=["Multi-Factor Authentication"])

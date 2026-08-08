@@ -56,6 +56,22 @@ class Settings(BaseSettings):
     GUARDIAN_SEED_EMAIL: str = ""
     GUARDIAN_SEED_PASSWORD: str = ""
 
+    # P3: multi-GTM deployment frame selector. Values must match
+    # ``app.core.deployment_frame.DeploymentFrame``. The default keeps
+    # the current enterprise / invite-only behavior intact.
+    DEPLOYMENT_FRAME: str = "enterprise"
+
+    # P3: billing provider selector. The in-memory provider is always
+    # available as a fallback; a real provider (Stripe, Lemon Squeezy)
+    # activates automatically when its keys are present.
+    BILLING_PROVIDER: str = "in_memory"
+    STRIPE_SECRET_KEY: str = ""
+    STRIPE_PUBLISHABLE_KEY: str = ""
+    STRIPE_WEBHOOK_SECRET: str = ""
+    LEMONSQUEEZY_API_KEY: str = ""
+    LEMONSQUEEZY_STORE_ID: str = ""
+    LEMONSQUEEZY_WEBHOOK_SECRET: str = ""
+
     TELEGRAM_BOT_ENABLED: bool = False
     TELEGRAM_BOT_PRODUCTION_READY: bool = False
     TELEGRAM_ALLOW_GROUP_CHATS: bool = False

@@ -98,8 +98,36 @@ async def lifespan(app: FastAPI):
     command. The malware scanner check is the only bounded dependency probe here:
     production must prove that clean bytes pass and EICAR is detected before the
     API accepts traffic.
+
+    P3 multi-GTM: the deployment frame and billing provider are resolved
+    once here and stored on ``app.state``. Routers read these values
+    through FastAPI dependencies so the resolution cost is paid once
+    per process, not once per request.
     """
     _validate_startup_security()
+
+    # P3: resolve deployment frame once. Validation errors fail closed.
+    from app.billing.in_memory_provider import InMemoryBillingProvider
+    from app.core.deployment_frame import DeploymentFrame
+
+    try:
+        frame = DeploymentFrame.coerce(settings.DEPLOYMENT_FRAME)
+    except ValueError as exc:
+        raise RuntimeError(f"Invalid DEPLOYMENT_FRAME: {exc}") from exc
+    app.state.frame = frame
+
+    # P3: the in-memory billing provider is always wired up. Real
+    # providers (Stripe, Lemon Squeezy) are activated when their
+    # credentials are configured; the selection lives here so the
+    # rest of the codebase depends only on the BillingProvider
+    # protocol.
+    app.state.billing_provider = InMemoryBillingProvider()
+    logger.info(
+        "Deployment frame=%s; billing_provider=%s",
+        frame.value,
+        app.state.billing_provider.name,
+    )
+
     if settings.is_production and settings.REQUIRE_MALWARE_SCAN:
         await asyncio.to_thread(verify_malware_scanner_ready)
     install_ocr_guard()

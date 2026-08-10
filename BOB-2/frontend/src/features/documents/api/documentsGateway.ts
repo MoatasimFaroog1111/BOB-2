@@ -1,0 +1,31 @@
+import { API_BASE_URL } from "@/lib/api";
+
+export interface DocumentsGateway {
+  parseManualText(init: RequestInit): Promise<Response>;
+  chatSpreadsheet(init: RequestInit): Promise<Response>;
+  uploadDocuments(init: RequestInit): Promise<Response>;
+  proposeTransaction(init: RequestInit): Promise<Response>;
+  loadDiscovery(): Promise<Response>;
+  loadPartners(companyQuery: string): Promise<Response>;
+  loadAnalyticAccounts(companyQuery: string): Promise<Response>;
+  loadJournals(companyQuery: string): Promise<Response>;
+  registerDocument(init: RequestInit): Promise<Response>;
+}
+
+class HttpDocumentsGateway implements DocumentsGateway {
+  private request(path: string, init?: RequestInit): Promise<Response> {
+    return fetch(`${API_BASE_URL}${path}`, init);
+  }
+
+  parseManualText(init: RequestInit) { return this.request("/api/v1/erp/parse-manual-text", init); }
+  chatSpreadsheet(init: RequestInit) { return this.request("/api/v1/erp/chat-spreadsheet", init); }
+  uploadDocuments(init: RequestInit) { return this.request("/api/v1/erp/upload-documents", init); }
+  proposeTransaction(init: RequestInit) { return this.request("/api/v1/erp/propose-transaction", init); }
+  loadDiscovery() { return this.request("/api/v1/erp/discovery"); }
+  loadPartners(query: string) { return this.request(`/api/v1/erp/partners${query}`); }
+  loadAnalyticAccounts(query: string) { return this.request(`/api/v1/erp/analytic-accounts${query}`); }
+  loadJournals(query: string) { return this.request(`/api/v1/erp/journals${query}`); }
+  registerDocument(init: RequestInit) { return this.request("/api/v1/erp/register-document", init); }
+}
+
+export const documentsGateway: DocumentsGateway = new HttpDocumentsGateway();

@@ -11,7 +11,7 @@ const ARABIC_TO_LATIN: Record<string, string> = {
 export const normalizeLookupValue = (value: string): string =>
   value.trim().replace(/\s+/g, " ").toLowerCase();
 
-const normalize = (value: string): string => (value || "")
+export const normalizePartnerName = (value: string): string => (value || "")
   .normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
   .replace(DIACRITICS, "").replace(/ـ/g, "").replace(/[أإآ]/g, "ا")
   .replace(/ى/g, "ي").replace(/ة/g, "ه").replace(NON_ALNUM, " ")
@@ -52,7 +52,7 @@ const tokenOverlap = (left: string, right: string): number => {
 };
 
 export const partnerSimilarityScore = (queryRaw: string, candidateRaw: string): number => {
-  const query = normalize(queryRaw); const candidate = normalize(candidateRaw);
+  const query = normalizePartnerName(queryRaw); const candidate = normalizePartnerName(candidateRaw);
   if (!query || !candidate) return 0;
   if (query === candidate) return 1;
   const boost = candidate.includes(query) || query.includes(candidate) ? 0.15 : 0;

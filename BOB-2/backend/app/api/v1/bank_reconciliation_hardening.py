@@ -317,7 +317,6 @@ def list_bank_accounts_alias(db: Session = Depends(get_db), company_id: Optional
     return {"status": "success", "items": erp.discover_bank_journals(company_id=company_id)}
 
 
-@router.post("/bank-reconciliation")
 async def bank_reconciliation(
     statement: UploadFile = File(...),
     db: Session = Depends(get_db),

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import settings
-from app.erp.providers.odoo import OdooProvider
+from app.erp.base import ERPDiscoveryProvider
 from app.security.tenant_scope import current_organization_id
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ def _kb_file_path() -> Path:
     return STORAGE_DIR / f"organization_{organization_id}.json"
 
 
-def run_discovery_orchestrator(provider: OdooProvider) -> dict[str, Any]:
+def run_discovery_orchestrator(provider: ERPDiscoveryProvider) -> dict[str, Any]:
     organization_id = current_organization_id(required=True)
     assert organization_id is not None
     logger.info("Starting tenant-scoped ERP Discovery Engine orchestrator.")
@@ -41,7 +41,10 @@ def run_discovery_orchestrator(provider: OdooProvider) -> dict[str, Any]:
     kb_data = {
         "metadata": {
             "organization_id": organization_id,
-            "provider": "odoo",
+            # Older structural test doubles predate the explicit capability
+            # metadata. Preserve compatibility while concrete providers expose
+            # their own stable name.
+            "provider": getattr(provider, "provider_name", "odoo"),
             "url": provider.url,
             "db": provider.db,
             "companies": companies,

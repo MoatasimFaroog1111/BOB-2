@@ -10,7 +10,7 @@ from app.api.v1.chat_journal_lookup import (
     chat_spreadsheet_with_odoo_entry_lookup,
     extract_journal_entry_numbers,
 )
-from app.api.v1.erp import ChatSpreadsheetRequest, chat_spreadsheet as legacy_chat_spreadsheet
+from app.api.v1.erp_spreadsheet import ChatSpreadsheetRequest, chat_spreadsheet as legacy_chat_spreadsheet
 from app.db.database import get_db
 
 router = APIRouter()
@@ -431,7 +431,6 @@ def _capability_or_confirmation_answer(arabic: bool, state: dict[str, Any], acti
     }
 
 
-@router.post("/chat-spreadsheet")
 def guarded_chat_spreadsheet(
     payload: ChatSpreadsheetRequest,
     db_session: Session = Depends(get_db),

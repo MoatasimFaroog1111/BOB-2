@@ -40,6 +40,7 @@ def main() -> None:
         "bank posting": source("app/api/v1/bank_posting_v2.py"),
         "journal actions": source("app/api/v1/journal_entry_actions.py"),
         "legacy replacements": source("app/api/v1/erp_monetary_legacy.py"),
+        "legacy ERP controller": source("app/api/v1/erp.py"),
         "API router": source("app/api/v1/router.py"),
         "bank reconciliation": source("app/erp/bank_reconciliation.py"),
         "Telegram accounting": source("app/services/telegram_accounting_service.py"),
@@ -138,10 +139,16 @@ def main() -> None:
     require("Telegram no float balance tolerance", "abs(debit_total - credit_total)" not in telegram)
 
     replacements = sources["legacy replacements"]
+    legacy_controller = sources["legacy ERP controller"]
     api_router = sources["API router"]
     require(
-        "legacy float routes are removed before inclusion",
-        "replace_unsafe_legacy_routes(erp_router)" in api_router,
+        "legacy float routes are absent or removed before inclusion",
+        (
+            "def propose_transaction(" not in legacy_controller
+            and "def register_document(" not in legacy_controller
+            and "from app.api.v1.erp import router as erp_router" not in api_router
+        )
+        or "replace_unsafe_legacy_routes(erp_router)" in api_router,
     )
     require("Decimal-safe replacement router is included", "erp_monetary_legacy_router" in api_router)
     require(

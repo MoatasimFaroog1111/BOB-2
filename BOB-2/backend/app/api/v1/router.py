@@ -13,12 +13,15 @@ from app.api.v1.bank_rule_entry_suggestions import router as bank_rule_entry_sug
 from app.api.v1.chat_journal_lookup import router as chat_journal_lookup_router
 from app.api.v1.chat_spreadsheet_intent_guard import router as chat_spreadsheet_intent_guard_router
 from app.api.v1.communication_tools import router as communication_tools_router
-from app.api.v1.erp import router as erp_router
+from app.api.v1.erp_catalog import router as erp_catalog_router
+from app.api.v1.erp_connections import router as erp_connections_router
+from app.api.v1.erp_document_parsing import router as erp_document_parsing_router
+from app.api.v1.erp_documents import router as erp_documents_router
 from app.api.v1.erp_monetary_legacy import (
-    replace_unsafe_legacy_routes,
     router as erp_monetary_legacy_router,
 )
 from app.api.v1.erp_partners import router as erp_partners_router
+from app.api.v1.erp_telegram_config import router as erp_telegram_config_router
 from app.api.v1.journal import router as journal_router
 from app.api.v1.journal_entry_actions import router as journal_entry_actions_router
 from app.api.v1.llm_admin import router as llm_admin_router
@@ -63,11 +66,6 @@ api_router.include_router(
     tags=["Communication Tools"],
 )
 
-# Remove the two historical float-based route objects before the broad ERP
-# router is copied into the application. Compatible tenant-scoped Decimal
-# replacements are included immediately after it.
-replace_unsafe_legacy_routes(erp_router)
-
 # The centralized dependency is method-aware: reads require view_financials,
 # mutations require create_entries by default, settings require manage_settings,
 # uploads require upload_documents, and ERP posting requires post_odoo_entries.
@@ -79,7 +77,11 @@ api_router.include_router(bank_reconciliation_entry_suggestions_router, prefix="
 api_router.include_router(accounting_command_router, prefix="/erp", tags=["ERP Accounting Command Brain"], dependencies=financial_access)
 api_router.include_router(chat_spreadsheet_intent_guard_router, prefix="/erp", tags=["ERP Smart Chat Intent Guard"], dependencies=financial_access)
 api_router.include_router(chat_journal_lookup_router, prefix="/erp", tags=["ERP Smart Chat Journal Lookup"], dependencies=financial_access)
-api_router.include_router(erp_router, prefix="/erp", tags=["ERP"], dependencies=financial_access)
+api_router.include_router(erp_connections_router, prefix="/erp", tags=["ERP Connections"], dependencies=financial_access)
+api_router.include_router(erp_documents_router, prefix="/erp", tags=["ERP Documents"], dependencies=financial_access)
+api_router.include_router(erp_document_parsing_router, prefix="/erp", tags=["ERP Document Parsing"], dependencies=financial_access)
+api_router.include_router(erp_catalog_router, prefix="/erp", tags=["ERP Catalog"], dependencies=financial_access)
+api_router.include_router(erp_telegram_config_router, prefix="/erp", tags=["ERP Telegram Compatibility"], dependencies=financial_access)
 api_router.include_router(
     erp_monetary_legacy_router,
     prefix="/erp",

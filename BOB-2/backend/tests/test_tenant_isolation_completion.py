@@ -188,7 +188,10 @@ def test_legacy_connection_save_updates_only_current_tenant(
         def test_connection(self):
             return {"connected": True}
 
-    monkeypatch.setattr("app.api.v1.erp.get_erp_provider", lambda **_kwargs: FakeERP())
+    monkeypatch.setattr(
+        "app.api.v1.erp_connections.get_erp_provider",
+        lambda **_kwargs: FakeERP(),
+    )
     headers = _login(
         client,
         second["user"].email,

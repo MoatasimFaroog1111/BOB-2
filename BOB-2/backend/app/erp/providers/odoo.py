@@ -4,6 +4,8 @@ from app.erp.odoo_transport import create_odoo_server_proxies
 
 
 class OdooProvider:
+    provider_name = "odoo"
+
     def __init__(self, url: str, db: str, username: str, password: str):
         target, common, models = create_odoo_server_proxies(url)
         self.url = target.normalized_url

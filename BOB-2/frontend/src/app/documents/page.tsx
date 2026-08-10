@@ -324,7 +324,7 @@ export default function DocumentIntelligencePage() {
     ]);
 
     try {
-      // 1. Upload to /api/v1/erp/upload-documents
+      // Upload and analyze through the feature gateway.
       const formData = new FormData();
       formData.append("files", file);
 
@@ -348,7 +348,7 @@ export default function DocumentIntelligencePage() {
       const partnerName = fields.supplier_name || fields.partner_name || "";
       const rawText = analysisResult.raw_text_preview || "";
 
-      // 2. Call /api/v1/erp/propose-transaction
+      // Request a draft transaction through the feature gateway.
       const selectedJournal = journals.find((j) => j.id === selectedJournalId);
       const docClass = selectedJournal ? selectedJournal.type : "general";
 

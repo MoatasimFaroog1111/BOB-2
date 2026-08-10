@@ -2,7 +2,7 @@ import json
 import re
 from typing import Any
 
-from app.api.v1.erp import ChatSpreadsheetRequest
+from app.api.v1.erp_spreadsheet import ChatSpreadsheetRequest
 
 ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 

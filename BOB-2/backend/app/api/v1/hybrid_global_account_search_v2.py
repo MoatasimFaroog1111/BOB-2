@@ -8,7 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.api.v1.erp import ChatSpreadsheetRequest
+from app.api.v1.erp_spreadsheet import ChatSpreadsheetRequest
 from app.api.v1.global_account_search_common import (
     extract_global_request,
     read_account_map,

@@ -1070,7 +1070,6 @@ class RegisterDocumentRequest(BaseModel):
     file_path: Optional[str] = None
 
 
-@router.get("/partners")
 def get_partners(db_session: Session = Depends(get_db), company_id: Optional[int] = None):
     conn = db_session.query(ERPConnection).filter(
         ERPConnection.organization_id == current_organization_id(required=True),
@@ -1406,7 +1405,6 @@ def _suggest_lines_from_similar_move(
     }
 
 
-@router.post("/propose-transaction")
 def propose_transaction(payload: ProposeTransactionRequest, db_session: Session = Depends(get_db)):
     conn = db_session.query(ERPConnection).filter(
         ERPConnection.organization_id == current_organization_id(required=True),
@@ -1911,7 +1909,6 @@ def propose_transaction(payload: ProposeTransactionRequest, db_session: Session 
 
 
 
-@router.post("/register-document")
 def register_document(payload: RegisterDocumentRequest, db_session: Session = Depends(get_db)):
     from datetime import date
 
@@ -2550,7 +2547,6 @@ class ChatSpreadsheetRequest(BaseModel):
     active_sheet_id: str
     company_id: Optional[int] = 1
 
-@router.post("/chat-spreadsheet")
 def chat_spreadsheet(payload: ChatSpreadsheetRequest, db_session: Session = Depends(get_db)):
     # Find active sheet
     active_sheet = None
@@ -3478,7 +3474,6 @@ def save_telegram_config(payload: TelegramConfigRequest):
     return {"status": "success", "message": "Telegram configuration saved successfully."}
 
 
-@router.post("/bank-reconciliation")
 def bank_reconciliation(
     statement: UploadFile = File(...),
     db: Session = Depends(get_db),
@@ -3552,7 +3547,6 @@ def bank_reconciliation(
             os.remove(statement_path)
 
 
-@router.post("/bank-statement-parse")
 async def parse_bank_statement_only(
     statement: UploadFile = File(...),
     date_from: Optional[str] = Form(None),

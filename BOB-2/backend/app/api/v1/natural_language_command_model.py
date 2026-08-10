@@ -5,7 +5,7 @@ from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.api.v1.chat_journal_lookup import chat_spreadsheet_with_odoo_entry_lookup
-from app.api.v1.erp import ChatSpreadsheetRequest
+from app.api.v1.erp_spreadsheet import ChatSpreadsheetRequest
 from app.services.llm_service import chat as llm_chat
 
 ARABIC_DIGITS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")

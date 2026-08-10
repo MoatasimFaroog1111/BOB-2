@@ -431,7 +431,6 @@ def _capability_or_confirmation_answer(arabic: bool, state: dict[str, Any], acti
     }
 
 
-@router.post("/chat-spreadsheet")
 def guarded_chat_spreadsheet(
     payload: ChatSpreadsheetRequest,
     db_session: Session = Depends(get_db),

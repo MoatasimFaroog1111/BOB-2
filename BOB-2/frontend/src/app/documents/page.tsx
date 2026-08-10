@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useLanguage } from "@/lib/LanguageContext";
 import { useCompany } from "@/lib/CompanyContext";
 import { documentsGateway } from "@/features/documents/api/documentsGateway";
+import { useDocumentDiscovery } from "@/features/documents/hooks/useDocumentDiscovery";
 import { normalizeLookupValue, partnerSimilarityScore } from "@/features/documents/model/partnerMatching";
 import type { OdooAccount, OdooAnalyticAccount, OdooPartner, Worksheet } from "@/features/documents/model/types";
 
@@ -61,11 +62,15 @@ export default function DocumentIntelligencePage() {
   const [isSelecting, setIsSelecting] = useState(false);
   const [dragStart, setDragStart] = useState<{ r: number; c: number } | null>(null);
   
-  // Odoo Structural Data
-  const [accounts, setAccounts] = useState<OdooAccount[]>([]);
-  const [partners, setPartners] = useState<OdooPartner[]>([]);
-  const [analyticAccounts, setAnalyticAccounts] = useState<OdooAnalyticAccount[]>([]);
-  const [, setLoadingKB] = useState(false);
+  const {
+    accounts,
+    partners,
+    analyticAccounts,
+    journals,
+    selectedJournalId,
+    setSelectedJournalId,
+    journalsLoading,
+  } = useDocumentDiscovery(selectedCompanyId);
   
   // Odoo Submission Modal States
   const [showOdooModal, setShowOdooModal] = useState(false);
@@ -150,9 +155,6 @@ export default function DocumentIntelligencePage() {
   };
 
   // Journals States
-  const [journals, setJournals] = useState<{ id: number; code: string; name: string; type: string }[]>([]);
-  const [selectedJournalId, setSelectedJournalId] = useState<number | null>(null);
-  const [journalsLoading, setJournalsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -441,78 +443,6 @@ export default function DocumentIntelligencePage() {
     } finally {
       setIsUploading(false);
       setChatLoading(false);
-    }
-  };
-
-  // Load accounts and partners from Odoo Discovery on mount
-  useEffect(() => {
-    fetchDiscoveryData();
-  }, [selectedCompanyId]);
-
-  const fetchDiscoveryData = async () => {
-    setLoadingKB(true);
-    setJournalsLoading(true);
-    try {
-      const resKB = await documentsGateway.loadDiscovery();
-      if (resKB.ok) {
-        const data = await resKB.json();
-        if (data.accounts) {
-          setAccounts(data.accounts);
-        }
-      }
-      const partnerCompanyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
-      const resPartners = await documentsGateway.loadPartners(partnerCompanyParam);
-      if (resPartners.ok) {
-        const pData = await resPartners.json();
-        setPartners(pData);
-      }
-      const analyticCompanyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
-      const resAnalytic = await documentsGateway.loadAnalyticAccounts(analyticCompanyParam);
-      if (resAnalytic.ok) {
-        const aData = await resAnalytic.json();
-        setAnalyticAccounts(aData);
-      } else {
-        setAnalyticAccounts([]);
-      }
-
-      // Fetch Journals
-      try {
-        const journalCompanyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
-        const resJournals = await documentsGateway.loadJournals(journalCompanyParam);
-        if (resJournals.ok) {
-          const jData = await resJournals.json();
-          setJournals(jData);
-          if (jData.length > 0) {
-            const defaultJournal = jData.find((j: any) => j.type === "general") || jData[0];
-            setSelectedJournalId(defaultJournal.id);
-          }
-        } else {
-          // Fallback static journals
-          const defaultJournals = [
-            { id: 1, code: "MISC", name: "Miscellaneous Operations", type: "general" },
-            { id: 2, code: "BILL", name: "Vendor Bills", type: "purchase" },
-            { id: 3, code: "INV", name: "Customer Invoices", type: "sale" },
-            { id: 4, code: "BNK1", name: "Bank", type: "bank" }
-          ];
-          setJournals(defaultJournals);
-          setSelectedJournalId(1);
-        }
-      } catch (jErr) {
-        console.error("Failed to fetch Odoo journals, using static fallbacks:", jErr);
-        const defaultJournals = [
-          { id: 1, code: "MISC", name: "Miscellaneous Operations", type: "general" },
-          { id: 2, code: "BILL", name: "Vendor Bills", type: "purchase" },
-          { id: 3, code: "INV", name: "Customer Invoices", type: "sale" },
-          { id: 4, code: "BNK1", name: "Bank", type: "bank" }
-        ];
-        setJournals(defaultJournals);
-        setSelectedJournalId(1);
-      }
-    } catch (err) {
-      console.error("Failed to fetch Odoo discovery info:", err);
-    } finally {
-      setLoadingKB(false);
-      setJournalsLoading(false);
     }
   };
 

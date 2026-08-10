@@ -15,8 +15,8 @@ from app.api.v1.chat_spreadsheet_intent_guard import router as chat_spreadsheet_
 from app.api.v1.communication_tools import router as communication_tools_router
 from app.api.v1.erp import router as erp_router
 from app.api.v1.erp_connections import router as erp_connections_router
+from app.api.v1.erp_documents import router as erp_documents_router
 from app.api.v1.erp_monetary_legacy import (
-    replace_unsafe_legacy_routes,
     router as erp_monetary_legacy_router,
 )
 from app.api.v1.erp_partners import router as erp_partners_router
@@ -64,11 +64,6 @@ api_router.include_router(
     tags=["Communication Tools"],
 )
 
-# Remove the two historical float-based route objects before the broad ERP
-# router is copied into the application. Compatible tenant-scoped Decimal
-# replacements are included immediately after it.
-replace_unsafe_legacy_routes(erp_router)
-
 # The centralized dependency is method-aware: reads require view_financials,
 # mutations require create_entries by default, settings require manage_settings,
 # uploads require upload_documents, and ERP posting requires post_odoo_entries.
@@ -82,6 +77,7 @@ api_router.include_router(chat_spreadsheet_intent_guard_router, prefix="/erp", t
 api_router.include_router(chat_journal_lookup_router, prefix="/erp", tags=["ERP Smart Chat Journal Lookup"], dependencies=financial_access)
 api_router.include_router(erp_router, prefix="/erp", tags=["ERP"], dependencies=financial_access)
 api_router.include_router(erp_connections_router, prefix="/erp", tags=["ERP Connections"], dependencies=financial_access)
+api_router.include_router(erp_documents_router, prefix="/erp", tags=["ERP Documents"], dependencies=financial_access)
 api_router.include_router(
     erp_monetary_legacy_router,
     prefix="/erp",

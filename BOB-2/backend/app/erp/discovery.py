@@ -41,7 +41,10 @@ def run_discovery_orchestrator(provider: ERPDiscoveryProvider) -> dict[str, Any]
     kb_data = {
         "metadata": {
             "organization_id": organization_id,
-            "provider": provider.provider_name,
+            # Older structural test doubles predate the explicit capability
+            # metadata. Preserve compatibility while concrete providers expose
+            # their own stable name.
+            "provider": getattr(provider, "provider_name", "odoo"),
             "url": provider.url,
             "db": provider.db,
             "companies": companies,

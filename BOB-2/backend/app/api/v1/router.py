@@ -14,6 +14,7 @@ from app.api.v1.chat_journal_lookup import router as chat_journal_lookup_router
 from app.api.v1.chat_spreadsheet_intent_guard import router as chat_spreadsheet_intent_guard_router
 from app.api.v1.communication_tools import router as communication_tools_router
 from app.api.v1.erp import router as erp_router
+from app.api.v1.erp_connections import router as erp_connections_router
 from app.api.v1.erp_monetary_legacy import (
     replace_unsafe_legacy_routes,
     router as erp_monetary_legacy_router,
@@ -80,6 +81,7 @@ api_router.include_router(accounting_command_router, prefix="/erp", tags=["ERP A
 api_router.include_router(chat_spreadsheet_intent_guard_router, prefix="/erp", tags=["ERP Smart Chat Intent Guard"], dependencies=financial_access)
 api_router.include_router(chat_journal_lookup_router, prefix="/erp", tags=["ERP Smart Chat Journal Lookup"], dependencies=financial_access)
 api_router.include_router(erp_router, prefix="/erp", tags=["ERP"], dependencies=financial_access)
+api_router.include_router(erp_connections_router, prefix="/erp", tags=["ERP Connections"], dependencies=financial_access)
 api_router.include_router(
     erp_monetary_legacy_router,
     prefix="/erp",

@@ -45,3 +45,29 @@ def test_document_domain_model_is_framework_independent() -> None:
         if any(marker in source for marker in ("from \"react\"", "fetch(", "API_BASE_URL", "@/app/")):
             offenders.append(path.name)
     assert offenders == [], f"Document domain model depends on framework/transport: {offenders}"
+
+
+def test_erp_connection_routes_have_a_dedicated_component_owner() -> None:
+    legacy_controller = (BACKEND_APP / "api/v1/erp.py").read_text(encoding="utf-8")
+    connection_controller = (BACKEND_APP / "api/v1/erp_connections.py").read_text(encoding="utf-8")
+    connection_routes = (
+        '"/test-connection"',
+        '"/connection"',
+        '"/test-saved"',
+        '"/company-info-saved"',
+        '"/companies"',
+        '"/discover"',
+        '"/discovery"',
+    )
+    assert all(route not in legacy_controller for route in connection_routes)
+    assert all(route in connection_controller for route in connection_routes)
+
+
+def test_documents_manual_entry_ui_has_a_dedicated_component_owner() -> None:
+    page = (FRONTEND_SRC / "app/documents/page.tsx").read_text(encoding="utf-8")
+    modal = (
+        FRONTEND_SRC / "features/documents/components/ManualEntryModal.tsx"
+    ).read_text(encoding="utf-8")
+    assert "<ManualEntryModal" in page
+    assert "Direct Paste or Manual Text Entry" not in page
+    assert "Direct Paste or Manual Text Entry" in modal

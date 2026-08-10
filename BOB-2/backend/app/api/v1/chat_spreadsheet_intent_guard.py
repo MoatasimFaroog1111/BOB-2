@@ -10,7 +10,7 @@ from app.api.v1.chat_journal_lookup import (
     chat_spreadsheet_with_odoo_entry_lookup,
     extract_journal_entry_numbers,
 )
-from app.api.v1.erp import ChatSpreadsheetRequest, chat_spreadsheet as legacy_chat_spreadsheet
+from app.api.v1.erp_spreadsheet import ChatSpreadsheetRequest, chat_spreadsheet as legacy_chat_spreadsheet
 from app.db.database import get_db
 
 router = APIRouter()

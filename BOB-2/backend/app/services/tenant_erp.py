@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
-
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.erp.factory import get_erp_provider
+from app.erp.base import ERPConnectionProvider
+from app.erp.factory import ERPProviderRegistry, provider_registry
 from app.models.core import ERPConnection
 from app.security.encryption import decrypt_value
 
@@ -18,7 +17,7 @@ from app.security.encryption import decrypt_value
 class TenantERPContext:
     organization_id: int
     connection: ERPConnection
-    provider: Any
+    provider: ERPConnectionProvider
     username: str
 
 
@@ -57,6 +56,7 @@ def resolve_tenant_erp(
     principal: dict,
     *,
     require_active: bool = True,
+    registry: ERPProviderRegistry = provider_registry,
 ) -> TenantERPContext:
     organization_id = organization_id_from_principal(principal)
     connection = load_tenant_erp_connection(
@@ -79,8 +79,8 @@ def resolve_tenant_erp(
             detail="ERP credentials are unavailable from the centralized secret store.",
         ) from exc
 
-    provider = get_erp_provider(
-        provider=connection.provider,
+    provider = registry.create(
+        connection.provider,
         url=connection.base_url,
         db=connection.database_name or "",
         username=username,

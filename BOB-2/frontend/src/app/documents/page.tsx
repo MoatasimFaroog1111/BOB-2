@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useLanguage } from "@/lib/LanguageContext";
 import { useCompany } from "@/lib/CompanyContext";
 import { API_BASE_URL } from "@/lib/api";
+import { normalizeLookupValue, partnerSimilarityScore } from "@/features/documents/model/partnerMatching";
+import type { OdooAccount, OdooAnalyticAccount, OdooPartner, Worksheet } from "@/features/documents/model/types";
 
 const DEFAULT_ROWS = 25;
 const DEFAULT_COLS = 10;
@@ -18,132 +20,6 @@ const getColLetter = (index: number): string => {
     temp = Math.floor(temp / 26) - 1;
   }
   return letter;
-};
-
-interface OdooAccount {
-  id: number;
-  code: string;
-  name: string;
-  account_type: string;
-}
-
-interface OdooPartner {
-  id: number;
-  name: string;
-}
-
-interface OdooAnalyticAccount {
-  id: number;
-  name: string;
-}
-
-interface Worksheet {
-  id: string;
-  name: string;
-  gridData: string[][];
-  rowCount: number;
-  colCount: number;
-}
-
-const normalizeLookupValue = (value: string): string =>
-  value.trim().replace(/\s+/g, " ").toLowerCase();
-
-const ARABIC_DIACRITICS_REGEX = /[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]/g;
-const NON_ALNUM_REGEX = /[^a-z0-9\u0600-\u06FF\s]/g;
-const ARABIC_TO_LATIN_MAP: Record<string, string> = {
-  ا: "a", أ: "a", إ: "i", آ: "a", ء: "a", ؤ: "o", ئ: "e",
-  ب: "b", ت: "t", ث: "th", ج: "j", ح: "h", خ: "kh",
-  د: "d", ذ: "th", ر: "r", ز: "z", س: "s", ش: "sh",
-  ص: "s", ض: "d", ط: "t", ظ: "z", ع: "a", غ: "gh",
-  ف: "f", ق: "q", ك: "k", ل: "l", م: "m", ن: "n",
-  ه: "h", ة: "a", و: "w", ي: "y", ى: "a",
-};
-
-const normalizePartnerName = (value: string): string => {
-  return (value || "")
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(ARABIC_DIACRITICS_REGEX, "")
-    .replace(/ـ/g, "")
-    .replace(/[أإآ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ة/g, "ه")
-    .replace(NON_ALNUM_REGEX, " ")
-    .replace(/\b(company|co|corp|corporation|inc|ltd|llc|est)\b/g, " ")
-    .replace(/(?:شركة|مؤسسه|مؤسسة|مكتب|مقاولات|التجارية|العامه|العامة)/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-};
-
-const transliterateArabicToLatin = (value: string): string => {
-  return Array.from(value || "")
-    .map((ch) => ARABIC_TO_LATIN_MAP[ch] ?? ch)
-    .join("")
-    .replace(/\s+/g, " ")
-    .trim();
-};
-
-const buildBigrams = (value: string): string[] => {
-  const cleaned = value.replace(/\s+/g, " ").trim();
-  if (cleaned.length < 2) return cleaned ? [cleaned] : [];
-  const grams: string[] = [];
-  for (let i = 0; i < cleaned.length - 1; i++) {
-    grams.push(cleaned.slice(i, i + 2));
-  }
-  return grams;
-};
-
-const diceCoefficient = (a: string, b: string): number => {
-  if (!a || !b) return 0;
-  if (a === b) return 1;
-  const aBigrams = buildBigrams(a);
-  const bBigrams = buildBigrams(b);
-  if (!aBigrams.length || !bBigrams.length) return 0;
-  const aCounts = new Map<string, number>();
-  aBigrams.forEach((gram) => aCounts.set(gram, (aCounts.get(gram) ?? 0) + 1));
-  let overlap = 0;
-  for (const gram of bBigrams) {
-    const count = aCounts.get(gram) ?? 0;
-    if (count > 0) {
-      overlap += 1;
-      aCounts.set(gram, count - 1);
-    }
-  }
-  return (2 * overlap) / (aBigrams.length + bBigrams.length);
-};
-
-const tokenOverlapScore = (a: string, b: string): number => {
-  if (!a || !b) return 0;
-  const aTokens = new Set(a.split(" ").filter(Boolean));
-  const bTokens = new Set(b.split(" ").filter(Boolean));
-  if (!aTokens.size || !bTokens.size) return 0;
-  let overlap = 0;
-  aTokens.forEach((token) => {
-    if (bTokens.has(token)) overlap += 1;
-  });
-  return overlap / Math.max(aTokens.size, bTokens.size);
-};
-
-const partnerSimilarityScore = (queryRaw: string, candidateRaw: string): number => {
-  const query = normalizePartnerName(queryRaw);
-  const candidate = normalizePartnerName(candidateRaw);
-  if (!query || !candidate) return 0;
-  if (query === candidate) return 1;
-
-  const containsBoost =
-    candidate.includes(query) || query.includes(candidate) ? 0.15 : 0;
-  const nativeScore =
-    (diceCoefficient(query, candidate) * 0.7) +
-    (tokenOverlapScore(query, candidate) * 0.3);
-
-  const queryLatin = transliterateArabicToLatin(query);
-  const candidateLatin = transliterateArabicToLatin(candidate);
-  const crossLingualScore =
-    (diceCoefficient(queryLatin, candidateLatin) * 0.65) +
-    (tokenOverlapScore(queryLatin, candidateLatin) * 0.35);
-
-  return Math.min(1, Math.max(nativeScore, crossLingualScore) + containsBoost);
 };
 
 export default function DocumentIntelligencePage() {

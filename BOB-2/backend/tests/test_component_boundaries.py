@@ -71,3 +71,32 @@ def test_documents_manual_entry_ui_has_a_dedicated_component_owner() -> None:
     assert "<ManualEntryModal" in page
     assert "Direct Paste or Manual Text Entry" not in page
     assert "Direct Paste or Manual Text Entry" in modal
+
+
+def test_legacy_erp_controller_no_longer_owns_document_or_spreadsheet_workflows() -> None:
+    legacy = (BACKEND_APP / "api/v1/erp.py").read_text(encoding="utf-8")
+    documents = (BACKEND_APP / "api/v1/erp_documents.py").read_text(encoding="utf-8")
+    spreadsheet = (BACKEND_APP / "api/v1/erp_spreadsheet.py").read_text(encoding="utf-8")
+    for route in ('"/upload-documents"', '"/match-documents"', '"/attach-document"'):
+        assert route not in legacy
+        assert route in documents
+    for symbol in ("class ChatSpreadsheetRequest", "def chat_spreadsheet"):
+        assert symbol not in legacy
+        assert symbol in spreadsheet
+    assert "def propose_transaction" not in legacy
+    assert "def register_document" not in legacy
+
+
+def test_documents_page_delegates_grid_preparation_and_review_ui() -> None:
+    page = (FRONTEND_SRC / "app/documents/page.tsx").read_text(encoding="utf-8")
+    assert "useWorksheets(language)" in page
+    assert "prepareJournalEntry({" in page
+    assert "<OdooEntryReviewModal" in page
+    assert "Proposed Journal Items:" not in page
+
+
+def test_refactored_legacy_entrypoints_have_enforced_size_ceiling() -> None:
+    erp_lines = (BACKEND_APP / "api/v1/erp.py").read_text(encoding="utf-8").count("\n") + 1
+    page_lines = (FRONTEND_SRC / "app/documents/page.tsx").read_text(encoding="utf-8").count("\n") + 1
+    assert erp_lines <= 900
+    assert page_lines <= 1500

@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.api.v1.erp import ChatSpreadsheetRequest
+from app.api.v1.erp_spreadsheet import ChatSpreadsheetRequest
 from app.api.v1.odoo_candidate_line_search import read_candidate_lines
 from app.api.v1.odoo_partner_candidates import discover_partner_candidates
 from app.api.v1.odoo_search_helpers import (

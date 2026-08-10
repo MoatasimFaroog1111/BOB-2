@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useLanguage } from "@/lib/LanguageContext";
 import { useCompany } from "@/lib/CompanyContext";
-import { API_BASE_URL } from "@/lib/api";
+import { documentsGateway } from "@/features/documents/api/documentsGateway";
 import { normalizeLookupValue, partnerSimilarityScore } from "@/features/documents/model/partnerMatching";
 import type { OdooAccount, OdooAnalyticAccount, OdooPartner, Worksheet } from "@/features/documents/model/types";
 
@@ -99,7 +99,7 @@ export default function DocumentIntelligencePage() {
     if (!manualInputText.trim() || isParsingText) return;
     setIsParsingText(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/erp/parse-manual-text`, {
+      const res = await documentsGateway.parseManualText({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -191,7 +191,7 @@ export default function DocumentIntelligencePage() {
     setChatLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE_URL}/api/v1/erp/chat-spreadsheet`, {
+      const res = await documentsGateway.chatSpreadsheet({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -326,7 +326,7 @@ export default function DocumentIntelligencePage() {
       const formData = new FormData();
       formData.append("files", file);
 
-      const uploadRes = await fetch(`${API_BASE_URL}/api/v1/erp/upload-documents`, {
+      const uploadRes = await documentsGateway.uploadDocuments({
         method: "POST",
         body: formData,
       });
@@ -359,7 +359,7 @@ export default function DocumentIntelligencePage() {
         raw_text: rawText,
       };
 
-      const proposeRes = await fetch(`${API_BASE_URL}/api/v1/erp/propose-transaction`, {
+      const proposeRes = await documentsGateway.proposeTransaction({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -453,7 +453,7 @@ export default function DocumentIntelligencePage() {
     setLoadingKB(true);
     setJournalsLoading(true);
     try {
-      const resKB = await fetch(`${API_BASE_URL}/api/v1/erp/discovery`);
+      const resKB = await documentsGateway.loadDiscovery();
       if (resKB.ok) {
         const data = await resKB.json();
         if (data.accounts) {
@@ -461,13 +461,13 @@ export default function DocumentIntelligencePage() {
         }
       }
       const partnerCompanyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
-      const resPartners = await fetch(`${API_BASE_URL}/api/v1/erp/partners${partnerCompanyParam}`);
+      const resPartners = await documentsGateway.loadPartners(partnerCompanyParam);
       if (resPartners.ok) {
         const pData = await resPartners.json();
         setPartners(pData);
       }
       const analyticCompanyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
-      const resAnalytic = await fetch(`${API_BASE_URL}/api/v1/erp/analytic-accounts${analyticCompanyParam}`);
+      const resAnalytic = await documentsGateway.loadAnalyticAccounts(analyticCompanyParam);
       if (resAnalytic.ok) {
         const aData = await resAnalytic.json();
         setAnalyticAccounts(aData);
@@ -478,7 +478,7 @@ export default function DocumentIntelligencePage() {
       // Fetch Journals
       try {
         const journalCompanyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
-        const resJournals = await fetch(`${API_BASE_URL}/api/v1/erp/journals${journalCompanyParam}`);
+        const resJournals = await documentsGateway.loadJournals(journalCompanyParam);
         if (resJournals.ok) {
           const jData = await resJournals.json();
           setJournals(jData);
@@ -1261,7 +1261,7 @@ export default function DocumentIntelligencePage() {
         })),
       };
 
-      const res = await fetch(`${API_BASE_URL}/api/v1/erp/register-document`, {
+      const res = await documentsGateway.registerDocument({
         method: "POST",
         headers: {
           "Content-Type": "application/json",

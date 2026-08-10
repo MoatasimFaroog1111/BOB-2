@@ -95,11 +95,29 @@ def test_documents_page_delegates_grid_preparation_and_review_ui() -> None:
     assert "Proposed Journal Items:" not in page
 
 
+def test_documents_page_delegates_grid_interaction_and_rendering() -> None:
+    page = (FRONTEND_SRC / "app/documents/page.tsx").read_text(encoding="utf-8")
+    interaction = (
+        FRONTEND_SRC / "features/documents/hooks/useSpreadsheetGridInteraction.ts"
+    ).read_text(encoding="utf-8")
+    grid = (
+        FRONTEND_SRC / "features/documents/components/SpreadsheetGrid.tsx"
+    ).read_text(encoding="utf-8")
+    assert "useSpreadsheetGridInteraction({" in page
+    assert "<SpreadsheetGrid" in page
+    assert "navigator.clipboard" not in page
+    assert "clipboardData.getData" not in page
+    assert "<table" not in page
+    assert "navigator.clipboard" in interaction
+    assert "clipboardData.getData" in interaction
+    assert "<table" in grid
+
+
 def test_refactored_legacy_entrypoints_have_enforced_size_ceiling() -> None:
     erp_lines = (BACKEND_APP / "api/v1/erp.py").read_text(encoding="utf-8").count("\n") + 1
     page_lines = (FRONTEND_SRC / "app/documents/page.tsx").read_text(encoding="utf-8").count("\n") + 1
     assert erp_lines <= 20
-    assert page_lines <= 1250
+    assert page_lines <= 850
 
 
 def test_remaining_erp_routes_are_owned_by_focused_components() -> None:

@@ -83,7 +83,10 @@ for path in APP.rglob("*.py"):
 require(not violations, f"hardcoded organization 1 literals are forbidden: {violations}")
 
 explicit_markers = {
-    "app/api/v1/erp.py": "current_organization_id(required=True)",
+    "app/api/v1/erp_connections.py": "current_organization_id(required=True)",
+    "app/api/v1/erp_documents.py": "current_organization_id(required=True)",
+    "app/api/v1/erp_document_parsing.py": "current_organization_id(required=True)",
+    "app/api/v1/erp_catalog.py": "current_organization_id(required=True)",
     "app/api/v1/journal_entry_actions.py": "current_organization_id(required=True)",
     "app/api/v1/chat_journal_lookup.py": "current_organization_id(required=True)",
     "app/api/v1/bank_reconciliation_entry_suggestions.py": "current_organization_id(required=True)",

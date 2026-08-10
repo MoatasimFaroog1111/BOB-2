@@ -7,7 +7,7 @@ from app.api.v1.hybrid_account_partner_search import try_hybrid_account_partner_
 from app.api.v1.hybrid_global_account_search_v2 import (
     try_hybrid_global_account_search_v2,
 )
-from app.api.v1.erp import ChatSpreadsheetRequest
+from app.api.v1.erp_spreadsheet import ChatSpreadsheetRequest
 from app.api.v1.natural_language_command_model import execute_natural_language_command
 from app.db.database import get_db
 

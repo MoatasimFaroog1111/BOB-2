@@ -1,4 +1,4 @@
-from app.api.v1.erp import _closest_partner_by_name
+from app.erp.partner_matching import closest_partner as _closest_partner_by_name
 
 
 def test_closest_partner_matches_spelling_variation():

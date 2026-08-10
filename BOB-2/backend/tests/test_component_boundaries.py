@@ -98,5 +98,29 @@ def test_documents_page_delegates_grid_preparation_and_review_ui() -> None:
 def test_refactored_legacy_entrypoints_have_enforced_size_ceiling() -> None:
     erp_lines = (BACKEND_APP / "api/v1/erp.py").read_text(encoding="utf-8").count("\n") + 1
     page_lines = (FRONTEND_SRC / "app/documents/page.tsx").read_text(encoding="utf-8").count("\n") + 1
-    assert erp_lines <= 900
-    assert page_lines <= 1500
+    assert erp_lines <= 20
+    assert page_lines <= 1250
+
+
+def test_remaining_erp_routes_are_owned_by_focused_components() -> None:
+    legacy = (BACKEND_APP / "api/v1/erp.py").read_text(encoding="utf-8")
+    parsing = (BACKEND_APP / "api/v1/erp_document_parsing.py").read_text(encoding="utf-8")
+    catalog = (BACKEND_APP / "api/v1/erp_catalog.py").read_text(encoding="utf-8")
+    telegram = (BACKEND_APP / "api/v1/erp_telegram_config.py").read_text(encoding="utf-8")
+    assert "APIRouter" not in legacy
+    for route in ('"/parse-manual-text"', '"/detect-attachments"'):
+        assert route in parsing
+    for route in ('"/accounts"', '"/analytic-accounts"', '"/attachment/{attachment_id}"', '"/journals"'):
+        assert route in catalog
+    for route in ('"/telegram-config"',):
+        assert route in telegram
+
+
+def test_document_feature_components_have_bounded_size() -> None:
+    feature_root = FRONTEND_SRC / "features/documents"
+    oversized = {
+        path.relative_to(feature_root).as_posix(): path.read_text(encoding="utf-8").count("\n") + 1
+        for path in feature_root.rglob("*.ts*")
+        if path.read_text(encoding="utf-8").count("\n") + 1 > 450
+    }
+    assert oversized == {}, f"Oversized document components: {oversized}"

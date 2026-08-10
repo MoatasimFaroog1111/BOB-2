@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.api.v1.erp import ChatSpreadsheetRequest, chat_spreadsheet as legacy_chat_spreadsheet
+from app.api.v1.erp_spreadsheet import ChatSpreadsheetRequest, chat_spreadsheet as legacy_chat_spreadsheet
 from app.db.database import get_db
 from app.erp.factory import get_erp_provider
 from app.models.core import ERPConnection

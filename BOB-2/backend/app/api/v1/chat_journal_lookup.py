@@ -375,7 +375,6 @@ def _build_result_message(arabic: bool, moves_count: int, stats: dict[str, int],
     return msg
 
 
-@router.post("/chat-spreadsheet")
 def chat_spreadsheet_with_odoo_entry_lookup(
     payload: ChatSpreadsheetRequest,
     db_session: Session = Depends(get_db),

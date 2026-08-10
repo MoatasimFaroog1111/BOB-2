@@ -6,7 +6,11 @@ import { useLanguage } from "@/lib/LanguageContext";
 import { useCompany } from "@/lib/CompanyContext";
 import { documentsGateway } from "@/features/documents/api/documentsGateway";
 import { useDocumentDiscovery } from "@/features/documents/hooks/useDocumentDiscovery";
-import { normalizeLookupValue, partnerSimilarityScore } from "@/features/documents/model/partnerMatching";
+import {
+  normalizeLookupValue,
+  normalizePartnerName,
+  partnerSimilarityScore,
+} from "@/features/documents/model/partnerMatching";
 import type { OdooAccount, OdooAnalyticAccount, OdooPartner, Worksheet } from "@/features/documents/model/types";
 
 const DEFAULT_ROWS = 25;

@@ -7,6 +7,7 @@ import { useCompany } from "@/lib/CompanyContext";
 import { documentsGateway } from "@/features/documents/api/documentsGateway";
 import { useDocumentDiscovery } from "@/features/documents/hooks/useDocumentDiscovery";
 import { useSpreadsheetChat } from "@/features/documents/hooks/useSpreadsheetChat";
+import { useSpreadsheetGridInteraction } from "@/features/documents/hooks/useSpreadsheetGridInteraction";
 import {
   createEmptyGrid,
   DEFAULT_WORKSHEET_COLUMNS,
@@ -15,6 +16,7 @@ import {
 } from "@/features/documents/hooks/useWorksheets";
 import { ManualEntryModal } from "@/features/documents/components/ManualEntryModal";
 import { OdooEntryReviewModal } from "@/features/documents/components/OdooEntryReviewModal";
+import { SpreadsheetGrid } from "@/features/documents/components/SpreadsheetGrid";
 import {
   normalizeLookupValue,
   normalizePartnerName,
@@ -46,23 +48,16 @@ export default function DocumentIntelligencePage() {
   } = useWorksheets(language);
   const { gridData, rowCount, colCount } = activeSheet;
 
-  // Cell Selection States
-  const [activeCell, setActiveCell] = useState<{ r: number; c: number } | null>(null);
-  const [selectionRange, setSelectionRange] = useState<{
-    startR: number;
-    startC: number;
-    endR: number;
-    endC: number;
-  } | null>(null);
-  
-  // Cell Editing States
-  const [editCell, setEditCell] = useState<{ r: number; c: number } | null>(null);
-  const [editValue, setEditValue] = useState("");
-  
-  // Drag Selection Flag
-  const [isSelecting, setIsSelecting] = useState(false);
-  const [dragStart, setDragStart] = useState<{ r: number; c: number } | null>(null);
-  
+  const gridInteraction = useSpreadsheetGridInteraction({
+    language,
+    activeSheetId,
+    gridData,
+    rowCount,
+    colCount,
+    setSheets,
+  });
+  const { selectionRange } = gridInteraction;
+
   const {
     accounts,
     partners,
@@ -145,8 +140,6 @@ export default function DocumentIntelligencePage() {
   };
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const gridTableRef = useRef<HTMLTableElement>(null);
-  const editInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -229,14 +222,6 @@ export default function DocumentIntelligencePage() {
       .map((item) => item.partner);
   };
 
-  // Helper to ensure input is fully visible in cell
-  useEffect(() => {
-    if (editCell && editInputRef.current) {
-      editInputRef.current.focus();
-      editInputRef.current.select();
-    }
-  }, [editCell]);
-
   // Focus rename input on open
   useEffect(() => {
     if (renameSheetId && renameInputRef.current) {
@@ -244,290 +229,6 @@ export default function DocumentIntelligencePage() {
       renameInputRef.current.select();
     }
   }, [renameSheetId]);
-
-  // Reset selection states when active sheet changes
-  useEffect(() => {
-    setActiveCell(null);
-    setSelectionRange(null);
-    setEditCell(null);
-  }, [activeSheetId]);
-
-  // Excel Cell Selection Range Highlights
-  const isCellSelected = (r: number, c: number) => {
-    if (!selectionRange) return false;
-    const { startR, startC, endR, endC } = selectionRange;
-    const minR = Math.min(startR, endR);
-    const maxR = Math.max(startR, endR);
-    const minC = Math.min(startC, endC);
-    const maxC = Math.max(startC, endC);
-    return r >= minR && r <= maxR && c >= minC && c <= maxC;
-  };
-
-  const isCellSelectionBorder = (r: number, c: number) => {
-    if (!selectionRange) return { top: false, bottom: false, left: false, right: false };
-    const { startR, startC, endR, endC } = selectionRange;
-    const minR = Math.min(startR, endR);
-    const maxR = Math.max(startR, endR);
-    const minC = Math.min(startC, endC);
-    const maxC = Math.max(startC, endC);
-    
-    return {
-      top: r === minR && isCellSelected(r, c),
-      bottom: r === maxR && isCellSelected(r, c),
-      left: c === minC && isCellSelected(r, c),
-      right: c === maxC && isCellSelected(r, c),
-    };
-  };
-
-  const handleCellMouseDown = (r: number, c: number, e: React.MouseEvent) => {
-    if (editCell && (editCell.r !== r || editCell.c !== c)) {
-      commitEdit();
-    }
-    
-    if (e.shiftKey && activeCell) {
-      setSelectionRange({
-        startR: activeCell.r,
-        startC: activeCell.c,
-        endR: r,
-        endC: c,
-      });
-    } else {
-      setActiveCell({ r, c });
-      setSelectionRange({ startR: r, startC: c, endR: r, endC: c });
-      setIsSelecting(true);
-      setDragStart({ r, c });
-    }
-  };
-
-  const handleCellMouseEnter = (r: number, c: number) => {
-    if (isSelecting && dragStart) {
-      setSelectionRange({
-        startR: dragStart.r,
-        startC: dragStart.c,
-        endR: r,
-        endC: c,
-      });
-    }
-  };
-
-  const handleCellMouseUp = () => {
-    setIsSelecting(false);
-  };
-
-  // Keyboard navigation and editing shortcuts
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!activeCell) return;
-    const { r, c } = activeCell;
-
-    if (editCell) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        commitEdit();
-        if (r < rowCount - 1) {
-          const nextR = r + 1;
-          setActiveCell({ r: nextR, c });
-          setSelectionRange({ startR: nextR, startC: c, endR: nextR, endC: c });
-        }
-      } else if (e.key === "Escape") {
-        setEditCell(null);
-      } else if (e.key === "Tab") {
-        e.preventDefault();
-        commitEdit();
-        if (e.shiftKey) {
-          if (c > 0) {
-            const prevC = c - 1;
-            setActiveCell({ r, c: prevC });
-            setSelectionRange({ startR: r, startC: prevC, endR: r, endC: prevC });
-          }
-        } else {
-          if (c < colCount - 1) {
-            const nextC = c + 1;
-            setActiveCell({ r, c: nextC });
-            setSelectionRange({ startR: r, startC: nextC, endR: r, endC: nextC });
-          }
-        }
-      }
-      return;
-    }
-
-    if (e.key === "Enter") {
-      e.preventDefault();
-      setEditCell({ r, c });
-      setEditValue(gridData[r][c]);
-      return;
-    }
-
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      if (r > 0) {
-        const nextR = r - 1;
-        setActiveCell({ r: nextR, c });
-        setSelectionRange({ startR: nextR, startC: c, endR: nextR, endC: c });
-      }
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      if (r < rowCount - 1) {
-        const nextR = r + 1;
-        setActiveCell({ r: nextR, c });
-        setSelectionRange({ startR: nextR, startC: c, endR: nextR, endC: c });
-      }
-    } else if (e.key === "ArrowLeft") {
-      e.preventDefault();
-      const moveLeft = language === "ar" ? c < colCount - 1 : c > 0;
-      const step = language === "ar" ? 1 : -1;
-      if (moveLeft) {
-        const nextC = c + step;
-        setActiveCell({ r, c: nextC });
-        setSelectionRange({ startR: r, startC: nextC, endR: r, endC: nextC });
-      }
-    } else if (e.key === "ArrowRight") {
-      e.preventDefault();
-      const moveRight = language === "ar" ? c > 0 : c < colCount - 1;
-      const step = language === "ar" ? -1 : 1;
-      if (moveRight) {
-        const nextC = c + step;
-        setActiveCell({ r, c: nextC });
-        setSelectionRange({ startR: r, startC: nextC, endR: r, endC: nextC });
-      }
-    } else if (e.key === "Tab") {
-      e.preventDefault();
-      if (e.shiftKey) {
-        if (c > 0) {
-          const prevC = c - 1;
-          setActiveCell({ r, c: prevC });
-          setSelectionRange({ startR: r, startC: prevC, endR: r, endC: prevC });
-        }
-      } else {
-        if (c < colCount - 1) {
-          const nextC = c + 1;
-          setActiveCell({ r, c: nextC });
-          setSelectionRange({ startR: r, startC: nextC, endR: r, endC: nextC });
-        }
-      }
-    } else if (e.key === "Delete" || e.key === "Backspace") {
-      e.preventDefault();
-      clearSelectionContents();
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "c") {
-      e.preventDefault();
-      copySelectionToClipboard();
-    } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      setEditCell({ r, c });
-      setEditValue(e.key);
-    }
-  };
-
-  const commitEdit = () => {
-    if (!editCell) return;
-    const { r, c } = editCell;
-    setSheets((prev) =>
-      prev.map((s) => {
-        if (s.id !== activeSheetId) return s;
-        const copy = s.gridData.map((row) => [...row]);
-        copy[r][c] = editValue;
-        return { ...s, gridData: copy };
-      })
-    );
-    setEditCell(null);
-  };
-
-  const clearSelectionContents = () => {
-    if (!selectionRange) return;
-    const { startR, startC, endR, endC } = selectionRange;
-    const minR = Math.min(startR, endR);
-    const maxR = Math.max(startR, endR);
-    const minC = Math.min(startC, endC);
-    const maxC = Math.max(startC, endC);
-
-    setSheets((prev) =>
-      prev.map((s) => {
-        if (s.id !== activeSheetId) return s;
-        const copy = s.gridData.map((row) => [...row]);
-        for (let r = minR; r <= maxR; r++) {
-          for (let c = minC; c <= maxC; c++) {
-            copy[r][c] = "";
-          }
-        }
-        return { ...s, gridData: copy };
-      })
-    );
-  };
-
-  // TSV Copy Clipboard Integration
-  const copySelectionToClipboard = () => {
-    if (!selectionRange) return;
-    const { startR, startC, endR, endC } = selectionRange;
-    const minR = Math.min(startR, endR);
-    const maxR = Math.max(startR, endR);
-    const minC = Math.min(startC, endC);
-    const maxC = Math.max(startC, endC);
-
-    const rowsText: string[] = [];
-    for (let r = minR; r <= maxR; r++) {
-      const colsText: string[] = [];
-      for (let c = minC; c <= maxC; c++) {
-        colsText.push(gridData[r][c]);
-      }
-      rowsText.push(colsText.join("\t"));
-    }
-    const tsvText = rowsText.join("\n");
-    navigator.clipboard.writeText(tsvText);
-  };
-
-  // TSV Paste Clipboard Integration
-  const handlePaste = (e: React.ClipboardEvent) => {
-    const target = e.target as HTMLElement;
-    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
-      return;
-    }
-    e.preventDefault();
-    if (!activeCell) return;
-    const { r, c } = activeCell;
-    
-    const pasteText = e.clipboardData.getData("text/plain");
-    const rows = pasteText.split(/\r?\n/);
-    if (rows.length === 0 || (rows.length === 1 && rows[0] === "")) return;
-    
-    const parsedGrid = rows.map((row) => row.split("\t"));
-    
-    const maxRowNeeded = r + parsedGrid.length;
-    const maxColNeeded = c + Math.max(...parsedGrid.map((row) => row.length));
-
-    setSheets((prev) =>
-      prev.map((s) => {
-        if (s.id !== activeSheetId) return s;
-
-        const currentHeight = Math.max(s.rowCount, maxRowNeeded);
-        const currentWidth = Math.max(s.colCount, maxColNeeded);
-        
-        const copy = Array.from({ length: currentHeight }, (_, rIdx) => {
-          const row = s.gridData[rIdx] || [];
-          return Array.from({ length: currentWidth }, (_, cIdx) => row[cIdx] || "");
-        });
-
-        for (let rOffset = 0; rOffset < parsedGrid.length; rOffset++) {
-          for (let cOffset = 0; cOffset < parsedGrid[rOffset].length; cOffset++) {
-            const targetR = r + rOffset;
-            const targetC = c + cOffset;
-            copy[targetR][targetC] = parsedGrid[rOffset][cOffset];
-          }
-        }
-
-        return {
-          ...s,
-          gridData: copy,
-          rowCount: currentHeight,
-          colCount: currentWidth,
-        };
-      })
-    );
-
-    setSelectionRange({
-      startR: r,
-      startC: c,
-      endR: r + parsedGrid.length - 1,
-      endC: c + parsedGrid[0].length - 1,
-    });
-  };
 
   // Grid Controls Toolbar Actions
   const handleAddRow = addRow;
@@ -544,8 +245,7 @@ export default function DocumentIntelligencePage() {
       )
     ) {
       clearActiveSheet();
-      setActiveCell(null);
-      setSelectionRange(null);
+      gridInteraction.clearSelection();
     }
   };
 
@@ -756,10 +456,6 @@ export default function DocumentIntelligencePage() {
     }
   }, [showEditMenu]);
 
-  // Calculations for cells layout
-  const gridRows = Array.from({ length: rowCount }, (_, r) => r);
-  const gridCols = Array.from({ length: colCount }, (_, c) => c);
-  
   const totalDebitPrv = previewLines.reduce((sum, item) => sum + item.debit, 0);
   const totalCreditPrv = previewLines.reduce((sum, item) => sum + item.credit, 0);
   const isBalanced = Math.abs(totalDebitPrv - totalCreditPrv) <= 0.01;
@@ -768,7 +464,7 @@ export default function DocumentIntelligencePage() {
     <div
       ref={containerRef}
       className="wood-shell fade-in p-6 h-screen overflow-hidden flex flex-row gap-6 justify-start"
-      onPaste={handlePaste}
+      onPaste={gridInteraction.handlePaste}
     >
       {/* Left Column: Spreadsheet Content */}
       <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -904,122 +600,13 @@ export default function DocumentIntelligencePage() {
           </button>
         </div>
 
-        {/* Grid Container */}
-        <div
-          className="flex-1 overflow-auto border border-gray-300 rounded-t-xl bg-white relative"
-          onMouseUp={handleCellMouseUp}
-        >
-          <table
-            ref={gridTableRef}
-            onKeyDown={handleKeyDown}
-            tabIndex={0}
-            className="border-collapse table-fixed w-max min-w-full text-xs font-mono outline-none select-none text-right text-gray-800"
-            dir={language === "ar" ? "rtl" : "ltr"}
-          >
-            {/* Header Row */}
-            <thead>
-              <tr className="bg-[#f3f3f3] sticky top-0 z-20 border-b border-gray-300">
-                <th className="w-10 h-7 border-l border-gray-300 text-center text-[10px] text-gray-400 sticky right-0 z-30 bg-[#f3f3f3]" />
-                {gridCols.map((c) => (
-                  <th
-                    key={c}
-                    className="w-32 h-7 border-l border-gray-300 text-center font-bold text-[10.5px] text-gray-600 bg-[#f3f3f3] hover:bg-gray-200 transition-colors"
-                  >
-                    {getColLetter(c)}
-                    {c === 0 && <div className="text-[8.5px] font-normal text-[#107c41] font-semibold">{language === "ar" ? "رمز الحساب" : "Account Code"}</div>}
-                    {c === 1 && <div className="text-[8.5px] font-normal text-[#107c41] font-semibold">{language === "ar" ? "البيان / الوصف" : "Description"}</div>}
-                    {c === 2 && <div className="text-[8.5px] font-normal text-[#107c41] font-semibold">{language === "ar" ? "مدين" : "Debit"}</div>}
-                    {c === 3 && <div className="text-[8.5px] font-normal text-[#107c41] font-semibold">{language === "ar" ? "دائن" : "Credit"}</div>}
-                    {c === 4 && <div className="text-[8.5px] font-normal text-[#107c41] font-semibold">{language === "ar" ? "اسم الشريك" : "Partner"}</div>}
-                    {c === 5 && (
-                      <div className="text-[8.5px] font-normal text-[#107c41] font-semibold flex items-center justify-center gap-1">
-                        <svg className="w-2.5 h-2.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M4 6h16M4 12h10M4 18h7" strokeLinecap="round" />
-                          <circle cx="18" cy="12" r="3" />
-                        </svg>
-                        <span>{language === "ar" ? "حساب تحليلي" : "Analytic Account"}</span>
-                      </div>
-                    )}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-
-            {/* Grid Rows */}
-            <tbody>
-              {gridRows.map((r) => (
-                <tr key={r} className="border-b border-gray-200 h-7 hover:bg-gray-50 bg-white">
-                  <td className="border-l border-gray-300 text-center text-[10px] font-bold text-gray-500 bg-[#f3f3f3] sticky right-0 z-10">
-                    {r + 1}
-                  </td>
-                  
-                  {gridCols.map((c) => {
-                    const val = gridData[r][c];
-                    const active = activeCell?.r === r && activeCell?.c === c;
-                    const editing = editCell?.r === r && editCell?.c === c;
-                    const selected = isCellSelected(r, c);
-                    const borders = isCellSelectionBorder(r, c);
-
-                    let cellClass = "px-2 border-l border-gray-200 relative align-middle cursor-cell transition-all select-none ";
-                    
-                    if (editing) {
-                      cellClass += "p-0 z-10 bg-white text-gray-900";
-                    } else if (active) {
-                      cellClass += "bg-[#e6f2eb]";
-                    } else if (selected) {
-                      cellClass += "bg-[#e2f0d9]";
-                    } else {
-                      cellClass += "bg-white text-gray-800";
-                    }
-
-                    const borderStyle: React.CSSProperties = {};
-                    if (selected && !editing) {
-                      const activeColor = "#107c41"; // Excel signature green
-                      if (borders.top) borderStyle.borderTop = `2px solid ${activeColor}`;
-                      if (borders.bottom) borderStyle.borderBottom = `2px solid ${activeColor}`;
-                      if (borders.left) borderStyle.borderLeft = `2px solid ${activeColor}`;
-                      if (borders.right) borderStyle.borderRight = `2px solid ${activeColor}`;
-                    }
-
-                    return (
-                      <td
-                        key={c}
-                        className={cellClass}
-                        style={borderStyle}
-                        onMouseDown={(e) => handleCellMouseDown(r, c, e)}
-                        onMouseEnter={() => handleCellMouseEnter(r, c)}
-                        onDoubleClick={() => {
-                          setEditCell({ r, c });
-                          setEditValue(val);
-                        }}
-                      >
-                        {editing ? (
-                          <input
-                            ref={editInputRef}
-                            value={editValue}
-                            onChange={(e) => setEditValue(e.target.value)}
-                            onBlur={commitEdit}
-                            className="w-full h-full bg-white text-gray-900 border-2 border-[#107c41] px-1.5 focus:outline-none text-right font-mono"
-                          />
-                        ) : (
-                          <div className={`truncate w-full max-w-[124px] pr-0.5 ${c === 5 && val ? "inline-flex items-center gap-1 text-[#107c41] font-semibold" : ""}`}>
-                            {c === 5 && val && (
-                              <svg className="w-3 h-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M4 6h16M4 12h10M4 18h7" strokeLinecap="round" />
-                                <circle cx="18" cy="12" r="3" />
-                              </svg>
-                            )}
-                            <span className="truncate">{val}</span>
-                          </div>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <SpreadsheetGrid
+          language={language}
+          gridData={gridData}
+          rowCount={rowCount}
+          colCount={colCount}
+          interaction={gridInteraction}
+        />
 
         {/* Worksheets Tabs Bar (Bottom of grid) */}
         <div className="flex bg-[#f3f3f3] border-x border-b border-gray-300 p-1 rounded-b-xl items-center overflow-x-auto select-none gap-1 h-9">

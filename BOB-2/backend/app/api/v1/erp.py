@@ -6,8 +6,6 @@ import os
 import re
 import shutil
 import tempfile
-import unicodedata
-from difflib import SequenceMatcher
 from pathlib import Path
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
@@ -19,6 +17,11 @@ from app.db.database import get_db
 from app.models.core import ERPConnection
 from app.security.file_validation import validate_upload_files, sanitize_filename, FileValidationError
 from app.erp.factory import get_erp_provider
+from app.erp.partner_matching import (
+    closest_partner as _closest_partner_by_name,
+    normalize_partner_name as _normalize_text,
+    text_similarity as _safe_ratio,
+)
 
 logger = logging.getLogger(__name__)
 from app.security.encryption import encrypt_value, decrypt_value
@@ -1111,109 +1114,11 @@ def get_partners(db_session: Session = Depends(get_db), company_id: Optional[int
         raise HTTPException(status_code=400, detail=f"Failed to fetch partners from Odoo: {str(e)}")
 
 
-def _normalize_text(value: str) -> str:
-    normalized = unicodedata.normalize("NFKD", (value or ""))
-    normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
-    normalized = normalized.lower()
-    normalized = re.sub(r"[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED]", "", normalized)
-    normalized = normalized.replace("ـ", "")
-    normalized = normalized.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا")
-    normalized = normalized.replace("ى", "ي").replace("ة", "ه")
-    normalized = re.sub(r"[^\w\u0600-\u06FF\s]", " ", normalized)
-    normalized = re.sub(
-        r"\b(company|co|corp|corporation|inc|ltd|llc|est)\b",
-        " ",
-        normalized,
-    )
-    normalized = re.sub(
-        r"(شركة|مؤسسه|مؤسسة|مكتب|مقاولات|التجارية|العامه|العامة)",
-        " ",
-        normalized,
-    )
-    return re.sub(r"\s+", " ", normalized).strip()
-
-
-def _safe_ratio(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    return SequenceMatcher(None, a, b).ratio()
-
-
-_ARABIC_TO_LATIN_MAP = {
-    "ا": "a", "أ": "a", "إ": "i", "آ": "a", "ء": "a", "ؤ": "o", "ئ": "e",
-    "ب": "b", "ت": "t", "ث": "th", "ج": "j", "ح": "h", "خ": "kh",
-    "د": "d", "ذ": "th", "ر": "r", "ز": "z", "س": "s", "ش": "sh",
-    "ص": "s", "ض": "d", "ط": "t", "ظ": "z", "ع": "a", "غ": "gh",
-    "ف": "f", "ق": "q", "ك": "k", "ل": "l", "م": "m", "ن": "n",
-    "ه": "h", "ة": "a", "و": "w", "ي": "y", "ى": "a",
-}
-
-
-def _transliterate_arabic_to_latin(value: str) -> str:
-    return re.sub(
-        r"\s+",
-        " ",
-        "".join(_ARABIC_TO_LATIN_MAP.get(ch, ch) for ch in (value or "")),
-    ).strip()
-
-
-def _token_overlap(a: str, b: str) -> float:
-    if not a or not b:
-        return 0.0
-    a_tokens = {t for t in a.split() if t}
-    b_tokens = {t for t in b.split() if t}
-    if not a_tokens or not b_tokens:
-        return 0.0
-    overlap = len(a_tokens & b_tokens)
-    return overlap / max(len(a_tokens), len(b_tokens))
-
-
-def _partner_name_similarity(query: str, candidate: str) -> float:
-    if not query or not candidate:
-        return 0.0
-
-    base_ratio = _safe_ratio(query, candidate)
-    token_overlap = _token_overlap(query, candidate)
-    contains_boost = 0.15 if query in candidate or candidate in query else 0.0
-    native_score = (base_ratio * 0.75) + (token_overlap * 0.25)
-
-    query_latin = _transliterate_arabic_to_latin(query)
-    candidate_latin = _transliterate_arabic_to_latin(candidate)
-    cross_lingual_score = (_safe_ratio(query_latin, candidate_latin) * 0.75) + (
-        _token_overlap(query_latin, candidate_latin) * 0.25
-    )
-    return min(1.0, max(native_score, cross_lingual_score) + contains_boost)
-
-
 def _amount_similarity(target: float, candidate: float) -> float:
     if target <= 0 and candidate <= 0:
         return 1.0
     base = max(abs(target), abs(candidate), 1.0)
     return max(0.0, 1.0 - (abs(target - candidate) / base))
-
-
-def _closest_partner_by_name(partners_list: list, partner_name: str) -> tuple[Optional[int], str, float]:
-    query = _normalize_text(partner_name or "")
-    if not query:
-        return None, "", 0.0
-
-    best = None
-    best_score = 0.0
-    for partner in partners_list or []:
-        name = partner.get("name") or ""
-        candidate = _normalize_text(name)
-        if not candidate:
-            continue
-
-        score = _partner_name_similarity(query, candidate)
-
-        if score > best_score:
-            best = partner
-            best_score = score
-
-    if best and best_score >= 0.5:
-        return best.get("id"), best.get("name") or "", best_score
-    return None, "", 0.0
 
 
 def _extract_analytic_account_id(line: dict) -> Optional[int]:

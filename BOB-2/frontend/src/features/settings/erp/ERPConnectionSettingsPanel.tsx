@@ -13,6 +13,7 @@ export function ERPConnectionSettingsPanel() {
     form,
     setForm,
     savedConnection,
+    providers,
     testResult,
     loading,
     working,
@@ -34,7 +35,7 @@ export function ERPConnectionSettingsPanel() {
           <p className="text-xs font-semibold tracking-wider text-amber-400">ACCOUNTING SYSTEMS</p>
           <h1 className="mt-1 text-2xl font-bold text-white">الاتصال بالأنظمة المحاسبية</h1>
           <p className="mt-2 max-w-3xl text-sm leading-6 text-white/55">
-            إدارة اتصال Odoo من مكان مركزي داخل الضبط. تُشفّر بيانات الاعتماد ولا تُعاد كلمة المرور إلى المتصفح.
+            اختر النظام المحاسبي من كتالوج موحد. Odoo متصل فعليًا الآن، وتظهر الأنظمة الأخرى مع حالة الموصل بوضوح دون تخزين بيانات اعتماد لموصل غير منفذ.
           </p>
         </div>
         <div className="rounded-2xl border border-white/10 bg-black/30 px-5 py-3 text-sm">
@@ -56,8 +57,16 @@ export function ERPConnectionSettingsPanel() {
         <div className="grid gap-4 md:grid-cols-2">
           <label className="space-y-2 text-sm text-white/75">
             <span className="block font-medium">مزود النظام</span>
-            <select value="odoo" disabled className={inputClass}>
-              <option value="odoo">Odoo ERP 16 / 17 / 18 / 19</option>
+            <select
+              value={form.provider}
+              onChange={(event) => setForm((current) => ({ ...current, provider: event.target.value }))}
+              className={inputClass}
+            >
+              {providers.map((provider) => (
+                <option key={provider.key} value={provider.key}>
+                  {provider.display_name}{provider.implemented ? " — جاهز" : " — الموصل قريبًا"}
+                </option>
+              ))}
             </select>
           </label>
 
@@ -136,6 +145,23 @@ export function ERPConnectionSettingsPanel() {
             {working ? "جارٍ التنفيذ…" : savedConnection ? "تحديث الاتصال" : "حفظ الاتصال"}
           </button>
         </div>
+      </section>
+
+      <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {providers.map((provider) => (
+          <article key={provider.key} className="rounded-2xl border border-white/10 bg-black/30 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-semibold text-white">{provider.display_name}</h2>
+                <p className="mt-1 text-xs text-white/45">{provider.category} · {provider.market}</p>
+              </div>
+              <span className={`rounded-full px-2 py-1 text-[10px] font-bold ${provider.implemented ? "bg-emerald-500/15 text-emerald-300" : "bg-amber-500/10 text-amber-300"}`}>
+                {provider.implemented ? "موصل جاهز" : "يتطلب Adapter"}
+              </span>
+            </div>
+            <p className="mt-3 text-xs leading-5 text-white/55">{provider.description}</p>
+          </article>
+        ))}
       </section>
 
       {testResult ? (

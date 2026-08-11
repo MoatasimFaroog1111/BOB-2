@@ -1,5 +1,5 @@
 # GuardianAI Backend — Railway-compatible, CPU-first production image
-FROM python:3.12-slim AS runtime
+FROM python:3.14-slim AS runtime
 
 # Provider/model/host allowlists are non-secret deployment policy defaults. Railway
 # service variables may still override them explicitly. Credentials are never baked

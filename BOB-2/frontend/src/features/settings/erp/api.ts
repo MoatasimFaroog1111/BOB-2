@@ -7,6 +7,7 @@ import type {
   ERPConnection,
   ERPConnectionInput,
   ERPConnectionTestResult,
+  ERPProviderDefinition,
 } from "./types";
 
 export interface ERPSettingsGateway {
@@ -14,9 +15,15 @@ export interface ERPSettingsGateway {
   testConnection(payload: ERPConnectionInput): Promise<ERPConnectionTestResult>;
   testSavedConnection(): Promise<ERPConnectionTestResult>;
   saveConnection(payload: ERPConnectionInput): Promise<ERPConnection>;
+  listProviders(): Promise<ERPProviderDefinition[]>;
 }
 
 class HttpERPSettingsGateway implements ERPSettingsGateway {
+  async listProviders(): Promise<ERPProviderDefinition[]> {
+    const response = await requestJson<{ providers: ERPProviderDefinition[] }>("/api/v1/erp/providers");
+    return response.providers;
+  }
+
   async getSavedConnection(): Promise<ERPConnection | null> {
     try {
       return await requestJson<ERPConnection>("/api/v1/erp/connection");

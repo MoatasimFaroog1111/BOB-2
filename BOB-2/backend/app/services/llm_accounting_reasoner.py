@@ -17,6 +17,7 @@ from app.services.external_llm_gateway import (
     ExternalLLMRequestContext,
     record_external_llm_event,
 )
+from app.services.multi_provider_llm_gateway import MultiProviderExternalLLMGateway
 from app.services.secret_store import SecretNotConfigured, SecretStoreError, get_tenant_secret
 
 logger = logging.getLogger(__name__)
@@ -60,7 +61,7 @@ class LLMAccountingReasoner:
         model: str | None = None,
         api_key: str | None = None,
         api_url: str | None = None,
-        gateway_factory: GatewayFactory = ExternalLLMGateway,
+        gateway_factory: GatewayFactory = MultiProviderExternalLLMGateway,
     ) -> None:
         self.provider = (provider or settings.ACCOUNTING_LLM_PROVIDER).strip().lower()
         self.model = (model or settings.ACCOUNTING_LLM_MODEL).strip()
@@ -109,7 +110,7 @@ class LLMAccountingReasoner:
         # A non-secret probe satisfies the gateway's final credential-presence check
         # during policy preflight. No network call occurs in authorize(). This ensures
         # kill-switch, tenant, purpose, provider/model, and DPA decisions are audited
-        # before the application asks Key Vault for a value.
+        # before the application asks the secret store for a value.
         gateway = self.gateway_factory(
             db=db_session,
             context=context,

@@ -39,10 +39,21 @@ export type ExternalAISettings = {
   required_dpa_version: string;
   globally_allowed_providers: string[];
   globally_allowed_models: string[];
+  provider_catalog: Array<{
+    key: string;
+    display_name: string;
+    models: Array<{ id: string; enabled: boolean }>;
+  }>;
   available_purposes: string[];
   available_retention_modes: string[];
   global_max_redacted_text_chars: number;
   policy: ExternalAIPolicy | null;
+};
+
+export type ExternalAIConnectionTest = {
+  connected: boolean;
+  provider: string;
+  model: string;
 };
 
 export type ExternalAIPolicyInput = {

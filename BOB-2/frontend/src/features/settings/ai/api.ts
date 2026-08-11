@@ -2,6 +2,7 @@ import { requestJson } from "@/features/settings/shared/http";
 
 import type {
   CredentialStatus,
+  ExternalAIConnectionTest,
   ExternalAIPolicyInput,
   ExternalAISettings,
 } from "./types";
@@ -11,6 +12,7 @@ export interface ExternalAISettingsGateway {
   saveCredential(apiKey: string): Promise<CredentialStatus>;
   revokeCredential(): Promise<CredentialStatus>;
   savePolicy(payload: ExternalAIPolicyInput): Promise<ExternalAISettings>;
+  testConnection(): Promise<ExternalAIConnectionTest>;
 }
 
 class HttpExternalAISettingsGateway implements ExternalAISettingsGateway {
@@ -35,6 +37,12 @@ class HttpExternalAISettingsGateway implements ExternalAISettingsGateway {
     return requestJson<ExternalAISettings>("/api/v1/llm/policy", {
       method: "PUT",
       body: JSON.stringify(payload),
+    });
+  }
+
+  testConnection(): Promise<ExternalAIConnectionTest> {
+    return requestJson<ExternalAIConnectionTest>("/api/v1/llm/test-connection", {
+      method: "POST",
     });
   }
 }

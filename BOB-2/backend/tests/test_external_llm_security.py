@@ -541,7 +541,7 @@ def test_policy_admin_requires_current_dpa_and_never_returns_api_key(client, aut
         json={
             "external_llm_enabled": True,
             "approved_provider": "anthropic",
-            "approved_model": "claude-sonnet-4-20250514",
+            "approved_model": "claude-sonnet-5",
             "allowed_purposes": ["accounting_reasoning"],
             "allow_redacted_document_text": False,
             "allow_financial_values": False,

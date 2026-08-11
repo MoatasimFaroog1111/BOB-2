@@ -7,6 +7,7 @@ import type {
   ERPConnection,
   ERPConnectionInput,
   ERPConnectionTestResult,
+  ERPProviderDefinition,
 } from "./types";
 
 const EMPTY_FORM: ERPConnectionInput = {
@@ -20,6 +21,7 @@ const EMPTY_FORM: ERPConnectionInput = {
 export function useERPConnectionSettings(onSaved?: () => void) {
   const [form, setForm] = useState<ERPConnectionInput>(EMPTY_FORM);
   const [savedConnection, setSavedConnection] = useState<ERPConnection | null>(null);
+  const [providers, setProviders] = useState<ERPProviderDefinition[]>([]);
   const [testResult, setTestResult] = useState<ERPConnectionTestResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
@@ -29,11 +31,15 @@ export function useERPConnectionSettings(onSaved?: () => void) {
   const load = useCallback(async () => {
     setError("");
     try {
-      const connection = await erpSettingsGateway.getSavedConnection();
+      const [connection, providerCatalog] = await Promise.all([
+        erpSettingsGateway.getSavedConnection(),
+        erpSettingsGateway.listProviders(),
+      ]);
+      setProviders(providerCatalog);
       setSavedConnection(connection);
       if (connection) {
         setForm({
-          provider: "odoo",
+          provider: connection.provider,
           url: connection.url,
           db: connection.db,
           username: connection.username,
@@ -66,6 +72,9 @@ export function useERPConnectionSettings(onSaved?: () => void) {
 
   const testDraft = () =>
     perform(async () => {
+      if (!providers.find((provider) => provider.key === form.provider)?.implemented) {
+        throw new Error("الموصل المحدد ظاهر في الكتالوج لكنه غير منفذ بعد، لذلك لن يتم ادعاء اتصال غير حقيقي.");
+      }
       if (!form.url || !form.db || !form.username || !form.password) {
         throw new Error("أكمل رابط Odoo وقاعدة البيانات واسم المستخدم وكلمة المرور أولًا.");
       }
@@ -83,6 +92,9 @@ export function useERPConnectionSettings(onSaved?: () => void) {
 
   const save = () =>
     perform(async () => {
+      if (!providers.find((provider) => provider.key === form.provider)?.implemented) {
+        throw new Error("لا يمكن حفظ هذا النظام قبل تثبيت موصله الفعلي.");
+      }
       if (!form.url || !form.db || !form.username || !form.password) {
         throw new Error("أدخل كلمة المرور أو مفتاح API مع بقية بيانات الاتصال قبل الحفظ.");
       }
@@ -97,6 +109,7 @@ export function useERPConnectionSettings(onSaved?: () => void) {
     form,
     setForm,
     savedConnection,
+    providers,
     testResult,
     loading,
     working,

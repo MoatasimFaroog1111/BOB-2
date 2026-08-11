@@ -1,9 +1,18 @@
 export type ERPConnectionInput = {
-  provider: "odoo";
+  provider: string;
   url: string;
   db: string;
   username: string;
   password: string;
+};
+
+export type ERPProviderDefinition = {
+  key: string;
+  display_name: string;
+  category: string;
+  market: string;
+  implemented: boolean;
+  description: string;
 };
 
 export type ERPConnection = {

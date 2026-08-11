@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.models.core import AuditLog, Organization, User
 from app.models.external_llm import ExternalLLMPolicy
+from app.services.external_llm_providers import external_llm_provider_registry
 
 ALLOWED_EXTERNAL_LLM_PURPOSES = frozenset(
     {
@@ -549,8 +550,9 @@ class ExternalLLMGateway:
         self.context = context
         self.provider = provider.strip().lower()
         self.model = model.strip()
+        self.provider_definition = external_llm_provider_registry.get(self.provider)
         self.api_key = api_key if api_key is not None else self._resolve_api_key()
-        self.api_url = api_url or settings.ACCOUNTING_LLM_API_URL
+        self.api_url = api_url or self.provider_definition.adapter.endpoint(self.model)
         self.transport = transport or self._post_json
 
     def _resolve_api_key(self) -> str:
@@ -649,21 +651,12 @@ class ExternalLLMGateway:
             raw_document_text=raw_document_text,
             policy=policy,
         )
-        request_payload: dict[str, Any] = {
-            "model": self.model,
-            "max_tokens": 1024,
-            "temperature": temperature,
-            "system": system_prompt,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": json.dumps(sanitized.payload, ensure_ascii=False),
-                },
-            ],
-        }
-        # Anthropic does not accept OpenAI's response_format field. The existing
-        # system prompts already require JSON-only output, so keep this argument
-        # for caller compatibility without forwarding an unsupported parameter.
+        request_payload = self.provider_definition.adapter.build_request(
+            model=self.model,
+            system_prompt=system_prompt,
+            user_content=json.dumps(sanitized.payload, ensure_ascii=False),
+            temperature=temperature,
+        )
         _ = response_format
         request_bytes = json.dumps(
             request_payload,
@@ -692,11 +685,12 @@ class ExternalLLMGateway:
             },
         )
         try:
-            response_payload = self.transport(
+            provider_response = self.transport(
                 self.api_url,
                 request_payload,
                 self.api_key,
             )
+            response_payload = self.provider_definition.adapter.normalize_response(provider_response)
         except Exception as exc:
             reason = getattr(exc, "reason", "external_llm_provider_failed")
             record_external_llm_event(
@@ -733,8 +727,8 @@ class ExternalLLMGateway:
         )
         return response_payload
 
-    @staticmethod
     def _post_json(
+        self,
         api_url: str,
         payload: dict[str, Any],
         api_key: str,
@@ -754,8 +748,7 @@ class ExternalLLMGateway:
                 endpoint.path,
                 body=body,
                 headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
+                    **self.provider_definition.adapter.headers(api_key),
                     "Content-Type": "application/json",
                     "Accept": "application/json",
                     "Accept-Encoding": "identity",

@@ -112,9 +112,16 @@ class Settings(BaseSettings):
     # a tenant-scoped secure secret binding.
     EXTERNAL_LLM_ENABLED: bool = False
     EXTERNAL_LLM_REQUIRED_DPA_VERSION: str = "2026-07-v1"
-    EXTERNAL_LLM_ALLOWED_PROVIDERS: str = "anthropic"
-    EXTERNAL_LLM_ALLOWED_MODELS: str = "anthropic:claude-sonnet-4-20250514"
-    EXTERNAL_LLM_ALLOWED_HOSTS: str = "api.anthropic.com"
+    EXTERNAL_LLM_ALLOWED_PROVIDERS: str = "openai,anthropic,google,xai"
+    EXTERNAL_LLM_ALLOWED_MODELS: str = (
+        "openai:gpt-5.6-sol,openai:gpt-5.6-terra,openai:gpt-5.6-luna,openai:gpt-5.4,"
+        "anthropic:claude-sonnet-5,anthropic:claude-opus-5,anthropic:claude-sonnet-4-6,"
+        "google:gemini-3.6-flash,google:gemini-3.1-pro-preview,google:gemini-3.1-flash-lite,"
+        "xai:grok-4.5,xai:grok-4.3"
+    )
+    EXTERNAL_LLM_ALLOWED_HOSTS: str = (
+        "api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.x.ai"
+    )
     EXTERNAL_LLM_MAX_REQUEST_BYTES: int = 262_144
     EXTERNAL_LLM_MAX_RESPONSE_BYTES: int = 1_048_576
     EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS: int = 4_000
@@ -123,7 +130,7 @@ class Settings(BaseSettings):
     # remain empty; external provider credentials are resolved from secret storage.
     ANTHROPIC_API_KEY: str = ""
     ACCOUNTING_LLM_PROVIDER: str = "anthropic"
-    ACCOUNTING_LLM_MODEL: str = "claude-sonnet-4-20250514"
+    ACCOUNTING_LLM_MODEL: str = "claude-sonnet-5"
     ACCOUNTING_LLM_API_URL: str = "https://api.anthropic.com/v1/messages"
     ACCOUNTING_LLM_API_KEY: str = ""
     ACCOUNTING_LLM_TIMEOUT_SECONDS: int = 45

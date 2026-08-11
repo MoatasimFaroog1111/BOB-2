@@ -18,6 +18,8 @@ from app.services.external_llm_gateway import (
     ALLOWED_EXTERNAL_LLM_PURPOSES,
     ALLOWED_RETENTION_MODES,
 )
+from app.services.external_llm_connection import test_external_llm_connection
+from app.services.external_llm_providers import external_llm_provider_registry
 from app.services.secret_store import (
     SecretStoreError,
     binding_status,
@@ -156,6 +158,7 @@ def _policy_response(db: Session, policy: ExternalLLMPolicy | None, organization
         "required_dpa_version": settings.EXTERNAL_LLM_REQUIRED_DPA_VERSION,
         "globally_allowed_providers": allowed_providers,
         "globally_allowed_models": allowed_models,
+        "provider_catalog": external_llm_provider_registry.catalog(set(allowed_models)),
         "available_purposes": sorted(ALLOWED_EXTERNAL_LLM_PURPOSES),
         "available_retention_modes": sorted(ALLOWED_RETENTION_MODES),
         "global_max_redacted_text_chars": settings.EXTERNAL_LLM_MAX_REDACTED_TEXT_CHARS,
@@ -184,6 +187,25 @@ def _policy_response(db: Session, policy: ExternalLLMPolicy | None, organization
             "updated_at": policy.updated_at,
         },
     }
+
+
+@router.post("/test-connection")
+def test_external_llm_provider_connection(
+    db: Session = Depends(get_db),
+    token_payload: dict = Depends(require_permission("manage_settings")),
+):
+    organization_id, user_id = _organization_context(db, token_payload)
+    try:
+        return test_external_llm_connection(
+            db,
+            organization_id=organization_id,
+            user_id=user_id,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"External AI connection test failed: {exc}",
+        ) from exc
 
 
 def _validate_enable_request(

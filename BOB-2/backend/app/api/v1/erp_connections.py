@@ -15,11 +15,17 @@ from app.db.database import get_db
 from app.erp.discovery import load_financial_kb, run_discovery_orchestrator
 from app.erp.factory import get_erp_provider
 from app.erp.odoo_cache import invalidate as invalidate_odoo_cache
+from app.erp.provider_catalog import public_erp_provider_catalog
 from app.models.core import ERPConnection
 from app.security.encryption import decrypt_value, encrypt_value
 from app.security.tenant_scope import current_organization_id
 
 router = APIRouter()
+
+
+@router.get("/providers")
+def list_erp_providers():
+    return {"providers": public_erp_provider_catalog()}
 
 
 class ERPConnectionRequest(BaseModel):

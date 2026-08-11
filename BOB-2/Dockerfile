@@ -1,12 +1,18 @@
 # GuardianAI Backend — Railway-compatible, CPU-first production image
 FROM python:3.12-slim AS runtime
 
+# Provider/model/host allowlists are non-secret deployment policy defaults. Railway
+# service variables may still override them explicitly. Credentials are never baked
+# into the image and remain tenant-scoped in the configured secret store.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     PORT=8000 \
-    STORAGE_DIR=/data/storage
+    STORAGE_DIR=/data/storage \
+    EXTERNAL_LLM_ALLOWED_PROVIDERS=openai,anthropic,google,xai \
+    EXTERNAL_LLM_ALLOWED_MODELS=openai:gpt-5.6-sol,openai:gpt-5.6-terra,openai:gpt-5.6-luna,openai:gpt-5.4,anthropic:claude-sonnet-5,anthropic:claude-opus-5,anthropic:claude-sonnet-4-6,google:gemini-3.6-flash,google:gemini-3.1-pro-preview,google:gemini-3.1-flash-lite,xai:grok-4.5,xai:grok-4.3 \
+    EXTERNAL_LLM_ALLOWED_HOSTS=api.openai.com,api.anthropic.com,generativelanguage.googleapis.com,api.x.ai
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         tesseract-ocr \

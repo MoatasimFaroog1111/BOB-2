@@ -5,6 +5,13 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from app.erp.base import ERPConnectionProvider
+from app.erp.providers.cloud_accounting import (
+    BusinessCentralProvider,
+    OracleFusionERPProvider,
+    QuickBooksOnlineProvider,
+    SAPS4HANAProvider,
+    XeroProvider,
+)
 from app.erp.providers.odoo import OdooProvider
 
 ERPProviderBuilder = Callable[..., ERPConnectionProvider]
@@ -31,9 +38,17 @@ class ERPProviderRegistry:
             raise ValueError(f"Unsupported ERP provider: {provider}")
         return builder(**credentials)
 
+    def supported_providers(self) -> tuple[str, ...]:
+        return tuple(self._builders)
+
 
 provider_registry = ERPProviderRegistry()
 provider_registry.register("odoo", OdooProvider)
+provider_registry.register("sap_s4hana", SAPS4HANAProvider)
+provider_registry.register("oracle_fusion", OracleFusionERPProvider)
+provider_registry.register("business_central", BusinessCentralProvider)
+provider_registry.register("quickbooks_online", QuickBooksOnlineProvider)
+provider_registry.register("xero", XeroProvider)
 
 
 def get_erp_provider(

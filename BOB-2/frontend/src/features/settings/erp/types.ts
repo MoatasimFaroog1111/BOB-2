@@ -1,5 +1,13 @@
+export type ERPProviderId =
+  | "odoo"
+  | "sap_s4hana"
+  | "oracle_fusion"
+  | "business_central"
+  | "quickbooks_online"
+  | "xero";
+
 export type ERPConnectionInput = {
-  provider: "odoo";
+  provider: ERPProviderId;
   url: string;
   db: string;
   username: string;
@@ -8,7 +16,7 @@ export type ERPConnectionInput = {
 
 export type ERPConnection = {
   id: number;
-  provider: string;
+  provider: ERPProviderId | string;
   url: string;
   db: string;
   username: string;
@@ -17,6 +25,8 @@ export type ERPConnection = {
 
 export type ERPConnectionTestResult = {
   connected: boolean;
+  provider?: string;
+  system?: string;
   uid?: number;
   username?: string;
   odoo_version?: {

@@ -9,6 +9,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.models.external_llm import ExternalLLMPolicy
 from app.services.external_llm_gateway import (
     ExternalLLMAuditError,
     ExternalLLMGateway,
@@ -17,6 +18,7 @@ from app.services.external_llm_gateway import (
     ExternalLLMRequestContext,
     record_external_llm_event,
 )
+from app.services.multi_provider_llm_gateway import MultiProviderExternalLLMGateway
 from app.services.secret_store import SecretNotConfigured, SecretStoreError, get_tenant_secret
 
 logger = logging.getLogger(__name__)
@@ -60,14 +62,27 @@ class LLMAccountingReasoner:
         model: str | None = None,
         api_key: str | None = None,
         api_url: str | None = None,
-        gateway_factory: GatewayFactory = ExternalLLMGateway,
+        gateway_factory: GatewayFactory = MultiProviderExternalLLMGateway,
     ) -> None:
+        self._explicit_selection = provider is not None or model is not None
         self.provider = (provider or settings.ACCOUNTING_LLM_PROVIDER).strip().lower()
         self.model = (model or settings.ACCOUNTING_LLM_MODEL).strip()
         # Direct key injection exists only for isolated non-production tests.
         self.api_key = None if settings.is_production else api_key
         self.api_url = api_url
         self.gateway_factory = gateway_factory
+
+    def _resolve_selection(self, db: Session, organization_id: int) -> tuple[str, str]:
+        if self._explicit_selection:
+            return self.provider, self.model
+        policy = (
+            db.query(ExternalLLMPolicy)
+            .filter(ExternalLLMPolicy.organization_id == organization_id)
+            .first()
+        )
+        if policy and policy.approved_provider and policy.approved_model:
+            return policy.approved_provider.strip().lower(), policy.approved_model.strip()
+        return self.provider, self.model
 
     def analyze(
         self,
@@ -99,6 +114,7 @@ class LLMAccountingReasoner:
                 error="External AI reasoning requires authenticated tenant context.",
             )
 
+        provider, model = self._resolve_selection(db_session, organization_id)
         context = ExternalLLMRequestContext(
             organization_id=organization_id,
             user_id=user_id,
@@ -109,12 +125,12 @@ class LLMAccountingReasoner:
         # A non-secret probe satisfies the gateway's final credential-presence check
         # during policy preflight. No network call occurs in authorize(). This ensures
         # kill-switch, tenant, purpose, provider/model, and DPA decisions are audited
-        # before the application asks Key Vault for a value.
+        # before the application asks the secret store for a value.
         gateway = self.gateway_factory(
             db=db_session,
             context=context,
-            provider=self.provider,
-            model=self.model,
+            provider=provider,
+            model=model,
             api_key=self.api_key or "policy-preflight-only",
             api_url=self.api_url,
         )
@@ -125,8 +141,8 @@ class LLMAccountingReasoner:
             logger.info("External accounting reasoning blocked by tenant disclosure policy")
             return LLMReasoningResult(
                 status="blocked_by_policy",
-                provider=self.provider,
-                model=self.model,
+                provider=provider,
+                model=model,
                 reasoning=None,
                 error="External AI processing is not authorized for this organization.",
             )
@@ -134,8 +150,8 @@ class LLMAccountingReasoner:
             logger.error("External accounting reasoning failed closed because audit persistence failed")
             return LLMReasoningResult(
                 status="blocked_audit_unavailable",
-                provider=self.provider,
-                model=self.model,
+                provider=provider,
+                model=model,
                 reasoning=None,
                 error="External AI processing is unavailable because security auditing failed.",
             )
@@ -155,14 +171,14 @@ class LLMAccountingReasoner:
                     action="external_llm_disclosure_blocked",
                     details={
                         "reason": "external_llm_tenant_credential_missing",
-                        "provider": self.provider,
-                        "model": self.model,
+                        "provider": provider,
+                        "model": model,
                     },
                 )
                 return LLMReasoningResult(
                     status="blocked_secret_not_configured",
-                    provider=self.provider,
-                    model=self.model,
+                    provider=provider,
+                    model=model,
                     reasoning=None,
                     error="The organization has no active external AI credential.",
                 )
@@ -173,15 +189,15 @@ class LLMAccountingReasoner:
                     action="external_llm_disclosure_blocked",
                     details={
                         "reason": "external_llm_secret_store_unavailable",
-                        "provider": self.provider,
-                        "model": self.model,
+                        "provider": provider,
+                        "model": model,
                     },
                 )
                 logger.warning("External accounting reasoning secret resolution failed closed")
                 return LLMReasoningResult(
                     status="blocked_secret_store_unavailable",
-                    provider=self.provider,
-                    model=self.model,
+                    provider=provider,
+                    model=model,
                     reasoning=None,
                     error="External AI processing is unavailable because the secure credential store failed.",
                 )
@@ -206,16 +222,16 @@ class LLMAccountingReasoner:
             reasoning = self._validate_reasoning(self._parse_json_content(content))
             return LLMReasoningResult(
                 status="success",
-                provider=self.provider,
-                model=self.model,
+                provider=provider,
+                model=model,
                 reasoning=reasoning,
             )
         except ExternalLLMPolicyDenied:
             logger.info("External accounting reasoning blocked by tenant disclosure policy")
             return LLMReasoningResult(
                 status="blocked_by_policy",
-                provider=self.provider,
-                model=self.model,
+                provider=provider,
+                model=model,
                 reasoning=None,
                 error="External AI processing is not authorized for this organization.",
             )
@@ -223,8 +239,8 @@ class LLMAccountingReasoner:
             logger.error("External accounting reasoning failed closed because audit persistence failed")
             return LLMReasoningResult(
                 status="blocked_audit_unavailable",
-                provider=self.provider,
-                model=self.model,
+                provider=provider,
+                model=model,
                 reasoning=None,
                 error="External AI processing is unavailable because security auditing failed.",
             )
@@ -232,8 +248,8 @@ class LLMAccountingReasoner:
             logger.warning("External accounting reasoning provider request failed")
             return LLMReasoningResult(
                 status="provider_failed",
-                provider=self.provider,
-                model=self.model,
+                provider=provider,
+                model=model,
                 reasoning=None,
                 error="The external AI provider request failed.",
             )
@@ -241,8 +257,8 @@ class LLMAccountingReasoner:
             logger.warning("External accounting reasoning returned an invalid response shape")
             return LLMReasoningResult(
                 status="invalid_provider_response",
-                provider=self.provider,
-                model=self.model,
+                provider=provider,
+                model=model,
                 reasoning=None,
                 error="The external AI provider returned an invalid response.",
             )

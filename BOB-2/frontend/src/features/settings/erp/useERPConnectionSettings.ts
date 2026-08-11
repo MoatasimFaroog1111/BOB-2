@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { erpSettingsGateway } from "./api";
+import { getERPProviderDefinition, isERPProviderId } from "./providers";
 import type {
   ERPConnection,
   ERPConnectionInput,
   ERPConnectionTestResult,
+  ERPProviderId,
 } from "./types";
 
 const EMPTY_FORM: ERPConnectionInput = {
@@ -16,6 +18,22 @@ const EMPTY_FORM: ERPConnectionInput = {
   username: "",
   password: "",
 };
+
+function validateForm(form: ERPConnectionInput): void {
+  const definition = getERPProviderDefinition(form.provider);
+  if (!form.url.trim()) {
+    throw new Error(`أدخل ${definition.urlLabel} أولًا.`);
+  }
+  if (definition.requiresDb && !form.db.trim()) {
+    throw new Error(`أدخل ${definition.dbLabel} أولًا.`);
+  }
+  if (definition.requiresUsername && !form.username.trim()) {
+    throw new Error(`أدخل ${definition.usernameLabel} أولًا.`);
+  }
+  if (!form.password.trim()) {
+    throw new Error(`أدخل ${definition.passwordLabel} أولًا.`);
+  }
+}
 
 export function useERPConnectionSettings(onSaved?: () => void) {
   const [form, setForm] = useState<ERPConnectionInput>(EMPTY_FORM);
@@ -32,8 +50,11 @@ export function useERPConnectionSettings(onSaved?: () => void) {
       const connection = await erpSettingsGateway.getSavedConnection();
       setSavedConnection(connection);
       if (connection) {
+        const provider: ERPProviderId = isERPProviderId(connection.provider)
+          ? connection.provider
+          : "odoo";
         setForm({
-          provider: "odoo",
+          provider,
           url: connection.url,
           db: connection.db,
           username: connection.username,
@@ -64,11 +85,21 @@ export function useERPConnectionSettings(onSaved?: () => void) {
     }
   }, []);
 
+  const selectProvider = (provider: ERPProviderId) => {
+    const definition = getERPProviderDefinition(provider);
+    setTestResult(null);
+    setForm({
+      provider,
+      url: definition.defaultUrl || "",
+      db: "",
+      username: "",
+      password: "",
+    });
+  };
+
   const testDraft = () =>
     perform(async () => {
-      if (!form.url || !form.db || !form.username || !form.password) {
-        throw new Error("أكمل رابط Odoo وقاعدة البيانات واسم المستخدم وكلمة المرور أولًا.");
-      }
+      validateForm(form);
       const result = await erpSettingsGateway.testConnection(form);
       setTestResult(result);
       setMessage(result.connected ? "نجح اختبار الاتصال بالبيانات المدخلة." : "لم ينجح اختبار الاتصال.");
@@ -83,9 +114,7 @@ export function useERPConnectionSettings(onSaved?: () => void) {
 
   const save = () =>
     perform(async () => {
-      if (!form.url || !form.db || !form.username || !form.password) {
-        throw new Error("أدخل كلمة المرور أو مفتاح API مع بقية بيانات الاتصال قبل الحفظ.");
-      }
+      validateForm(form);
       const connection = await erpSettingsGateway.saveConnection(form);
       setSavedConnection(connection);
       setForm((current) => ({ ...current, password: "" }));
@@ -96,6 +125,7 @@ export function useERPConnectionSettings(onSaved?: () => void) {
   return {
     form,
     setForm,
+    selectProvider,
     savedConnection,
     testResult,
     loading,

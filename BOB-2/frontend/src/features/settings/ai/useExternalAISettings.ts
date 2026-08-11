@@ -101,10 +101,9 @@ export function useExternalAISettings() {
 
   const modelOptions = useMemo(() => {
     if (!settings || !form.approved_provider) return [];
-    const prefix = `${form.approved_provider}:`;
-    return settings.globally_allowed_models
-      .filter((value) => value.startsWith(prefix))
-      .map((value) => value.slice(prefix.length));
+    return settings.provider_catalog
+      .find((provider) => provider.key === form.approved_provider)
+      ?.models.filter((model) => model.enabled) ?? [];
   }, [form.approved_provider, settings]);
 
   const perform = useCallback(async (operation: () => Promise<void>) => {
@@ -147,6 +146,14 @@ export function useExternalAISettings() {
       setMessage("تم حفظ مزود الذكاء الاصطناعي والنموذج وسياسة الاستخدام.");
     });
 
+  const testConnection = () =>
+    perform(async () => {
+      const result = await externalAISettingsGateway.testConnection();
+      setMessage(result.connected
+        ? `نجح الاتصال بـ ${result.provider} باستخدام ${result.model}.`
+        : "فشل اختبار الاتصال بالنموذج الخارجي.");
+    });
+
   return {
     settings,
     form,
@@ -161,5 +168,6 @@ export function useExternalAISettings() {
     saveCredential,
     revokeCredential,
     savePolicy,
+    testConnection,
   };
 }

@@ -53,6 +53,7 @@ export function ExternalAISettingsPanel() {
     saveCredential,
     revokeCredential,
     savePolicy,
+    testConnection,
   } = useExternalAISettings();
 
   if (loading) {
@@ -173,8 +174,10 @@ export function ExternalAISettingsPanel() {
               className={inputClass}
             >
               <option value="">اختر المزود</option>
-              {settings?.globally_allowed_providers.map((provider) => (
-                <option key={provider} value={provider}>{provider}</option>
+              {settings?.provider_catalog.map((provider) => (
+                <option key={provider.key} value={provider.key} disabled={!provider.models.some((model) => model.enabled)}>
+                  {provider.display_name}{provider.models.some((model) => model.enabled) ? "" : " — غير مفعّل في النشر"}
+                </option>
               ))}
             </select>
           </Field>
@@ -188,7 +191,7 @@ export function ExternalAISettingsPanel() {
             >
               <option value="">اختر النموذج</option>
               {modelOptions.map((model) => (
-                <option key={model} value={model}>{model}</option>
+                <option key={model.id} value={model.id}>{model.id}</option>
               ))}
             </select>
           </Field>
@@ -295,7 +298,15 @@ export function ExternalAISettingsPanel() {
           </span>
         </label>
 
-        <div className="flex justify-end">
+        <div className="flex flex-wrap justify-end gap-3">
+          <button
+            type="button"
+            disabled={saving || !settings?.effective_enabled}
+            onClick={() => void testConnection()}
+            className="rounded-xl border border-emerald-500/40 px-5 py-2.5 text-sm font-semibold text-emerald-300 disabled:opacity-40"
+          >
+            اختبار الاتصال الفعلي
+          </button>
           <button
             type="button"
             disabled={saving}

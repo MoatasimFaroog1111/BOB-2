@@ -20,6 +20,7 @@ interface BankRuleEditorProps {
   language: string;
   lockJournal?: boolean;
   lockName?: boolean;
+  lockPriority?: boolean;
 }
 
 const TEXT_OPERATORS = ["contains", "not_contains", "equals", "starts_with", "ends_with", "regex"];
@@ -37,6 +38,7 @@ export function BankRuleEditor({
   language,
   lockJournal = false,
   lockName = false,
+  lockPriority = false,
 }: BankRuleEditorProps) {
   const ar = language === "ar";
   const updateCondition = (index: number, patch: Partial<BankRuleCondition>) => {
@@ -92,8 +94,9 @@ export function BankRuleEditor({
             min={0}
             max={100000}
             value={value.priority}
+            disabled={lockPriority}
             onChange={(event) => onChange({ ...value, priority: Math.max(0, Number(event.target.value) || 0) })}
-            className="h-10 w-full rounded-xl border border-white/10 bg-black/30 px-3 text-xs text-white outline-none focus:border-amber-500/50"
+            className="h-10 w-full rounded-xl border border-white/10 bg-black/30 px-3 text-xs text-white outline-none focus:border-amber-500/50 disabled:opacity-50"
           />
           <span className="block text-[9px] text-white/30">{ar ? "الرقم الأقل = أولوية أعلى" : "Lower number = higher priority"}</span>
         </label>

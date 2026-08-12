@@ -1,8 +1,9 @@
 """Fail-closed matcher for Odoo reconciliation rules used in posting candidates.
 
 Unlike similarity suggestions, this matcher does not guess. A rule must have an explicit
-statement-text or amount condition that the transaction satisfies. Rules are evaluated in
-the Odoo sequence order returned by ``fetch_odoo_bank_rules``.
+statement-text, amount, or safely understood direction condition that the transaction
+satisfies. Rules are evaluated in the Odoo sequence order returned by
+``fetch_odoo_bank_rules``.
 """
 
 from __future__ import annotations
@@ -69,6 +70,21 @@ def _amount_matches(rule: dict[str, Any], amount: float) -> tuple[bool, bool]:
     return True, has_condition
 
 
+def _transaction_type_matches(configured: str, amount: float) -> tuple[bool, bool]:
+    value = configured.strip().casefold()
+    if not value:
+        return True, False
+    incoming = {"incoming", "inbound", "received", "receipt", "credit", "positive"}
+    outgoing = {"outgoing", "outbound", "sent", "payment", "debit", "negative"}
+    if value in incoming:
+        return amount > 0, True
+    if value in outgoing:
+        return amount < 0, True
+    # Unknown enum/custom values are not guessed. The transaction remains unresolved
+    # until the Odoo configuration is represented by a supported explicit condition.
+    return False, True
+
+
 def match_by_odoo_bank_rule_strict(
     txn: dict[str, Any],
     rules: list[dict[str, Any]],
@@ -76,6 +92,7 @@ def match_by_odoo_bank_rule_strict(
     description = str(txn.get("description") or "").strip()
     if not description:
         return None
+    amount = float(txn.get("amount") or 0.0)
 
     for rule in rules:
         line = _first_counterpart_line(rule)
@@ -88,12 +105,18 @@ def match_by_odoo_bank_rule_strict(
         if text_conditions and not all(_text_condition_matches(description, value) for value in text_conditions):
             continue
 
-        amount_ok, has_amount_condition = _amount_matches(rule, float(txn.get("amount") or 0.0))
+        amount_ok, has_amount_condition = _amount_matches(rule, amount)
         if not amount_ok:
             continue
 
         transaction_type = str(rule.get("match_transaction_type") or "").strip()
-        has_explicit_condition = bool(text_conditions or has_amount_condition or transaction_type)
+        transaction_type_ok, has_transaction_type_condition = _transaction_type_matches(transaction_type, amount)
+        if not transaction_type_ok:
+            continue
+
+        has_explicit_condition = bool(
+            text_conditions or has_amount_condition or has_transaction_type_condition
+        )
         # Generic rule with no observable statement condition is intentionally not
         # applied automatically. A human can still review it, but the system will not
         # silently classify every transaction with a catch-all rule.
@@ -117,7 +140,7 @@ def match_by_odoo_bank_rule_strict(
             evidence.append(
                 f"amount_range={rule.get('match_amount_min') or '*'}..{rule.get('match_amount_max') or '*'}"
             )
-        if transaction_type:
+        if has_transaction_type_condition:
             evidence.append(f"transaction_type={transaction_type}")
 
         return {

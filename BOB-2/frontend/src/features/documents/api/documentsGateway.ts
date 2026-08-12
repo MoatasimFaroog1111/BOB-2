@@ -4,6 +4,7 @@ export interface DocumentsGateway {
   parseManualText(init: RequestInit): Promise<Response>;
   chatSpreadsheet(init: RequestInit): Promise<Response>;
   uploadDocuments(init: RequestInit): Promise<Response>;
+  parseBankStatement(init: RequestInit): Promise<Response>;
   proposeTransaction(init: RequestInit): Promise<Response>;
   loadDiscovery(): Promise<Response>;
   loadPartners(companyQuery: string): Promise<Response>;
@@ -20,6 +21,7 @@ class HttpDocumentsGateway implements DocumentsGateway {
   parseManualText(init: RequestInit) { return this.request("/api/v1/erp/parse-manual-text", init); }
   chatSpreadsheet(init: RequestInit) { return this.request("/api/v1/erp/chat-spreadsheet", init); }
   uploadDocuments(init: RequestInit) { return this.request("/api/v1/erp/upload-documents", init); }
+  parseBankStatement(init: RequestInit) { return this.request("/api/v1/erp/bank-statement-parse", init); }
   proposeTransaction(init: RequestInit) { return this.request("/api/v1/erp/propose-transaction", init); }
   loadDiscovery() { return this.request("/api/v1/erp/discovery"); }
   loadPartners(query: string) { return this.request(`/api/v1/erp/partners${query}`); }

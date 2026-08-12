@@ -5,6 +5,7 @@ from app.models.ai_accounting import (
     AIDocumentMatch,
 )
 from app.models.bank_reconciliation import BankReconciliationAuditLog
+from app.models.bank_rules import BankRule, BankRuleVersion
 from app.models.core import (
     ApprovalRequest,
     AuditLog,
@@ -33,6 +34,8 @@ __all__ = [
     "AIDocumentEmbedding",
     "AIDocumentMatch",
     "BankReconciliationAuditLog",
+    "BankRule",
+    "BankRuleVersion",
     "ApprovalRequest",
     "AuditLog",
     "AuditLogChainHead",

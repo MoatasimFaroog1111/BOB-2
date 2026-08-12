@@ -10,6 +10,7 @@ from app.api.v1.bank_reconciliation_compat import router as bank_reconciliation_
 from app.api.v1.bank_reconciliation_entry_suggestions import router as bank_reconciliation_entry_suggestions_router
 from app.api.v1.bank_reconciliation_hardening import router as bank_reconciliation_hardening_router
 from app.api.v1.bank_rule_entry_suggestions import router as bank_rule_entry_suggestions_router
+from app.api.v1.bank_rules import router as bank_rules_router
 from app.api.v1.chat_journal_lookup import router as chat_journal_lookup_router
 from app.api.v1.chat_spreadsheet_intent_guard import router as chat_spreadsheet_intent_guard_router
 from app.api.v1.communication_tools import router as communication_tools_router
@@ -76,6 +77,7 @@ api_router.include_router(bank_reconciliation_compat_router, prefix="/erp", tags
 api_router.include_router(bank_reconciliation_hardening_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
 api_router.include_router(bank_rule_entry_suggestions_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
 api_router.include_router(bank_reconciliation_entry_suggestions_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
+api_router.include_router(bank_rules_router, prefix="/erp", tags=["BOB Bank Rules"], dependencies=financial_access)
 api_router.include_router(daily_bank_review_router, prefix="/erp", tags=["ERP Daily Bank Audit Workflow"], dependencies=financial_access)
 api_router.include_router(accounting_command_router, prefix="/erp", tags=["ERP Accounting Command Brain"], dependencies=financial_access)
 api_router.include_router(chat_spreadsheet_intent_guard_router, prefix="/erp", tags=["ERP Smart Chat Intent Guard"], dependencies=financial_access)

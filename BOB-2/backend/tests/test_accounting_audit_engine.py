@@ -24,11 +24,16 @@ def matched_rule(txn, rules):
     return {
         "suggested_account_id": 200,
         "suggested_account_label": "Other Bank Charges",
-        "confidence": 0.95,
-        "source": "odoo_bank_reconciliation_rule",
+        "confidence": 1.0,
+        "source": "bob_bank_rule",
+        "source_priority": "bob_rule_priority",
+        "resolution_mode": "strict_bob_rule",
         "bank_rule_id": 77,
+        "bank_rule_version_id": 771,
+        "bank_rule_version": 3,
+        "bank_rule_fingerprint": "a" * 64,
         "bank_rule_name": "Fees",
-        "reason": "Matched Odoo rule Fees",
+        "reason": "Matched approved BOB rule Fees v3",
         "needs_review": False,
     }
 
@@ -37,7 +42,7 @@ def clean_entry():
     builder = DailyBankEntryBuilder(rule_matcher=matched_rule)
     return builder.build(
         [{"date": "2026-08-10", "description": "INSTANT PAYMENT FEES", "amount": "-5.00", "row_number": 4}],
-        rules=[{"id": 77}],
+        rules=[{"rule_id": 77}],
         journal=JOURNAL,
         account_catalog=ACCOUNTS,
     )[0]
@@ -86,7 +91,7 @@ def test_auditor_blocks_unresolved_counterpart_and_missing_bank_rule():
 
     assert result["recommendation"] == "needs_revision"
     assert "UNRESOLVED_COUNTERPART_ACCOUNT" in codes(result)
-    assert "NO_ODOO_BANK_RULE_EVIDENCE" in codes(result)
+    assert "NO_BOB_BANK_RULE_EVIDENCE" in codes(result)
 
 
 def test_auditor_blocks_document_hash_failure_and_rule_drift():
@@ -113,7 +118,7 @@ def test_low_confidence_rule_requires_human_attention_without_silent_account_cha
     builder = DailyBankEntryBuilder(rule_matcher=low_confidence)
     entry = builder.build(
         [{"date": "2026-08-10", "description": "POSSIBLE FEE", "amount": "-5.00", "row_number": 10}],
-        rules=[{"id": 77}],
+        rules=[{"rule_id": 77}],
         journal=JOURNAL,
         account_catalog=ACCOUNTS,
     )[0]

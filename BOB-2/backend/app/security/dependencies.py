@@ -140,6 +140,13 @@ def _required_financial_permission(request: Request) -> str:
     ):
         return "manage_settings"
 
+    # BOB Bank Rules are configuration controls. Drafting/import/testing requires
+    # settings permission; activation is a distinct approval action.
+    if path.startswith("/api/v1/erp/bank-rules"):
+        if method == "POST" and path.endswith("/approve"):
+            return "approve_actions"
+        return "manage_settings"
+
     if method in {"GET", "HEAD", "OPTIONS"}:
         return "view_financials"
 

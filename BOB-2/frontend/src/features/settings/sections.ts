@@ -32,4 +32,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     descriptionEn: "Odoo connection, credentials, and connection tests.",
     badge: "ERP",
   },
+  {
+    href: "/settings/bank-rules",
+    titleAr: "قواعد البنك",
+    titleEn: "Bank Rules",
+    descriptionAr: "إنشاء واختبار ومراجعة واعتماد قواعد تصنيف الحركات البنكية داخل BOB مع مراجع الحسابات من Odoo.",
+    descriptionEn: "Create, test, review, and approve BOB-owned bank classification rules using Odoo accounting references.",
+    badge: "BANK RULES",
+  },
 ] as const;

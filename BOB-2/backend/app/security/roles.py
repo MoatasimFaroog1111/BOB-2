@@ -39,6 +39,7 @@ ROLE_PERMISSIONS = {
     UserRole.AUDITOR: [
         "view_audit_logs",
         "review_documents",
+        "review_entries",
         "view_financials",
         "view_reports",
     ],

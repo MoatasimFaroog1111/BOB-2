@@ -249,8 +249,8 @@ export function useSpreadsheetChat({
         if (!selectedJournal || selectedJournal.type !== "bank") {
           throw new Error(
             language === "ar"
-              ? "هذا الملف كشف حساب بنكي. اختر يومية من نوع Bank من قائمة اليومية ثم أعد رفع الملف، حتى يكون حساب البنك وقواعد التسوية من Odoo هي مصدر الحقيقة."
-              : "This is a bank statement. Select a Bank-type journal first so the bank account and reconciliation rules come from Odoo, then upload the file again."
+              ? "هذا الملف كشف حساب بنكي. اختر يومية من نوع Bank ثم أعد رفع الملف. قواعد التصنيف تأتي من BOB، بينما اليومية وحساب البنك يتم التحقق منهما من Odoo."
+              : "This is a bank statement. Select a Bank-type journal and upload the file again. Classification rules come from BOB, while the journal and bank account are verified against Odoo."
           );
         }
 
@@ -302,8 +302,8 @@ export function useSpreadsheetChat({
           {
             role: "assistant",
             text: language === "ar"
-              ? `✅ تم إعداد كشف البنك وفق Odoo Bank Rules.\n\n- الحركات: ${draft.transactionCount.toLocaleString()}\n- القيود اليومية: ${entries.length.toLocaleString()} (قيد واحد لكل يوم)\n- قواعد Odoo المقروءة: ${draft.ruleCount.toLocaleString()}\n- حركات غير محلولة: ${draft.unresolvedCount.toLocaleString()}\n- مطابقات تحتاج انتباه: ${draft.lowConfidenceCount.toLocaleString()}\n\nكل ورقة الآن تمثل قيد يوم كامل مع الاحتفاظ بتفاصيل كل حركة وقاعدة البنك ودليل المطابقة. لم يتم ترحيل أي شيء إلى Odoo. راجع القيود ثم اضغط «إرسال للمراجعة».`
-              : `✅ The bank statement was prepared using Odoo Bank Rules.\n\n- Transactions: ${draft.transactionCount.toLocaleString()}\n- Daily entries: ${entries.length.toLocaleString()} (one entry per day)\n- Odoo rules read: ${draft.ruleCount.toLocaleString()}\n- Unresolved transactions: ${draft.unresolvedCount.toLocaleString()}\n- Matches needing attention: ${draft.lowConfidenceCount.toLocaleString()}\n\nEach worksheet now represents one complete daily entry while preserving every transaction and its Bank Rule evidence. Nothing was posted to Odoo. Review the entries, then click “Send for Review”.`,
+              ? `✅ تم إعداد كشف البنك وفق قواعد BOB Bank Rules المعتمدة، مع التحقق من اليومية والحسابات في Odoo.\n\n- الحركات: ${draft.transactionCount.toLocaleString()}\n- القيود اليومية: ${entries.length.toLocaleString()} (قيد واحد لكل يوم)\n- قواعد BOB المعتمدة: ${draft.ruleCount.toLocaleString()}\n- حركات غير محلولة: ${draft.unresolvedCount.toLocaleString()}\n- مطابقات تحتاج انتباه: ${draft.lowConfidenceCount.toLocaleString()}\n\nكل ورقة الآن تمثل قيد يوم كامل مع الاحتفاظ بتفاصيل كل حركة ونسخة القاعدة ودليل المطابقة. لم يتم ترحيل أي شيء إلى Odoo. راجع القيود ثم اضغط «إرسال للمراجعة».`
+              : `✅ The bank statement was prepared using approved BOB Bank Rules, with the journal and accounting references verified against Odoo.\n\n- Transactions: ${draft.transactionCount.toLocaleString()}\n- Daily entries: ${entries.length.toLocaleString()} (one entry per day)\n- Approved BOB rules: ${draft.ruleCount.toLocaleString()}\n- Unresolved transactions: ${draft.unresolvedCount.toLocaleString()}\n- Matches needing attention: ${draft.lowConfidenceCount.toLocaleString()}\n\nEach worksheet now represents one complete daily entry while preserving every transaction, rule version, and matching evidence. Nothing was posted to Odoo. Review the entries, then click “Send for Review”.`,
           },
         ]);
         return;

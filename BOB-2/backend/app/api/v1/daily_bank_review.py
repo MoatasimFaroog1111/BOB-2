@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.security.dependencies import require_permission
 from app.security.file_validation import sanitize_filename, validate_upload_file
-from app.services.daily_bank_review_service import daily_bank_review_service
+from app.services.daily_bank_review_bob_rules import bob_daily_bank_review_service as daily_bank_review_service
 from app.services.daily_bank_supporting_analysis import daily_bank_supporting_analysis_service
 from app.services.daily_bank_supporting_evidence import daily_bank_supporting_evidence_service
 

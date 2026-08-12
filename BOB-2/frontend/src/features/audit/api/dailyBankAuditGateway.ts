@@ -9,6 +9,25 @@ class DailyBankAuditGateway {
     return fetch(`${API_BASE_URL}/api/v1/erp/daily-bank-review/${approvalId}`, { cache: "no-store" });
   }
 
+  attachSupportingDocuments(approvalId: number, files: File[]): Promise<Response> {
+    const formData = new FormData();
+    files.forEach((file) => formData.append("files", file));
+    return fetch(`${API_BASE_URL}/api/v1/erp/daily-bank-review/${approvalId}/supporting-documents`, {
+      method: "POST",
+      body: formData,
+    });
+  }
+
+  listSupportingDocuments(approvalId: number): Promise<Response> {
+    return fetch(`${API_BASE_URL}/api/v1/erp/daily-bank-review/${approvalId}/supporting-documents`, {
+      cache: "no-store",
+    });
+  }
+
+  fetchSupportingDocument(approvalId: number, documentId: number): Promise<Response> {
+    return fetch(`${API_BASE_URL}/api/v1/erp/daily-bank-review/${approvalId}/supporting-documents/${documentId}/content`);
+  }
+
   runAudit(approvalId: number): Promise<Response> {
     return fetch(`${API_BASE_URL}/api/v1/erp/daily-bank-review/${approvalId}/audit`, {
       method: "POST",

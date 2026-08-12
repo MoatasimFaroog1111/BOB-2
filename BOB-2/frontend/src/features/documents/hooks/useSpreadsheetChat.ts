@@ -2,10 +2,13 @@ import React, { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
 import { documentsGateway } from "@/features/documents/api/documentsGateway";
+import { shouldParseAsBankStatement } from "@/features/documents/lib/bankStatementImport";
 import {
-  buildBankStatementGrid,
-  shouldParseAsBankStatement,
-} from "@/features/documents/lib/bankStatementImport";
+  buildDailyBankReviewWorksheets,
+  type DailyBankReviewDraft,
+  type DailyBankReviewEntry,
+} from "@/features/documents/lib/dailyBankReview";
+import { saveDailyBankReviewDraft } from "@/features/documents/lib/dailyBankReviewSession";
 import {
   createEmptyGrid,
   DEFAULT_WORKSHEET_COLUMNS,
@@ -32,25 +35,24 @@ export function useSpreadsheetChat({
   journals,
   selectedJournalId,
 }: SpreadsheetChatOptions) {
-  // Journals States
   const [isUploading, setIsUploading] = useState(false);
+  const [isSubmittingReview, setIsSubmittingReview] = useState(false);
+  const [bankReviewDraft, setBankReviewDraft] = useState<DailyBankReviewDraft | null>(null);
 
   const chatMessagesEndRef = useRef<HTMLDivElement>(null);
   const chatFileInputRef = useRef<HTMLInputElement>(null);
 
-  // Chat States
   const [chatMessages, setChatMessages] = useState<{ role: "user" | "assistant"; text: string }[]>(() => [
     {
       role: "assistant",
-      text: language === "ar" 
-        ? "مرحباً بك! أنا مساعد تنظيم وتنسيق الجداول المحاسبية. اكتب لي ما تريده من تعديلات أو تنسيق (مثال: 'نظم كقيد رواتب') وسأقوم بتعديل الشبكة لك." 
+      text: language === "ar"
+        ? "مرحباً بك! أنا مساعد تنظيم وتنسيق الجداول المحاسبية. اكتب لي ما تريده من تعديلات أو تنسيق (مثال: 'نظم كقيد رواتب') وسأقوم بتعديل الشبكة لك."
         : "Hello! I am your spreadsheet layout assistant. Tell me what formatting or layout you want (e.g. 'format as payroll entry') and I will modify the grid for you."
     }
   ]);
   const [chatInput, setChatInput] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
 
-  // Auto scroll chat to bottom
   useEffect(() => {
     if (chatMessagesEndRef.current) {
       chatMessagesEndRef.current.scrollIntoView({ behavior: "smooth" });
@@ -69,100 +71,80 @@ export function useSpreadsheetChat({
     try {
       const res = await documentsGateway.chatSpreadsheet({
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt: userMsg,
-          sheets: sheets.map(s => ({
-            id: s.id,
-            name: s.name,
-            gridData: s.gridData,
-            rowCount: s.rowCount,
-            colCount: s.colCount,
+          sheets: sheets.map((sheet) => ({
+            id: sheet.id,
+            name: sheet.name,
+            gridData: sheet.gridData,
+            rowCount: sheet.rowCount,
+            colCount: sheet.colCount,
           })),
           active_sheet_id: activeSheetId,
         }),
       });
 
-      if (!res.ok) {
-        throw new Error(await res.text());
-      }
-
+      if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
-      
-      // Add agent's response to message feed
+
       if (data.message) {
         setChatMessages((prev) => [...prev, { role: "assistant", text: data.message }]);
       }
 
-      // Synchronize states
       setSheets((prevSheets) => {
         let updated = [...prevSheets];
 
-        // 1. Handle Active Sheet Grid Data Update
         if (data.grid_data && Array.isArray(data.grid_data)) {
-          updated = updated.map((s) => {
-            if (s.id !== activeSheetId) return s;
+          updated = updated.map((sheet) => {
+            if (sheet.id !== activeSheetId) return sheet;
             const newGrid = data.grid_data;
-            const newRowCount = newGrid.length;
-            const newColCount = newGrid[0]?.length || 0;
             return {
-              ...s,
+              ...sheet,
               gridData: newGrid,
-              rowCount: newRowCount,
-              colCount: newColCount,
+              rowCount: newGrid.length,
+              colCount: newGrid[0]?.length || 0,
             };
           });
         }
 
-        // 2. Handle Rename Active Sheet
         if (data.active_sheet_name) {
-          updated = updated.map((s) => 
-            s.id === activeSheetId ? { ...s, name: data.active_sheet_name } : s
+          updated = updated.map((sheet) =>
+            sheet.id === activeSheetId ? { ...sheet, name: data.active_sheet_name } : sheet
           );
         }
 
-        // 3. Handle Create Sheet
         if (data.create_sheet && data.create_sheet.name) {
           const newId = `sheet-${Date.now()}`;
           const newGrid = data.create_sheet.grid_data || createEmptyGrid();
-          const rowCount = newGrid.length;
-          const colCount = newGrid[0]?.length || 0;
-          
           updated.push({
             id: newId,
             name: data.create_sheet.name,
             gridData: newGrid,
-            rowCount,
-            colCount,
+            rowCount: newGrid.length,
+            colCount: newGrid[0]?.length || 0,
           });
-          // Set active sheet to the newly created one
           setTimeout(() => setActiveSheetId(newId), 50);
         }
 
-        // 4. Handle Delete Sheet
-        if (data.delete_sheet_id) {
-          if (updated.length > 1) {
-            const idToDelete = data.delete_sheet_id;
-            updated = updated.filter((s) => s.id !== idToDelete);
-            if (activeSheetId === idToDelete) {
-              setActiveSheetId(updated[updated.length - 1].id);
-            }
+        if (data.delete_sheet_id && updated.length > 1) {
+          const idToDelete = data.delete_sheet_id;
+          updated = updated.filter((sheet) => sheet.id !== idToDelete);
+          if (activeSheetId === idToDelete) {
+            setActiveSheetId(updated[updated.length - 1].id);
           }
         }
 
         return updated;
       });
-
     } catch (err: any) {
       console.error(err);
       setChatMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          text: language === "ar" 
-            ? `عذراً، فشل الاتصال بالمساعد: ${err.message || err}` 
+          text: language === "ar"
+            ? `عذراً، فشل الاتصال بالمساعد: ${err.message || err}`
             : `Sorry, failed to connect to the assistant: ${err.message || err}`,
         },
       ]);
@@ -171,16 +153,61 @@ export function useSpreadsheetChat({
     }
   };
 
+  const submitBankReview = async () => {
+    if (!bankReviewDraft || isSubmittingReview) return null;
+    setIsSubmittingReview(true);
+    try {
+      const response = await documentsGateway.submitDailyBankReview({
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          document_id: bankReviewDraft.documentId,
+          journal_id: bankReviewDraft.journalId,
+          company_id: bankReviewDraft.companyId || null,
+        }),
+      });
+      if (!response.ok) throw new Error(await response.text());
+      const result = await response.json();
+      const reviewIds = Array.isArray(result.reviews)
+        ? result.reviews.map((item: any) => Number(item.approval_id)).filter(Number.isFinite)
+        : [];
+      const submittedDraft = { ...bankReviewDraft, submitted: true, reviewIds };
+      setBankReviewDraft(submittedDraft);
+      saveDailyBankReviewDraft(submittedDraft);
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: language === "ar"
+            ? `✅ تم إرسال ${Number(result.review_count || reviewIds.length).toLocaleString()} قيد يومي إلى المدقق الذكي. لم يتم ترحيل أي قيد إلى Odoo. افتح «المدقق الذكي» لتشغيل التدقيق ومراجعة الأدلة قبل الاعتماد.`
+            : `✅ ${Number(result.review_count || reviewIds.length).toLocaleString()} daily journal entries were sent to Smart Auditor. Nothing was posted to Odoo. Open Smart Auditor to run the audit and review the evidence before approval.`,
+        },
+      ]);
+      return result;
+    } catch (err: any) {
+      console.error(err);
+      setChatMessages((prev) => [
+        ...prev,
+        {
+          role: "assistant",
+          text: language === "ar"
+            ? `❌ تعذر إرسال القيود للمراجعة: ${err.message || err}`
+            : `❌ Could not send entries for review: ${err.message || err}`,
+        },
+      ]);
+      throw err;
+    } finally {
+      setIsSubmittingReview(false);
+    }
+  };
+
   const handleChatFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // Reset input value to allow uploading same file again
     e.target.value = "";
 
     setIsUploading(true);
     setChatLoading(true);
-
     setChatMessages((prev) => [
       ...prev,
       {
@@ -198,18 +225,10 @@ export function useSpreadsheetChat({
     ]);
 
     try {
-      // Upload and analyze through the feature gateway.
       const formData = new FormData();
       formData.append("files", file);
-
-      const uploadRes = await documentsGateway.uploadDocuments({
-        method: "POST",
-        body: formData,
-      });
-
-      if (!uploadRes.ok) {
-        throw new Error(await uploadRes.text());
-      }
+      const uploadRes = await documentsGateway.uploadDocuments({ method: "POST", body: formData });
+      if (!uploadRes.ok) throw new Error(await uploadRes.text());
 
       const uploadData = await uploadRes.json();
       if (uploadData.error_count > 0 || !uploadData.results || uploadData.results.length === 0) {
@@ -225,60 +244,74 @@ export function useSpreadsheetChat({
         analysisResult.document_class || fields.document_class || "unknown",
       );
 
-      // Bank statements are multi-transaction documents. Never collapse them into one
-      // two-line proposal based on the first fee/amount discovered in the workbook.
       if (shouldParseAsBankStatement(file.name, analyzedDocumentClass, rawText)) {
-        const statementFormData = new FormData();
-        statementFormData.append("statement", file);
-
-        const statementRes = await documentsGateway.parseBankStatement({
-          method: "POST",
-          body: statementFormData,
-        });
-
-        if (statementRes.ok) {
-          const statementData = await statementRes.json();
-          const statementRows = Array.isArray(statementData.statement_only)
-            ? statementData.statement_only
-            : [];
-
-          if (statementData.status === "success" && statementRows.length > 0) {
-            const statementGrid = buildBankStatementGrid(
-              statementRows,
-              language,
-              DEFAULT_WORKSHEET_ROWS,
-              DEFAULT_WORKSHEET_COLUMNS,
-            );
-
-            setSheets((prevSheets) => prevSheets.map((sheet) => (
-              sheet.id === activeSheetId
-                ? {
-                    ...sheet,
-                    gridData: statementGrid.gridData,
-                    rowCount: statementGrid.rowCount,
-                    colCount: statementGrid.colCount,
-                  }
-                : sheet
-            )));
-
-            setChatMessages((prev) => [
-              ...prev,
-              {
-                role: "assistant",
-                text: language === "ar"
-                  ? `✅ تم التعرف على الملف ككشف حساب بنكي وتحليل ${statementRows.length.toLocaleString()} عملية.\n\nتم تعبئة الجدول مباشرة من معاملات كشف الحساب (التاريخ، الوصف، المدين، الدائن، التصنيف المقترح، الرصيد). لم يتم اختزال الكشف إلى عملية واحدة ولم يتم الترحيل إلى Odoo؛ راجع التصنيفات قبل إنشاء القيود.`
-                  : `✅ The file was recognized as a bank statement and ${statementRows.length.toLocaleString()} transactions were parsed.\n\nThe grid now contains the statement transactions (date, description, debit, credit, suggested classification, balance). The statement was not collapsed into a single transaction and nothing was posted to Odoo; review the classifications before creating entries.`
-              }
-            ]);
-            return;
-          }
-        } else {
-          console.warn("Bank statement parser did not accept the file; falling back to document proposal flow.");
+        const selectedJournal = journals.find((journal) => journal.id === selectedJournalId);
+        if (!selectedJournal || selectedJournal.type !== "bank") {
+          throw new Error(
+            language === "ar"
+              ? "هذا الملف كشف حساب بنكي. اختر يومية من نوع Bank من قائمة اليومية ثم أعد رفع الملف، حتى يكون حساب البنك وقواعد التسوية من Odoo هي مصدر الحقيقة."
+              : "This is a bank statement. Select a Bank-type journal first so the bank account and reconciliation rules come from Odoo, then upload the file again."
+          );
         }
+
+        const reviewForm = new FormData();
+        reviewForm.append("statement", file);
+        reviewForm.append("journal_id", String(selectedJournal.id));
+        const prepareRes = await documentsGateway.prepareDailyBankReview({
+          method: "POST",
+          body: reviewForm,
+        });
+        if (!prepareRes.ok) throw new Error(await prepareRes.text());
+        const prepared = await prepareRes.json();
+        const entries = (Array.isArray(prepared.entries) ? prepared.entries : []) as DailyBankReviewEntry[];
+        if (prepared.status !== "prepared" || entries.length === 0) {
+          throw new Error("Daily bank review preparation returned no entries.");
+        }
+
+        const worksheets = buildDailyBankReviewWorksheets(
+          entries,
+          language,
+          DEFAULT_WORKSHEET_ROWS,
+          DEFAULT_WORKSHEET_COLUMNS,
+        );
+        setSheets(worksheets);
+        setActiveSheetId(worksheets[0].id);
+
+        const summary = prepared.summary || {};
+        const source = prepared.source_document || {};
+        const bankJournal = prepared.bank_journal || {};
+        const draft: DailyBankReviewDraft = {
+          documentId: Number(source.document_id),
+          sourceFilename: String(source.filename || file.name),
+          sourceSha256: String(source.sha256 || ""),
+          journalId: Number(bankJournal.journal_id || selectedJournal.id),
+          companyId: bankJournal.company_id ? Number(bankJournal.company_id) : null,
+          ruleCount: Number(bankJournal.rule_count || summary.rule_count || 0),
+          transactionCount: Number(summary.transaction_count || 0),
+          unresolvedCount: Number(summary.unresolved_count || 0),
+          lowConfidenceCount: Number(summary.low_confidence_count || 0),
+          entries,
+          submitted: false,
+          reviewIds: [],
+        };
+        setBankReviewDraft(draft);
+        saveDailyBankReviewDraft(draft);
+
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            text: language === "ar"
+              ? `✅ تم إعداد كشف البنك وفق Odoo Bank Rules.\n\n- الحركات: ${draft.transactionCount.toLocaleString()}\n- القيود اليومية: ${entries.length.toLocaleString()} (قيد واحد لكل يوم)\n- قواعد Odoo المقروءة: ${draft.ruleCount.toLocaleString()}\n- حركات غير محلولة: ${draft.unresolvedCount.toLocaleString()}\n- مطابقات تحتاج انتباه: ${draft.lowConfidenceCount.toLocaleString()}\n\nكل ورقة الآن تمثل قيد يوم كامل مع الاحتفاظ بتفاصيل كل حركة وقاعدة البنك ودليل المطابقة. لم يتم ترحيل أي شيء إلى Odoo. راجع القيود ثم اضغط «إرسال للمراجعة».`
+              : `✅ The bank statement was prepared using Odoo Bank Rules.\n\n- Transactions: ${draft.transactionCount.toLocaleString()}\n- Daily entries: ${entries.length.toLocaleString()} (one entry per day)\n- Odoo rules read: ${draft.ruleCount.toLocaleString()}\n- Unresolved transactions: ${draft.unresolvedCount.toLocaleString()}\n- Matches needing attention: ${draft.lowConfidenceCount.toLocaleString()}\n\nEach worksheet now represents one complete daily entry while preserving every transaction and its Bank Rule evidence. Nothing was posted to Odoo. Review the entries, then click “Send for Review”.`,
+          },
+        ]);
+        return;
       }
 
-      // Request a draft transaction through the feature gateway.
-      const selectedJournal = journals.find((j) => j.id === selectedJournalId);
+      setBankReviewDraft(null);
+      saveDailyBankReviewDraft(null);
+      const selectedJournal = journals.find((journal) => journal.id === selectedJournalId);
       const docClass = analyzedDocumentClass !== "unknown"
         ? analyzedDocumentClass
         : selectedJournal?.type || "general";
@@ -289,26 +322,19 @@ export function useSpreadsheetChat({
         || fields.date
         || new Date().toISOString().slice(0, 10);
 
-      const proposePayload = {
-        filename: file.name,
-        document_class: docClass,
-        amount: amount,
-        date: accountingDate,
-        partner_name: partnerName,
-        raw_text: rawText,
-      };
-
       const proposeRes = await documentsGateway.proposeTransaction({
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(proposePayload),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: file.name,
+          document_class: docClass,
+          amount,
+          date: accountingDate,
+          partner_name: partnerName,
+          raw_text: rawText,
+        }),
       });
-
-      if (!proposeRes.ok) {
-        throw new Error(await proposeRes.text());
-      }
+      if (!proposeRes.ok) throw new Error(await proposeRes.text());
 
       const proposeData = await proposeRes.json();
       if (proposeData.status !== "success" || !proposeData.lines) {
@@ -316,56 +342,46 @@ export function useSpreadsheetChat({
       }
 
       const proposedLines = proposeData.lines;
+      setSheets((prevSheets) => prevSheets.map((sheet) => {
+        if (sheet.id !== activeSheetId) return sheet;
+        const newGrid = createEmptyGrid();
+        newGrid[0][0] = language === "ar" ? "رمز الحساب" : "Account Code";
+        newGrid[0][1] = language === "ar" ? "البيان / الوصف" : "Description";
+        newGrid[0][2] = language === "ar" ? "مدين" : "Debit";
+        newGrid[0][3] = language === "ar" ? "دائن" : "Credit";
+        newGrid[0][4] = language === "ar" ? "اسم الشريك" : "Partner";
+        newGrid[0][5] = language === "ar" ? "الحساب التحليلي" : "Analytic Account";
 
-      // 3. Clear and populate active sheet gridData
-      setSheets((prevSheets) => {
-        return prevSheets.map((s) => {
-          if (s.id !== activeSheetId) return s;
-
-          const newGrid = createEmptyGrid();
-
-          // Set Headers
-          newGrid[0][0] = language === "ar" ? "رمز الحساب" : "Account Code";
-          newGrid[0][1] = language === "ar" ? "البيان / الوصف" : "Description";
-          newGrid[0][2] = language === "ar" ? "مدين" : "Debit";
-          newGrid[0][3] = language === "ar" ? "دائن" : "Credit";
-          newGrid[0][4] = language === "ar" ? "اسم الشريك" : "Partner";
-          newGrid[0][5] = language === "ar" ? "الحساب التحليلي" : "Analytic Account";
-
-          proposedLines.forEach((line: any, idx: number) => {
-            const rIdx = idx + 1;
-            if (rIdx >= DEFAULT_WORKSHEET_ROWS) return;
-
-            const accName = line.account_name || "";
-            const accCode = line.account_code || accName.match(/^(\d+)/)?.[1] || accName;
-
-            newGrid[rIdx][0] = accCode;
-            newGrid[rIdx][1] = line.name || "";
-            newGrid[rIdx][2] = line.debit > 0 ? String(line.debit) : "";
-            newGrid[rIdx][3] = line.credit > 0 ? String(line.credit) : "";
-            newGrid[rIdx][4] = line.partner_name || proposeData.suggested_partner_name || partnerName || "";
-            newGrid[rIdx][5] = line.analytic_account_name || "";
-          });
-
-          return {
-            ...s,
-            gridData: newGrid,
-            rowCount: newGrid.length,
-            colCount: newGrid[0]?.length || DEFAULT_WORKSHEET_COLUMNS,
-          };
+        proposedLines.forEach((line: any, idx: number) => {
+          const rowIndex = idx + 1;
+          if (rowIndex >= DEFAULT_WORKSHEET_ROWS) return;
+          const accName = line.account_name || "";
+          const accCode = line.account_code || accName.match(/^(\d+)/)?.[1] || accName;
+          newGrid[rowIndex][0] = accCode;
+          newGrid[rowIndex][1] = line.name || "";
+          newGrid[rowIndex][2] = line.debit > 0 ? String(line.debit) : "";
+          newGrid[rowIndex][3] = line.credit > 0 ? String(line.credit) : "";
+          newGrid[rowIndex][4] = line.partner_name || proposeData.suggested_partner_name || partnerName || "";
+          newGrid[rowIndex][5] = line.analytic_account_name || "";
         });
-      });
+
+        return {
+          ...sheet,
+          gridData: newGrid,
+          rowCount: newGrid.length,
+          colCount: newGrid[0]?.length || DEFAULT_WORKSHEET_COLUMNS,
+        };
+      }));
 
       setChatMessages((prev) => [
         ...prev,
         {
           role: "assistant",
           text: language === "ar"
-            ? `✅ تم بنجاح تحليل المستند ومطابقته مع اليومية المحددة.\n\nتم تعبئة البيانات في الجدول بالقيم المحللة:\n- القيمة: ${amount.toLocaleString()} ر.س\n- الشريك المقترح: ${proposeData.suggested_partner_name || partnerName || "غير محدد"}\n- نوع القيد: ${proposeData.journal_name}`
-            : `✅ Successfully analyzed and matched document with the selected journal.\n\nSpreadsheet has been populated:\n- Amount: ${amount.toLocaleString()} SAR\n- Suggested Partner: ${proposeData.suggested_partner_name || partnerName || "N/A"}\n- Entry Type: ${proposeData.journal_name}`
+            ? `✅ تم بنجاح تحليل المستند ومطابقته مع اليومية المحددة.\n\nتم تعبئة البيانات في الجدول بالقيم المحللة:\n- القيمة: ${Number(amount || 0).toLocaleString()} ر.س\n- الشريك المقترح: ${proposeData.suggested_partner_name || partnerName || "غير محدد"}\n- نوع القيد: ${proposeData.journal_name}`
+            : `✅ Successfully analyzed and matched document with the selected journal.\n\nSpreadsheet has been populated:\n- Amount: ${Number(amount || 0).toLocaleString()} SAR\n- Suggested Partner: ${proposeData.suggested_partner_name || partnerName || "N/A"}\n- Entry Type: ${proposeData.journal_name}`
         }
       ]);
-
     } catch (err: any) {
       console.error(err);
       setChatMessages((prev) => [
@@ -383,9 +399,10 @@ export function useSpreadsheetChat({
     }
   };
 
-
   return {
     isUploading,
+    isSubmittingReview,
+    bankReviewDraft,
     chatMessages,
     chatInput,
     setChatInput,
@@ -394,6 +411,6 @@ export function useSpreadsheetChat({
     chatFileInputRef,
     handleSendChatMessage,
     handleChatFileChange,
+    submitBankReview,
   };
 }
-

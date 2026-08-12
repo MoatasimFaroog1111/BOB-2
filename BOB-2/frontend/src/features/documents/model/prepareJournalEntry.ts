@@ -45,6 +45,17 @@ export function prepareJournalEntry({
   resolveAccountFromValue,
   resolvePartnerFromValue,
 }: PrepareJournalEntryInput): PreparedJournalEntry | null {
+    // Bank-review worksheets carry server-sealed Odoo Bank Rule evidence and must
+    // travel through Smart Auditor. They are deliberately ineligible for the legacy
+    // direct-registration modal, even if a user clicks the old Odoo action.
+    const normalizedHeaders = (gridData[0] || []).map((value) => value.toLowerCase().trim());
+    const isDailyBankReviewGrid = normalizedHeaders.some((value) =>
+      value.includes("قاعدة البنك") || value.includes("bank rule")
+    ) && normalizedHeaders.some((value) =>
+      value.includes("مصدر القرار") || value.includes("evidence source")
+    );
+    if (isDailyBankReviewGrid) return null;
+
     let codeCol = -1;
     let labelCol = -1;
     let debitCol = -1;
@@ -60,9 +71,8 @@ export function prepareJournalEntry({
     let startC = 0;
     let endC = colCount - 1;
 
-    // Detect if we should use the active selection range (if covering multiple cells)
-    const hasSelection = selectionRange && 
-      (selectionRange.endR - selectionRange.startR >= 1) && 
+    const hasSelection = selectionRange &&
+      (selectionRange.endR - selectionRange.startR >= 1) &&
       (selectionRange.endC - selectionRange.startC >= 1);
 
     if (hasSelection) {
@@ -114,7 +124,6 @@ export function prepareJournalEntry({
         }
       }
     } else {
-      // Look at main header row 0
       const mainHeaderRow = gridData[0];
       mainHeaderRow.forEach((val, index) => {
         const norm = val.toLowerCase().trim();
@@ -142,12 +151,9 @@ export function prepareJournalEntry({
         const norm = val.toLowerCase().trim();
         return norm.includes("حساب") || norm.includes("مدين") || norm.includes("دائن") || norm.includes("شريك") || norm.includes("code") || norm.includes("debit") || norm.includes("credit");
       });
-      if (mainHasHeader && startRowIndex === 0) {
-        startRowIndex = 1;
-      }
+      if (mainHasHeader && startRowIndex === 0) startRowIndex = 1;
     }
 
-    // Fallbacks if columns not identified
     if (codeCol === -1) codeCol = startC;
     if (labelCol === -1) labelCol = startC + 1 <= endC ? startC + 1 : startC;
     if (debitCol === -1) debitCol = startC + 2 <= endC ? startC + 2 : startC;
@@ -165,27 +171,17 @@ export function prepareJournalEntry({
       if (!row) continue;
 
       const accountCellValue = (row[codeCol] || "").trim();
-      const code = accountCellValue;
       const debitVal = parseFloat((row[debitCol] || "").replace(/,/g, "")) || 0;
       const creditVal = parseFloat((row[creditCol] || "").replace(/,/g, "")) || 0;
       const label = (row[labelCol] || "").trim() || (language === "ar" ? "قيد محاسبي تفاعلي" : "Manual Spreadsheet Entry");
       const partnerName = (row[partnerCol] || "").trim();
       const analyticName = analyticCol !== -1 ? (row[analyticCol] || "").trim() : "";
 
-      if (dateCol !== -1 && row[dateCol] && !extractedDate) {
-        extractedDate = row[dateCol].trim();
-      }
-      if (refCol !== -1 && row[refCol] && !extractedRef) {
-        extractedRef = row[refCol].trim();
-      }
-      if (journalCol !== -1 && row[journalCol] && !extractedJournal) {
-        extractedJournal = row[journalCol].trim();
-      }
+      if (dateCol !== -1 && row[dateCol] && !extractedDate) extractedDate = row[dateCol].trim();
+      if (refCol !== -1 && row[refCol] && !extractedRef) extractedRef = row[refCol].trim();
+      if (journalCol !== -1 && row[journalCol] && !extractedJournal) extractedJournal = row[journalCol].trim();
 
-      if (!code && debitVal === 0 && creditVal === 0) {
-        continue;
-      }
-
+      if (!accountCellValue && debitVal === 0 && creditVal === 0) continue;
       const matchedAcc = resolveAccountFromValue(accountCellValue);
 
       let resolvedPartnerId: number | null = null;
@@ -201,8 +197,8 @@ export function prepareJournalEntry({
       let resolvedAnalyticId: number | null = null;
       let resolvedAnalyticName = analyticName;
       if (analyticName) {
-        const matchedAnalytic = analyticAccounts.find((a) =>
-          a && a.name && typeof a.name === "string" && a.name.toLowerCase().includes(analyticName.toLowerCase())
+        const matchedAnalytic = analyticAccounts.find((analytic) =>
+          analytic && analytic.name && typeof analytic.name === "string" && analytic.name.toLowerCase().includes(analyticName.toLowerCase())
         );
         if (matchedAnalytic) {
           resolvedAnalyticId = matchedAnalytic.id;
@@ -234,4 +230,3 @@ export function prepareJournalEntry({
       journal: extractedJournal || selectedJournal?.code || "",
     };
 }
-

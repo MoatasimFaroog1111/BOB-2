@@ -143,6 +143,18 @@ def _required_financial_permission(request: Request) -> str:
     if method in {"GET", "HEAD", "OPTIONS"}:
         return "view_financials"
 
+    # Daily bank review has a deliberate separation of duties: accountants
+    # prepare/submit, auditors review, approvers decide, and none of these stages
+    # implicitly grants ERP posting permission.
+    if path == "/api/v1/erp/daily-bank-review/prepare":
+        return "upload_documents"
+    if path == "/api/v1/erp/daily-bank-review/submit":
+        return "create_entries"
+    if path.startswith("/api/v1/erp/daily-bank-review/") and path.endswith("/audit"):
+        return "review_entries"
+    if path.startswith("/api/v1/erp/daily-bank-review/") and path.endswith("/decision"):
+        return "approve_actions"
+
     if path.startswith("/api/v1/communication-tools"):
         return "approve_actions"
 

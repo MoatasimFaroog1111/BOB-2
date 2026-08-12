@@ -33,6 +33,18 @@ def test_account_change_routes_to_command_pipeline():
     assert decision.route == SpreadsheetPromptRoute.COMMAND
 
 
+def test_account_change_without_diacritics_routes_to_command_pipeline():
+    decision = policy.decide("غير الحساب إلى 400051")
+
+    assert decision.route == SpreadsheetPromptRoute.COMMAND
+
+
+def test_imperative_with_question_mark_remains_a_command():
+    decision = policy.decide("احذف السطر المحدد؟")
+
+    assert decision.route == SpreadsheetPromptRoute.COMMAND
+
+
 def test_delete_command_routes_to_command_pipeline():
     decision = policy.decide("احذف السطر المحدد")
 

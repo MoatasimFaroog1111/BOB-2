@@ -39,14 +39,26 @@ def _safe_regex(text: str, pattern: str) -> bool:
         return False
 
 
-def _text_condition_matches(text: str, pattern: Any) -> bool:
+def _text_condition_matches(text: str, operator: Any, pattern: Any) -> bool:
     value = str(pattern or "").strip()
     if not value:
         return True
-    # Odoo configurations in the field can contain either literal text or a regular
-    # expression. Accept the rule only when one of those explicit interpretations
-    # matches; no fuzzy similarity or category inference is used here.
-    return _plain_contains(text, value) or _safe_regex(text, value)
+    mode = str(operator or "").strip().casefold()
+    if mode in {"contains", "contain"}:
+        return _plain_contains(text, value)
+    if mode in {"not_contains", "not contains", "not_contain"}:
+        return not _plain_contains(text, value)
+    if mode in {"match_regex", "regex", "matches_regex"}:
+        return _safe_regex(text, value)
+    if mode in {"equals", "equal", "exact"}:
+        return text.strip().casefold() == value.casefold()
+    if mode in {"starts_with", "starts with"}:
+        return text.strip().casefold().startswith(value.casefold())
+    if mode in {"ends_with", "ends with"}:
+        return text.strip().casefold().endswith(value.casefold())
+    # Missing/unknown Odoo operator is not interpreted heuristically for a posting
+    # candidate. The transaction remains unresolved and visible to the reviewer.
+    return False
 
 
 def _number(value: Any) -> float | None:
@@ -72,7 +84,7 @@ def _amount_matches(rule: dict[str, Any], amount: float) -> tuple[bool, bool]:
 
 def _transaction_type_matches(configured: str, amount: float) -> tuple[bool, bool]:
     value = configured.strip().casefold()
-    if not value:
+    if not value or value in {"all", "both", "all_transactions"}:
         return True, False
     incoming = {"incoming", "inbound", "received", "receipt", "credit", "positive"}
     outgoing = {"outgoing", "outbound", "sent", "payment", "debit", "negative"}
@@ -80,8 +92,6 @@ def _transaction_type_matches(configured: str, amount: float) -> tuple[bool, boo
         return amount > 0, True
     if value in outgoing:
         return amount < 0, True
-    # Unknown enum/custom values are not guessed. The transaction remains unresolved
-    # until the Odoo configuration is represented by a supported explicit condition.
     return False, True
 
 
@@ -101,9 +111,11 @@ def match_by_odoo_bank_rule_strict(
 
         label_pattern = str(rule.get("match_label_param") or "").strip()
         note_pattern = str(rule.get("match_note_param") or "").strip()
-        text_conditions = [value for value in (label_pattern, note_pattern) if value]
-        if text_conditions and not all(_text_condition_matches(description, value) for value in text_conditions):
+        if label_pattern and not _text_condition_matches(description, rule.get("match_label"), label_pattern):
             continue
+        if note_pattern and not _text_condition_matches(description, rule.get("match_note"), note_pattern):
+            continue
+        text_conditions = [value for value in (label_pattern, note_pattern) if value]
 
         amount_ok, has_amount_condition = _amount_matches(rule, amount)
         if not amount_ok:
@@ -117,9 +129,6 @@ def match_by_odoo_bank_rule_strict(
         has_explicit_condition = bool(
             text_conditions or has_amount_condition or has_transaction_type_condition
         )
-        # Generic rule with no observable statement condition is intentionally not
-        # applied automatically. A human can still review it, but the system will not
-        # silently classify every transaction with a catch-all rule.
         if not has_explicit_condition:
             continue
 
@@ -133,9 +142,9 @@ def match_by_odoo_bank_rule_strict(
         confidence = 1.0 if text_conditions else 0.9
         evidence = []
         if label_pattern:
-            evidence.append(f"label={label_pattern}")
+            evidence.append(f"label[{rule.get('match_label')}]={label_pattern}")
         if note_pattern:
-            evidence.append(f"note={note_pattern}")
+            evidence.append(f"note[{rule.get('match_note')}]={note_pattern}")
         if has_amount_condition:
             evidence.append(
                 f"amount_range={rule.get('match_amount_min') or '*'}..{rule.get('match_amount_max') or '*'}"

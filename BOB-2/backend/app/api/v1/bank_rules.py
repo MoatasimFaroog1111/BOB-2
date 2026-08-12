@@ -14,6 +14,7 @@ from app.db.database import get_db
 from app.erp.bank_reconciliation import parse_file
 from app.security.dependencies import require_permission
 from app.security.file_validation import sanitize_filename, validate_upload_file
+from app.services.bank_rule_draft_editor import bank_rule_draft_editor
 from app.services.bank_rules_service import bank_rules_service
 
 router = APIRouter()
@@ -39,6 +40,14 @@ class BankRuleCreateRequest(BaseModel):
 class BankRuleDraftVersionRequest(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     priority: int | None = Field(default=None, ge=0, le=100000)
+    conditions: list[dict[str, Any]] = Field(min_length=1, max_length=12)
+    target: BankRuleTargetInput
+    rationale: str = Field(default="", max_length=4000)
+    change_note: str = Field(default="", max_length=4000)
+
+
+class BankRuleDraftEditRequest(BaseModel):
+    version_id: int = Field(gt=0)
     conditions: list[dict[str, Any]] = Field(min_length=1, max_length=12)
     target: BankRuleTargetInput
     rationale: str = Field(default="", max_length=4000)
@@ -119,6 +128,32 @@ def create_bank_rule_version(
         rationale=payload.rationale,
         change_note=payload.change_note,
     )
+
+
+@router.patch("/bank-rules/{rule_id}/draft")
+def edit_bank_rule_draft(
+    rule_id: int,
+    payload: BankRuleDraftEditRequest,
+    db: Session = Depends(get_db),
+    token: dict = Depends(require_permission("manage_settings")),
+):
+    bank_rule_draft_editor.update(
+        db,
+        organization_id=int(token["organization_id"]),
+        user_id=int(token["user_id"]),
+        rule_id=rule_id,
+        version_id=payload.version_id,
+        conditions=payload.conditions,
+        target=payload.target.model_dump(),
+        rationale=payload.rationale,
+        change_note=payload.change_note,
+    )
+    rules = bank_rules_service.list_rules(
+        db,
+        organization_id=int(token["organization_id"]),
+        include_disabled=True,
+    )
+    return next(item for item in rules if int(item["id"]) == rule_id)
 
 
 @router.post("/bank-rules/{rule_id}/approve")

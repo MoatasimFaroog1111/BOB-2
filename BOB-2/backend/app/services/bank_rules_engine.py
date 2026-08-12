@@ -69,20 +69,26 @@ def _decimal(value: Any, *, field: str) -> Decimal:
         raise BankRuleDefinitionError(f"Invalid decimal for {field}") from exc
 
 
-def _safe_regex_match(text: str, pattern: str) -> bool:
+def _validate_regex(pattern: str) -> re.Pattern[str]:
     if not pattern or len(pattern) > 256:
         raise BankRuleDefinitionError("Regex pattern must contain 1-256 characters")
     # Deliberately reject constructs that are difficult to bound or audit. BOB Bank
     # Rules are classification controls, not a general-purpose regex execution API.
     forbidden = ("(?=", "(?!", "(?<=", "(?<!", "(?P", "\\1", "\\2", "\\3")
     if any(token in pattern for token in forbidden):
-        raise BankRuleDefinitionError("Regex lookarounds, groups with references, and backreferences are not allowed")
+        raise BankRuleDefinitionError(
+            "Regex lookarounds, groups with references, and backreferences are not allowed"
+        )
     if re.search(r"(?:\*|\+|\{\d+,?\d*\})\s*[+*{]", pattern):
         raise BankRuleDefinitionError("Nested/repeated regex quantifiers are not allowed")
     try:
-        return re.search(pattern, text[:4096], flags=re.IGNORECASE) is not None
+        return re.compile(pattern, flags=re.IGNORECASE)
     except re.error as exc:
         raise BankRuleDefinitionError("Invalid regex pattern") from exc
+
+
+def _safe_regex_match(text: str, pattern: str) -> bool:
+    return _validate_regex(pattern).search(text[:4096]) is not None
 
 
 def validate_conditions(conditions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -103,6 +109,8 @@ def validate_conditions(conditions: list[dict[str, Any]]) -> list[dict[str, Any]
             value = _normalized_text(raw.get("value"))
             if not value:
                 raise BankRuleDefinitionError("statement_text condition requires a value")
+            if operator == "regex":
+                _validate_regex(value)
             normalized.append({"field": field, "operator": operator, "value": value})
             continue
         if field == "amount":

@@ -14,6 +14,14 @@ class BankRulesGateway {
     return fetch(`${API_BASE_URL}/api/v1/erp/accounts`, { cache: "no-store" });
   }
 
+  listPartners(): Promise<Response> {
+    return fetch(`${API_BASE_URL}/api/v1/erp/partners`, { cache: "no-store" });
+  }
+
+  listAnalyticAccounts(): Promise<Response> {
+    return fetch(`${API_BASE_URL}/api/v1/erp/analytic-accounts`, { cache: "no-store" });
+  }
+
   createRule(payload: unknown): Promise<Response> {
     return fetch(`${API_BASE_URL}/api/v1/erp/bank-rules`, {
       method: "POST",

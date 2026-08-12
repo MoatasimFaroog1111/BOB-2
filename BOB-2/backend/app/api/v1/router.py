@@ -13,6 +13,7 @@ from app.api.v1.bank_rule_entry_suggestions import router as bank_rule_entry_sug
 from app.api.v1.chat_journal_lookup import router as chat_journal_lookup_router
 from app.api.v1.chat_spreadsheet_intent_guard import router as chat_spreadsheet_intent_guard_router
 from app.api.v1.communication_tools import router as communication_tools_router
+from app.api.v1.daily_bank_review import router as daily_bank_review_router
 from app.api.v1.erp_catalog import router as erp_catalog_router
 from app.api.v1.erp_connections import router as erp_connections_router
 from app.api.v1.erp_document_parsing import router as erp_document_parsing_router
@@ -68,12 +69,14 @@ api_router.include_router(
 
 # The centralized dependency is method-aware: reads require view_financials,
 # mutations require create_entries by default, settings require manage_settings,
-# uploads require upload_documents, and ERP posting requires post_odoo_entries.
+# uploads require upload_documents, audit actions require review_entries,
+# approval decisions require approve_actions, and ERP posting requires post_odoo_entries.
 api_router.include_router(erp_partners_router, prefix="/erp", tags=["ERP Partners"], dependencies=financial_access)
 api_router.include_router(bank_reconciliation_compat_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
 api_router.include_router(bank_reconciliation_hardening_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
 api_router.include_router(bank_rule_entry_suggestions_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
 api_router.include_router(bank_reconciliation_entry_suggestions_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
+api_router.include_router(daily_bank_review_router, prefix="/erp", tags=["ERP Daily Bank Audit Workflow"], dependencies=financial_access)
 api_router.include_router(accounting_command_router, prefix="/erp", tags=["ERP Accounting Command Brain"], dependencies=financial_access)
 api_router.include_router(chat_spreadsheet_intent_guard_router, prefix="/erp", tags=["ERP Smart Chat Intent Guard"], dependencies=financial_access)
 api_router.include_router(chat_journal_lookup_router, prefix="/erp", tags=["ERP Smart Chat Journal Lookup"], dependencies=financial_access)

@@ -5,6 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from app.erp.base import ERPConnectionProvider
+from app.erp.odoo_account_compat import (
+    adapt_account_search_read_request,
+    odoo_version_major,
+    restore_account_search_read_response,
+)
 from app.erp.providers.cloud_accounting import (
     BusinessCentralProvider,
     OracleFusionERPProvider,
@@ -12,9 +17,34 @@ from app.erp.providers.cloud_accounting import (
     SAPS4HANAProvider,
     XeroProvider,
 )
-from app.erp.providers.odoo_compatible import CompatibleOdooProvider
+from app.erp.providers.odoo import OdooProvider
 
 ERPProviderBuilder = Callable[..., ERPConnectionProvider]
+
+
+class CompatibleOdooProvider(OdooProvider):
+    """Compose the concrete Odoo provider with account schema translation."""
+
+    def __init__(self, url: str, db: str, username: str, password: str):
+        super().__init__(url=url, db=db, username=username, password=password)
+        self._cached_major_version: int | None = None
+
+    def _major_version(self) -> int:
+        if self._cached_major_version is None:
+            self._cached_major_version = odoo_version_major(self.common.version())
+        return self._cached_major_version
+
+    def execute_kw(self, model: str, method: str, args: list, kwargs: dict | None = None):
+        if model != "account.account" or method != "search_read":
+            return super().execute_kw(model, method, args, kwargs)
+
+        adapted_args, adapted_kwargs, aliases = adapt_account_search_read_request(
+            self._major_version(),
+            args,
+            kwargs,
+        )
+        rows = super().execute_kw(model, method, adapted_args, adapted_kwargs)
+        return restore_account_search_read_response(rows, aliases)
 
 
 class ERPProviderRegistry:

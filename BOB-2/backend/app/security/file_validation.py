@@ -95,7 +95,12 @@ def validate_file_extension(filename: Optional[str]) -> bool:
     if ext in DANGEROUS_EXTENSIONS:
         raise FileValidationError(f"File type '{ext}' is not allowed for security reasons")
 
-    allowed_exts = settings.allowed_upload_extensions_list
+    allowed_exts = list(settings.allowed_upload_extensions_list)
+    # Legacy .xls is supported by the same spreadsheet capability as .xlsx. Treating
+    # it as a companion format keeps existing deployments compatible even when their
+    # older ALLOWED_UPLOAD_EXTENSIONS value has not yet been refreshed.
+    if ".xlsx" in allowed_exts and ".xls" not in allowed_exts:
+        allowed_exts.append(".xls")
     if ext not in allowed_exts:
         raise FileValidationError(
             f"File extension '{ext}' is not allowed. Allowed: {', '.join(allowed_exts)}"

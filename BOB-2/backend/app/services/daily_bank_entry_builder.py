@@ -1,8 +1,8 @@
-"""Build review-only daily bank journal entries from Odoo bank rules.
+"""Build review-only daily bank journal entries from BOB Bank Rules.
 
 This component contains accounting business logic only. It does not know about HTTP,
-databases, files, or Odoo transports. Odoo remains the source of truth because callers
-must provide the selected bank journal, rule set, and account catalogue read from ERP.
+databases, files, or ERP transports. BOB Bank Rules are the classification source of
+truth; Odoo remains the source of truth for referenced journals/accounts/partners.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
 from app.core.money import MONEY_ZERO, money_to_str, parse_money, validate_balanced_lines
-from app.erp.bank_rule_resolver import resolve_by_odoo_bank_rule
+from app.services.bank_rules_engine import resolve_by_bob_bank_rule
 
 
 BankRuleMatcher = Callable[[dict[str, Any], list[dict[str, Any]]], dict[str, Any] | None]
@@ -39,7 +39,7 @@ class BankJournalContext:
 class DailyBankEntryBuilder:
     """Convert statement transactions into one detailed balanced entry per day."""
 
-    rule_matcher: BankRuleMatcher = resolve_by_odoo_bank_rule
+    rule_matcher: BankRuleMatcher = resolve_by_bob_bank_rule
     low_confidence_threshold: float = 0.70
     max_transactions: int = 10_000
 
@@ -138,12 +138,36 @@ class DailyBankEntryBuilder:
         analytic_account_name = ""
         confidence = 0.0
         bank_rule_id: int | None = None
+        bank_rule_version_id: int | None = None
+        bank_rule_version: int | None = None
+        bank_rule_fingerprint = ""
         bank_rule_name = ""
-        reason = "No Odoo Bank Rule candidate could be supported by the available statement evidence."
+        reason = "No active BOB Bank Rule matched this bank transaction."
         evidence_source = "unresolved"
         source_priority = "unresolved"
         resolution_mode = "unresolved"
         needs_review = True
+
+        if suggestion:
+            reason = str(suggestion.get("reason") or reason)
+            evidence_source = str(suggestion.get("source") or evidence_source)
+            source_priority = str(suggestion.get("source_priority") or source_priority)
+            resolution_mode = str(suggestion.get("resolution_mode") or resolution_mode)
+            confidence = float(suggestion.get("confidence") or 0.0)
+            bank_rule_id = int(suggestion["bank_rule_id"]) if suggestion.get("bank_rule_id") else None
+            bank_rule_version_id = (
+                int(suggestion["bank_rule_version_id"])
+                if suggestion.get("bank_rule_version_id")
+                else None
+            )
+            bank_rule_version = (
+                int(suggestion["bank_rule_version"])
+                if suggestion.get("bank_rule_version")
+                else None
+            )
+            bank_rule_fingerprint = str(suggestion.get("bank_rule_fingerprint") or "")
+            bank_rule_name = str(suggestion.get("bank_rule_name") or "")
+            needs_review = bool(suggestion.get("needs_review")) or confidence < self.low_confidence_threshold
 
         if suggestion and suggestion.get("suggested_account_id"):
             counterpart_account_id = int(suggestion["suggested_account_id"])
@@ -161,17 +185,10 @@ class DailyBankEntryBuilder:
                     else None
                 )
                 analytic_account_name = str(suggestion.get("suggested_analytic_account_label") or "")
-                confidence = float(suggestion.get("confidence") or 0.0)
-                bank_rule_id = int(suggestion["bank_rule_id"]) if suggestion.get("bank_rule_id") else None
-                bank_rule_name = str(suggestion.get("bank_rule_name") or "")
-                reason = str(suggestion.get("reason") or "Matched Odoo Bank Rule")
-                evidence_source = str(suggestion.get("source") or "odoo_bank_reconciliation_rule")
-                source_priority = str(suggestion.get("source_priority") or "bank_rule")
-                resolution_mode = str(suggestion.get("resolution_mode") or "review_only_odoo_rule_suggestion")
-                needs_review = bool(suggestion.get("needs_review")) or confidence < self.low_confidence_threshold
             else:
                 counterpart_account_id = None
-                reason = "Matched Odoo rule account is missing exact code/name metadata from ERP."
+                reason = "Matched BOB Bank Rule references an Odoo account that is no longer resolvable by exact ID/code/name."
+                needs_review = True
 
         bank_debit = magnitude if amount > MONEY_ZERO else MONEY_ZERO
         bank_credit = magnitude if amount < MONEY_ZERO else MONEY_ZERO
@@ -185,6 +202,9 @@ class DailyBankEntryBuilder:
             "source_description": transaction.get("description"),
             "source_amount": money_to_str(amount),
             "bank_rule_id": bank_rule_id,
+            "bank_rule_version_id": bank_rule_version_id,
+            "bank_rule_version": bank_rule_version,
+            "bank_rule_fingerprint": bank_rule_fingerprint,
             "bank_rule_name": bank_rule_name,
             "confidence": round(confidence, 4),
             "evidence_source": evidence_source,
@@ -222,7 +242,12 @@ class DailyBankEntryBuilder:
             "analytic_account_id": analytic_account_id,
             "analytic_account_name": analytic_account_name,
         }
-        unresolved = counterpart_account_id is None or not counterpart_code or not bank_rule_id
+        unresolved = (
+            counterpart_account_id is None
+            or not counterpart_code
+            or not bank_rule_id
+            or evidence_source != "bob_bank_rule"
+        )
         return [bank_line, counterpart_line], unresolved, needs_review
 
     def build(

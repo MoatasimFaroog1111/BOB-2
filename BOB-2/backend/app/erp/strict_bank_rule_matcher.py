@@ -1,9 +1,8 @@
-"""Fail-closed matcher for Odoo reconciliation rules used in posting candidates.
+"""Fail-closed Odoo reconciliation-model matcher.
 
-Unlike similarity suggestions, this matcher does not guess. A rule must have an explicit
-statement-text, amount, or safely understood direction condition that the transaction
-satisfies. Rules are evaluated in the Odoo sequence order returned by
-``fetch_odoo_bank_rules``.
+The implementation mirrors the observable Odoo 19 reconciliation model conditions:
+journal scoping is applied by the loader, while label, amount and partner conditions are
+checked here. No fuzzy inference is used in this strict stage.
 """
 
 from __future__ import annotations
@@ -20,49 +19,89 @@ def _m2o(value: Any) -> tuple[int | None, str]:
     return None, ""
 
 
+def _m2m_ids(value: Any) -> list[int]:
+    if not isinstance(value, list):
+        return []
+    ids: list[int] = []
+    for item in value:
+        if isinstance(item, int):
+            ids.append(item)
+        elif isinstance(item, (list, tuple)) and item:
+            try:
+                ids.append(int(item[0]))
+            except (TypeError, ValueError):
+                continue
+    return ids
+
+
 def _first_counterpart_line(rule: dict[str, Any]) -> dict[str, Any] | None:
+    """Accept only a single explicit account line in the automatic strict stage."""
+    account_lines: list[dict[str, Any]] = []
     for line in rule.get("lines") or []:
         account_id, _ = _m2o(line.get("account_id"))
         if account_id:
-            return line
-    return None
+            account_lines.append(line)
+    if len(account_lines) != 1:
+        return None
+    return account_lines[0]
 
 
-def _plain_contains(text: str, pattern: str) -> bool:
+def _candidate_texts(txn: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    match_text = str(txn.get("match_text") or "").strip()
+    if match_text:
+        values.extend(part.strip() for part in match_text.split("|") if part.strip())
+    for key in ("description", "main_description", "transaction_details", "note", "memo", "reference", "payment_ref"):
+        value = txn.get(key)
+        if value:
+            values.append(str(value).strip())
+    details = txn.get("details")
+    if isinstance(details, list):
+        values.extend(str(value).strip() for value in details if value)
+    elif details:
+        values.append(str(details).strip())
+
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        normalized = " ".join(value.split())
+        key = normalized.casefold()
+        if normalized and key not in seen:
+            seen.add(key)
+            result.append(normalized)
+    return result
+
+
+def _contains(text: str, pattern: str) -> bool:
     return pattern.casefold() in text.casefold()
 
 
-def _safe_regex(text: str, pattern: str) -> bool:
+def _regex(text: str, pattern: str) -> bool:
     try:
         return re.search(pattern, text, flags=re.IGNORECASE) is not None
     except re.error:
         return False
 
 
-def _text_condition_matches(text: str, operator: Any, pattern: Any) -> bool:
+def _label_matches(texts: list[str], operator: Any, pattern: Any) -> tuple[bool, bool]:
     value = str(pattern or "").strip()
-    if not value:
-        return True
     mode = str(operator or "").strip().casefold()
-    if mode in {"contains", "contain"}:
-        return _plain_contains(text, value)
-    if mode in {"not_contains", "not contains", "not_contain"}:
-        return not _plain_contains(text, value)
-    if mode in {"match_regex", "regex", "matches_regex"}:
-        return _safe_regex(text, value)
-    if mode in {"equals", "equal", "exact"}:
-        return text.strip().casefold() == value.casefold()
-    if mode in {"starts_with", "starts with"}:
-        return text.strip().casefold().startswith(value.casefold())
-    if mode in {"ends_with", "ends with"}:
-        return text.strip().casefold().endswith(value.casefold())
-    # Missing/unknown Odoo operator is not interpreted heuristically for a posting
-    # candidate. The transaction remains unresolved and visible to the reviewer.
-    return False
+    if not mode and not value:
+        return True, False
+    if not mode or not value:
+        return False, True
+
+    if mode == "contains":
+        return any(_contains(text, value) for text in texts), True
+    if mode == "not_contains":
+        return all(not _contains(text, value) for text in texts), True
+    if mode == "match_regex":
+        return any(_regex(text, value) for text in texts), True
+    return False, True
 
 
 def _number(value: Any) -> float | None:
-    if value in (None, False, ""):
+    if value is None or value is False or value == "":
         return None
     try:
         return float(str(value).replace(",", ""))
@@ -71,37 +110,54 @@ def _number(value: Any) -> float | None:
 
 
 def _amount_matches(rule: dict[str, Any], amount: float) -> tuple[bool, bool]:
-    magnitude = abs(float(amount or 0.0))
+    """Mirror Odoo 19 match_amount: lower/max, greater/min, or between."""
+    mode = str(rule.get("match_amount") or "").strip().casefold()
     minimum = _number(rule.get("match_amount_min"))
     maximum = _number(rule.get("match_amount_max"))
-    has_condition = minimum is not None or maximum is not None
-    if minimum is not None and magnitude < abs(minimum):
-        return False, has_condition
-    if maximum is not None and magnitude > abs(maximum):
-        return False, has_condition
-    return True, has_condition
+    magnitude = abs(float(amount or 0.0))
 
+    if not mode:
+        # Compatibility for older/custom Odoo versions that expose only bounds.
+        if minimum is None and maximum is None:
+            return True, False
+        if minimum is not None and magnitude < abs(minimum):
+            return False, True
+        if maximum is not None and magnitude > abs(maximum):
+            return False, True
+        return True, True
 
-def _transaction_type_matches(configured: str, amount: float) -> tuple[bool, bool]:
-    value = configured.strip().casefold()
-    if not value or value in {"all", "both", "all_transactions"}:
-        return True, False
-    incoming = {"incoming", "inbound", "received", "receipt", "credit", "positive"}
-    outgoing = {"outgoing", "outbound", "sent", "payment", "debit", "negative"}
-    if value in incoming:
-        return amount > 0, True
-    if value in outgoing:
-        return amount < 0, True
+    if mode == "lower":
+        return maximum is not None and magnitude <= abs(maximum), True
+    if mode == "greater":
+        return minimum is not None and magnitude >= abs(minimum), True
+    if mode == "between":
+        if minimum is None or maximum is None:
+            return False, True
+        low, high = sorted((abs(minimum), abs(maximum)))
+        return low <= magnitude <= high, True
     return False, True
+
+
+def _partner_matches(rule: dict[str, Any], txn: dict[str, Any]) -> tuple[bool, bool]:
+    allowed = _m2m_ids(rule.get("match_partner_ids"))
+    if not allowed:
+        return True, False
+    partner_id, _ = _m2o(txn.get("partner_id"))
+    if partner_id is None:
+        raw = txn.get("partner_id")
+        if isinstance(raw, int):
+            partner_id = raw
+    return bool(partner_id and partner_id in allowed), True
 
 
 def match_by_odoo_bank_rule_strict(
     txn: dict[str, Any],
     rules: list[dict[str, Any]],
 ) -> dict[str, Any] | None:
-    description = str(txn.get("description") or "").strip()
-    if not description:
+    texts = _candidate_texts(txn)
+    if not texts:
         return None
+    description = str(txn.get("description") or texts[0]).strip()
     amount = float(txn.get("amount") or 0.0)
 
     for rule in rules:
@@ -109,48 +165,41 @@ def match_by_odoo_bank_rule_strict(
         if not line:
             continue
 
-        label_pattern = str(rule.get("match_label_param") or "").strip()
-        note_pattern = str(rule.get("match_note_param") or "").strip()
-        if label_pattern and not _text_condition_matches(description, rule.get("match_label"), label_pattern):
+        label_ok, has_label_condition = _label_matches(
+            texts,
+            rule.get("match_label"),
+            rule.get("match_label_param"),
+        )
+        if not label_ok:
             continue
-        if note_pattern and not _text_condition_matches(description, rule.get("match_note"), note_pattern):
-            continue
-        text_conditions = [value for value in (label_pattern, note_pattern) if value]
 
         amount_ok, has_amount_condition = _amount_matches(rule, amount)
         if not amount_ok:
             continue
 
-        transaction_type = str(rule.get("match_transaction_type") or "").strip()
-        transaction_type_ok, has_transaction_type_condition = _transaction_type_matches(transaction_type, amount)
-        if not transaction_type_ok:
+        partner_ok, has_partner_condition = _partner_matches(rule, txn)
+        if not partner_ok:
             continue
 
-        has_explicit_condition = bool(
-            text_conditions or has_amount_condition or has_transaction_type_condition
-        )
-        if not has_explicit_condition:
+        # A manual catch-all rule without any observable condition is not safe to
+        # auto-apply. It remains eligible for the review-only constrained stage.
+        if not (has_label_condition or has_amount_condition or has_partner_condition):
             continue
 
         account_id, account_label = _m2o(line.get("account_id"))
         if not account_id:
             continue
         partner_id, partner_label = _m2o(line.get("partner_id"))
-        if not partner_id:
-            partner_id, partner_label = _m2o(rule.get("partner_id"))
-        analytic_id, analytic_label = _m2o(line.get("analytic_account_id"))
-        confidence = 1.0 if text_conditions else 0.9
-        evidence = []
-        if label_pattern:
-            evidence.append(f"label[{rule.get('match_label')}]={label_pattern}")
-        if note_pattern:
-            evidence.append(f"note[{rule.get('match_note')}]={note_pattern}")
+
+        evidence: list[str] = []
+        if has_label_condition:
+            evidence.append(f"label[{rule.get('match_label')}]={rule.get('match_label_param')}")
         if has_amount_condition:
             evidence.append(
-                f"amount_range={rule.get('match_amount_min') or '*'}..{rule.get('match_amount_max') or '*'}"
+                f"amount[{rule.get('match_amount') or 'bounds'}]={rule.get('match_amount_min') or '*'}..{rule.get('match_amount_max') or '*'}"
             )
-        if has_transaction_type_condition:
-            evidence.append(f"transaction_type={transaction_type}")
+        if has_partner_condition:
+            evidence.append(f"partner_ids={_m2m_ids(rule.get('match_partner_ids'))}")
 
         return {
             "row_number": txn.get("row_number"),
@@ -161,18 +210,19 @@ def match_by_odoo_bank_rule_strict(
             "suggested_account_label": account_label,
             "suggested_partner_id": partner_id,
             "suggested_partner_label": partner_label,
-            "suggested_analytic_account_id": analytic_id,
-            "suggested_analytic_account_label": analytic_label,
-            "confidence": confidence,
+            "suggested_analytic_account_id": None,
+            "suggested_analytic_account_label": "",
+            "confidence": 1.0,
             "source": "odoo_bank_reconciliation_rule",
             "source_priority": "bank_rule_strict",
             "bank_rule_id": rule.get("id"),
             "bank_rule_name": rule.get("name"),
             "reason": (
                 f"Strictly matched Odoo Bank Rule {rule.get('name') or rule.get('id')} "
-                f"using explicit configured conditions ({'; '.join(evidence)})."
+                f"using configured conditions ({'; '.join(evidence)})."
             ),
-            "needs_review": confidence < 0.70,
+            "needs_review": False,
+            "resolution_mode": "strict_odoo_condition",
         }
 
     return None

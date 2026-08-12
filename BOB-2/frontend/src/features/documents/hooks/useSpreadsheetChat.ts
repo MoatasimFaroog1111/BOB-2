@@ -3,6 +3,10 @@ import type { Dispatch, SetStateAction } from "react";
 
 import { documentsGateway } from "@/features/documents/api/documentsGateway";
 import {
+  buildBankStatementGrid,
+  shouldParseAsBankStatement,
+} from "@/features/documents/lib/bankStatementImport";
+import {
   createEmptyGrid,
   DEFAULT_WORKSHEET_COLUMNS,
   DEFAULT_WORKSHEET_ROWS,
@@ -217,16 +221,79 @@ export function useSpreadsheetChat({
       const amount = fields.total_amount || fields.amount || 0;
       const partnerName = fields.supplier_name || fields.partner_name || "";
       const rawText = analysisResult.raw_text_preview || "";
+      const analyzedDocumentClass = String(
+        analysisResult.document_class || fields.document_class || "unknown",
+      );
+
+      // Bank statements are multi-transaction documents. Never collapse them into one
+      // two-line proposal based on the first fee/amount discovered in the workbook.
+      if (shouldParseAsBankStatement(file.name, analyzedDocumentClass, rawText)) {
+        const statementFormData = new FormData();
+        statementFormData.append("statement", file);
+
+        const statementRes = await documentsGateway.parseBankStatement({
+          method: "POST",
+          body: statementFormData,
+        });
+
+        if (statementRes.ok) {
+          const statementData = await statementRes.json();
+          const statementRows = Array.isArray(statementData.statement_only)
+            ? statementData.statement_only
+            : [];
+
+          if (statementData.status === "success" && statementRows.length > 0) {
+            const statementGrid = buildBankStatementGrid(
+              statementRows,
+              language,
+              DEFAULT_WORKSHEET_ROWS,
+              DEFAULT_WORKSHEET_COLUMNS,
+            );
+
+            setSheets((prevSheets) => prevSheets.map((sheet) => (
+              sheet.id === activeSheetId
+                ? {
+                    ...sheet,
+                    gridData: statementGrid.gridData,
+                    rowCount: statementGrid.rowCount,
+                    colCount: statementGrid.colCount,
+                  }
+                : sheet
+            )));
+
+            setChatMessages((prev) => [
+              ...prev,
+              {
+                role: "assistant",
+                text: language === "ar"
+                  ? `✅ تم التعرف على الملف ككشف حساب بنكي وتحليل ${statementRows.length.toLocaleString()} عملية.\n\nتم تعبئة الجدول مباشرة من معاملات كشف الحساب (التاريخ، الوصف، المدين، الدائن، التصنيف المقترح، الرصيد). لم يتم اختزال الكشف إلى عملية واحدة ولم يتم الترحيل إلى Odoo؛ راجع التصنيفات قبل إنشاء القيود.`
+                  : `✅ The file was recognized as a bank statement and ${statementRows.length.toLocaleString()} transactions were parsed.\n\nThe grid now contains the statement transactions (date, description, debit, credit, suggested classification, balance). The statement was not collapsed into a single transaction and nothing was posted to Odoo; review the classifications before creating entries.`
+              }
+            ]);
+            return;
+          }
+        } else {
+          console.warn("Bank statement parser did not accept the file; falling back to document proposal flow.");
+        }
+      }
 
       // Request a draft transaction through the feature gateway.
       const selectedJournal = journals.find((j) => j.id === selectedJournalId);
-      const docClass = selectedJournal ? selectedJournal.type : "general";
+      const docClass = analyzedDocumentClass !== "unknown"
+        ? analyzedDocumentClass
+        : selectedJournal?.type || "general";
+      const accountingDate = fields.invoice_date
+        || fields.processing_date
+        || fields.payment_date
+        || fields.transaction_date
+        || fields.date
+        || new Date().toISOString().slice(0, 10);
 
       const proposePayload = {
         filename: file.name,
         document_class: docClass,
         amount: amount,
-        date: new Date().toISOString().slice(0, 10),
+        date: accountingDate,
         partner_name: partnerName,
         raw_text: rawText,
       };

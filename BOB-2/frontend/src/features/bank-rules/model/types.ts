@@ -11,6 +11,16 @@ export interface ERPAccount {
   name: string;
 }
 
+export interface ERPPartner {
+  id: number;
+  name: string;
+}
+
+export interface ERPAnalyticAccount {
+  id: number;
+  name: string;
+}
+
 export interface BankRuleCondition {
   field: "statement_text" | "amount" | "direction";
   operator: string;

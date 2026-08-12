@@ -10,9 +10,10 @@ import {
 import type {
   BankRule,
   BankRuleCondition,
-  BankRuleVersion,
   ERPAccount,
+  ERPAnalyticAccount,
   ERPJournal,
+  ERPPartner,
 } from "@/features/bank-rules/model/types";
 import { useLanguage } from "@/lib/LanguageContext";
 
@@ -44,16 +45,10 @@ function emptyEditor(journalId: number | null): BankRuleEditorValue {
     priority: 100,
     conditions: [{ field: "statement_text", operator: "contains", value: "" }],
     accountId: null,
+    partnerId: null,
+    analyticAccountId: null,
     rationale: "",
     changeNote: "",
-  };
-}
-
-function targetInput(version: BankRuleVersion | null | undefined) {
-  return {
-    account_id: Number(version?.target?.account_id || 0) || null,
-    partner_id: Number(version?.target?.partner_id || 0) || null,
-    analytic_account_id: Number(version?.target?.analytic_account_id || 0) || null,
   };
 }
 
@@ -93,6 +88,8 @@ export function BankRulesManager() {
   const ar = language === "ar";
   const [journals, setJournals] = useState<ERPJournal[]>([]);
   const [accounts, setAccounts] = useState<ERPAccount[]>([]);
+  const [partners, setPartners] = useState<ERPPartner[]>([]);
+  const [analyticAccounts, setAnalyticAccounts] = useState<ERPAnalyticAccount[]>([]);
   const [rules, setRules] = useState<BankRule[]>([]);
   const [selectedJournalId, setSelectedJournalId] = useState<number | null>(null);
   const [editorSession, setEditorSession] = useState<EditorSession | null>(null);
@@ -119,17 +116,27 @@ export function BankRulesManager() {
     setLoading(true);
     setError("");
     try {
-      const [journalResponse, accountResponse] = await Promise.all([
+      const [journalResponse, accountResponse, partnerResponse, analyticResponse] = await Promise.all([
         bankRulesGateway.listJournals(),
         bankRulesGateway.listAccounts(),
+        bankRulesGateway.listPartners(),
+        bankRulesGateway.listAnalyticAccounts(),
       ]);
       if (!journalResponse.ok) throw new Error(await journalResponse.text());
       if (!accountResponse.ok) throw new Error(await accountResponse.text());
+      if (!partnerResponse.ok) throw new Error(await partnerResponse.text());
+      if (!analyticResponse.ok) throw new Error(await analyticResponse.text());
+
       const journalRows = (await journalResponse.json()) as ERPJournal[];
       const accountRows = (await accountResponse.json()) as ERPAccount[];
+      const partnerRows = (await partnerResponse.json()) as ERPPartner[];
+      const analyticRows = (await analyticResponse.json()) as ERPAnalyticAccount[];
       const banks = journalRows.filter((journal) => journal.type === "bank");
+
       setJournals(journalRows);
       setAccounts(accountRows);
+      setPartners(partnerRows);
+      setAnalyticAccounts(analyticRows);
       const firstJournal = banks[0]?.id || null;
       setSelectedJournalId(firstJournal);
       await loadRules(firstJournal);
@@ -186,10 +193,18 @@ export function BankRulesManager() {
         ? version.conditions
         : [{ field: "statement_text", operator: "contains", value: "" }],
       accountId: Number(version.target?.account_id || 0) || null,
+      partnerId: Number(version.target?.partner_id || 0) || null,
+      analyticAccountId: Number(version.target?.analytic_account_id || 0) || null,
       rationale: version.rationale || "",
       changeNote: version.change_note || "",
     });
   };
+
+  const targetPayload = () => ({
+    account_id: editorValue.accountId,
+    partner_id: editorValue.partnerId,
+    analytic_account_id: editorValue.analyticAccountId,
+  });
 
   const saveEditor = async () => {
     if (!editorSession || actionLoading) return;
@@ -201,23 +216,22 @@ export function BankRulesManager() {
     setError("");
     setNotice("");
     try {
-      const payload = {
-        name: editorValue.name.trim(),
-        journal_id: editorValue.journalId,
-        priority: editorValue.priority,
-        conditions: editorValue.conditions,
-        target: { account_id: editorValue.accountId },
-        rationale: editorValue.rationale,
-        change_note: editorValue.changeNote,
-      };
       let response: Response;
       if (editorSession.mode === "create") {
-        response = await bankRulesGateway.createRule(payload);
+        response = await bankRulesGateway.createRule({
+          name: editorValue.name.trim(),
+          journal_id: editorValue.journalId,
+          priority: editorValue.priority,
+          conditions: editorValue.conditions,
+          target: targetPayload(),
+          rationale: editorValue.rationale,
+          change_note: editorValue.changeNote,
+        });
       } else {
         response = await bankRulesGateway.editDraft(Number(editorSession.ruleId), {
           version_id: Number(editorSession.versionId),
           conditions: editorValue.conditions,
-          target: { account_id: editorValue.accountId },
+          target: targetPayload(),
           rationale: editorValue.rationale,
           change_note: editorValue.changeNote,
         });
@@ -434,6 +448,8 @@ export function BankRulesManager() {
             onChange={setEditorValue}
             journals={journals}
             accounts={accounts}
+            partners={partners}
+            analyticAccounts={analyticAccounts}
             language={language}
             lockName={editorSession.mode === "edit_draft"}
             lockJournal={editorSession.mode === "edit_draft"}
@@ -486,8 +502,10 @@ export function BankRulesManager() {
                       <span className="rounded bg-red-500/10 px-2 py-1 text-[9px] text-red-300">{ar ? "لا توجد شروط قابلة للتنفيذ" : "No executable conditions"}</span>
                     )}
                   </div>
-                  <div className="mt-2 text-[10px] text-white/45">
-                    {ar ? "الحساب:" : "Account:"} {displayVersion?.target?.account_code || ""} {displayVersion?.target?.account_name || displayVersion?.target?.account_id || "—"}
+                  <div className="mt-2 space-y-1 text-[10px] text-white/45">
+                    <div>{ar ? "الحساب:" : "Account:"} {displayVersion?.target?.account_code || ""} {displayVersion?.target?.account_name || displayVersion?.target?.account_id || "—"}</div>
+                    {displayVersion?.target?.partner_id && <div>{ar ? "الشريك:" : "Partner:"} {displayVersion.target.partner_name || displayVersion.target.partner_id}</div>}
+                    {displayVersion?.target?.analytic_account_id && <div>{ar ? "التحليلي:" : "Analytic:"} {displayVersion.target.analytic_account_name || displayVersion.target.analytic_account_id}</div>}
                   </div>
                   {displayVersion?.fingerprint && (
                     <div className="mt-1 truncate font-mono text-[8px] text-white/25">SHA-256 rule fingerprint: {displayVersion.fingerprint}</div>

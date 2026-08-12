@@ -11,6 +11,7 @@ from app.db.database import get_db
 from app.security.dependencies import require_permission
 from app.security.file_validation import sanitize_filename, validate_upload_file
 from app.services.daily_bank_review_service import daily_bank_review_service
+from app.services.daily_bank_supporting_evidence import daily_bank_supporting_evidence_service
 
 router = APIRouter()
 
@@ -97,16 +98,101 @@ def get_daily_bank_review(
     )
 
 
+@router.post("/daily-bank-review/{approval_id}/supporting-documents")
+async def attach_daily_bank_supporting_documents(
+    approval_id: int,
+    files: list[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+    token: dict = Depends(require_permission("upload_documents")),
+):
+    if not files:
+        raise HTTPException(status_code=400, detail="At least one supporting document is required.")
+    if len(files) > 20:
+        raise HTTPException(status_code=400, detail="A maximum of 20 supporting documents can be attached at once.")
+
+    attached: list[dict] = []
+    for upload in files:
+        valid, error = await validate_upload_file(upload)
+        if not valid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{upload.filename or 'supporting document'}: {error or 'validation failed'}",
+            )
+        content = await upload.read()
+        await upload.seek(0)
+        attached.append(
+            daily_bank_supporting_evidence_service.attach(
+                db,
+                organization_id=int(token["organization_id"]),
+                user_id=int(token["user_id"]),
+                approval_id=approval_id,
+                filename=sanitize_filename(upload.filename or "supporting-document"),
+                content_type=upload.content_type,
+                content=content,
+            )
+        )
+    return {"status": "attached", "items": attached, "safe_to_post": False}
+
+
+@router.get("/daily-bank-review/{approval_id}/supporting-documents")
+def list_daily_bank_supporting_documents(
+    approval_id: int,
+    db: Session = Depends(get_db),
+    token: dict = Depends(require_permission("view_financials")),
+):
+    return {
+        "status": "success",
+        "items": daily_bank_supporting_evidence_service.list(
+            db,
+            organization_id=int(token["organization_id"]),
+            approval_id=approval_id,
+        ),
+    }
+
+
+@router.get("/daily-bank-review/{approval_id}/supporting-documents/{document_id}/content")
+def get_daily_bank_supporting_document(
+    approval_id: int,
+    document_id: int,
+    db: Session = Depends(get_db),
+    token: dict = Depends(require_permission("view_financials")),
+):
+    document, path = daily_bank_supporting_evidence_service.document_path(
+        db,
+        organization_id=int(token["organization_id"]),
+        approval_id=approval_id,
+        document_id=document_id,
+    )
+    return FileResponse(
+        path=str(path),
+        media_type=document.content_type or "application/octet-stream",
+        filename=document.filename,
+    )
+
+
 @router.post("/daily-bank-review/{approval_id}/audit")
 def audit_daily_bank_review(
     approval_id: int,
     db: Session = Depends(get_db),
     token: dict = Depends(require_permission("review_entries")),
 ):
-    return daily_bank_review_service.audit(
+    organization_id = int(token["organization_id"])
+    user_id = int(token["user_id"])
+    daily_bank_review_service.audit(
         db,
-        organization_id=int(token["organization_id"]),
-        user_id=int(token["user_id"]),
+        organization_id=organization_id,
+        user_id=user_id,
+        approval_id=approval_id,
+    )
+    daily_bank_supporting_evidence_service.merge_verification_into_audit(
+        db,
+        organization_id=organization_id,
+        user_id=user_id,
+        approval_id=approval_id,
+    )
+    return daily_bank_review_service.get_review(
+        db,
+        organization_id=organization_id,
         approval_id=approval_id,
     )
 

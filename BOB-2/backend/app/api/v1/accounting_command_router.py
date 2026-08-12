@@ -3,7 +3,10 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.accounting_command_brain import apply_accounting_command
 from app.api.v1.chat_spreadsheet_intent_guard import guarded_chat_spreadsheet
-from app.api.v1.erp_spreadsheet import ChatSpreadsheetRequest
+from app.api.v1.erp_spreadsheet import (
+    ChatSpreadsheetRequest,
+    chat_spreadsheet as llm_spreadsheet_assistant,
+)
 from app.api.v1.hybrid_account_partner_search import try_hybrid_account_partner_search
 from app.api.v1.hybrid_global_account_search_v2 import (
     try_hybrid_global_account_search_v2,
@@ -46,7 +49,7 @@ def accounting_command_chat_spreadsheet(
     """Route spreadsheet prompts by responsibility before executing an application component.
 
     Routing order:
-    1. Read-only questions and analytical prompts -> LLM Spreadsheet Assistant.
+    1. Read-only questions and analytical prompts -> LLM Spreadsheet Assistant directly.
     2. Explicit mutation/execution prompts -> Accounting Command Model pipeline.
     3. Unclassified prompts retain the existing local-search and command fallbacks.
 
@@ -57,7 +60,10 @@ def accounting_command_chat_spreadsheet(
     routing = spreadsheet_prompt_routing_policy.decide(payload.prompt or "")
 
     if routing.route == SpreadsheetPromptRoute.ASSISTANT:
-        return guarded_chat_spreadsheet(payload=payload, db_session=db_session)
+        # Bypass the legacy command guard here on purpose: read-only analytical questions can
+        # contain words such as "تعديل" inside phrases like "بدون تعديل الجدول". Sending them
+        # through the command guard would recreate the false mutation classification.
+        return llm_spreadsheet_assistant(payload=payload, db_session=db_session)
 
     if routing.route == SpreadsheetPromptRoute.COMMAND:
         return _run_command_pipeline(payload, db_session)

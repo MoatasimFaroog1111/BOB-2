@@ -128,7 +128,7 @@ def test_same_priority_overlap_is_fail_closed_as_ambiguous():
     assert result["candidate_rule_ids"] == [1, 2]
 
 
-def test_regex_is_constrained_and_dangerous_constructs_are_rejected():
+def test_regex_is_constrained_and_dangerous_constructs_are_rejected_before_activation():
     conditions = validate_conditions(
         [{"field": "statement_text", "operator": "regex", "value": r"INSTANT\s+PAYMENT\s+FEES"}]
     )
@@ -142,13 +142,6 @@ def test_regex_is_constrained_and_dangerous_constructs_are_rejected():
     assert result is not None
 
     with pytest.raises(BankRuleDefinitionError):
-        engine.resolve(
-            {"description": "aaaaaaaa", "amount": -1},
-            [
-                rule(
-                    rule_id=10,
-                    priority=1,
-                    conditions=[{"field": "statement_text", "operator": "regex", "value": r"(a+)+$"}],
-                )
-            ],
+        validate_conditions(
+            [{"field": "statement_text", "operator": "regex", "value": r"(a+)+$"}]
         )

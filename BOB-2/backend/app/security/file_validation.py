@@ -27,6 +27,10 @@ DANGEROUS_EXTENSIONS = {
 
 TEXT_EXTENSIONS = {".txt", ".csv", ".tsv", ".ofx", ".qfx", ".qif", ".mt940", ".sta"}
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+LEGACY_XLS_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_VBA_PROJECT_STORAGE_NAME = "_VBA_PROJECT_CUR".encode("utf-16le")
+_MAX_XLS_SHEETS = 50
+_MAX_XLS_TOTAL_CELLS = 500_000
 
 # Kept split so source scanners do not mistake this repository for an infected
 # artifact. Joined only in memory for the standard harmless antivirus test.
@@ -74,6 +78,8 @@ def detect_file_type(content: bytes, declared_extension: str) -> Optional[str]:
         return ".webp"
     if content.startswith(b"PK\x03\x04"):
         return _inspect_office_zip(content)
+    if content.startswith(LEGACY_XLS_MAGIC) and declared_extension == ".xls":
+        return ".xls"
     if declared_extension in TEXT_EXTENSIONS and _looks_like_text(content):
         return declared_extension
     return None
@@ -141,6 +147,40 @@ def validate_xlsx_archive(content: bytes) -> None:
         raise FileValidationError("Invalid XLSX archive") from exc
 
 
+def validate_xls_workbook(content: bytes) -> None:
+    """Validate legacy BIFF workbooks with bounded, non-executing xlrd parsing."""
+    if not content.startswith(LEGACY_XLS_MAGIC):
+        raise FileValidationError("Invalid XLS compound document")
+    if _VBA_PROJECT_STORAGE_NAME in content:
+        raise FileValidationError("Macro-enabled legacy spreadsheets are not allowed")
+
+    try:
+        import xlrd
+
+        workbook = xlrd.open_workbook(
+            file_contents=content,
+            on_demand=True,
+            formatting_info=False,
+        )
+        try:
+            if workbook.nsheets <= 0 or workbook.nsheets > _MAX_XLS_SHEETS:
+                raise FileValidationError("Spreadsheet exceeds the safe worksheet limit")
+
+            total_cells = 0
+            for sheet_index in range(workbook.nsheets):
+                worksheet = workbook.sheet_by_index(sheet_index)
+                total_cells += worksheet.nrows * worksheet.ncols
+                if total_cells > _MAX_XLS_TOTAL_CELLS:
+                    raise FileValidationError("Spreadsheet exceeds the safe cell limit")
+                workbook.unload_sheet(sheet_index)
+        finally:
+            workbook.release_resources()
+    except FileValidationError:
+        raise
+    except Exception as exc:
+        raise FileValidationError("Invalid or corrupted XLS workbook") from exc
+
+
 def validate_pdf(content: bytes) -> None:
     try:
         from pypdf import PdfReader
@@ -195,6 +235,8 @@ def validate_file_content(content: bytes, declared_extension: str) -> bool:
 
     if declared_ext == ".xlsx":
         validate_xlsx_archive(content)
+    elif declared_ext == ".xls":
+        validate_xls_workbook(content)
     elif declared_ext == ".pdf":
         validate_pdf(content)
     elif declared_ext in IMAGE_EXTENSIONS:

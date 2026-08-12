@@ -4,6 +4,7 @@ import logging
 from pathlib import Path
 
 from app.core.config import settings
+from app.erp.spreadsheet_text_extractor import spreadsheet_text_extractor
 from app.security.file_validation import (
     scan_for_malware,
     validate_file_content,
@@ -42,6 +43,8 @@ def install_document_processing_guard() -> None:
 
     def guarded_extract_text(self, file_path: str) -> str:
         _validate_path_before_processing(file_path)
+        if spreadsheet_text_extractor.supports(file_path):
+            return spreadsheet_text_extractor.extract(file_path)
         return original_extract_text(self, file_path)
 
     GuardianDocumentAI.extract_text = guarded_extract_text

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
 from app.models.mixins import TimestampMixin
+
+
+def _utc_now_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class BankRule(Base, TimestampMixin):
@@ -72,6 +76,6 @@ class BankRuleVersion(Base):
     source_snapshot: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     created_by_user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utc_now_naive)
     approved_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     approved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

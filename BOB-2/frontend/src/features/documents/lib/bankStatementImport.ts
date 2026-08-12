@@ -73,7 +73,11 @@ function numericValue(value: string | number | null | undefined): number | null 
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function moneyCell(value: string | number | null | undefined, *, showZero = false): string {
+function moneyCell(
+  value: string | number | null | undefined,
+  options: { showZero?: boolean } = {},
+): string {
+  const { showZero = false } = options;
   const parsed = numericValue(value);
   if (parsed === null) return "";
   if (!showZero && Math.abs(parsed) < 0.0000001) return "";

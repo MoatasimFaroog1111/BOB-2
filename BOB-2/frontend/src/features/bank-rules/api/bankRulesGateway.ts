@@ -30,6 +30,14 @@ class BankRulesGateway {
     });
   }
 
+  editDraft(ruleId: number, payload: unknown): Promise<Response> {
+    return fetch(`${API_BASE_URL}/api/v1/erp/bank-rules/${ruleId}/draft`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  }
+
   approve(ruleId: number, versionId: number, approvalNote = ""): Promise<Response> {
     return fetch(`${API_BASE_URL}/api/v1/erp/bank-rules/${ruleId}/approve`, {
       method: "POST",

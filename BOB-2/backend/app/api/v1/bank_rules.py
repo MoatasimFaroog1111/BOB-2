@@ -15,6 +15,7 @@ from app.erp.bank_reconciliation import parse_file
 from app.security.dependencies import require_permission
 from app.security.file_validation import sanitize_filename, validate_upload_file
 from app.services.bank_rule_draft_editor import bank_rule_draft_editor
+from app.services.bank_rule_test_service import bank_rule_test_service
 from app.services.bank_rules_service import bank_rules_service
 
 router = APIRouter()
@@ -226,7 +227,7 @@ async def test_bank_rule_against_statement(
         transactions = parse_file(temp_path)
         if not transactions:
             raise HTTPException(status_code=422, detail="No bank transactions were found in the test statement.")
-        return bank_rules_service.test_rule(
+        return bank_rule_test_service.test(
             db,
             organization_id=int(token["organization_id"]),
             rule_id=rule_id,

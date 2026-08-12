@@ -75,7 +75,10 @@ class SpreadsheetPromptRoutingPolicy:
     _COMMAND_MARKERS = (
         "ضع",
         "غيّر",
-        "غير",
+        "غير الحساب",
+        "غير الشريك",
+        "غير التاريخ",
+        "غير البيان",
         "عدّل",
         "عدل",
         "احذف",
@@ -127,11 +130,7 @@ class SpreadsheetPromptRoutingPolicy:
                 "explicit read-only/no-mutation request",
             )
 
-        if (
-            self._contains_any(text, self._ANALYSIS_MARKERS)
-            or text.endswith("؟")
-            or text.endswith("?")
-        ):
+        if self._contains_any(text, self._ANALYSIS_MARKERS):
             return SpreadsheetRoutingDecision(
                 SpreadsheetPromptRoute.ASSISTANT,
                 "analytical or informational question",
@@ -141,6 +140,12 @@ class SpreadsheetPromptRoutingPolicy:
             return SpreadsheetRoutingDecision(
                 SpreadsheetPromptRoute.COMMAND,
                 "explicit mutation/execution command",
+            )
+
+        if text.endswith("؟") or text.endswith("?"):
+            return SpreadsheetRoutingDecision(
+                SpreadsheetPromptRoute.ASSISTANT,
+                "informational question punctuation",
             )
 
         return SpreadsheetRoutingDecision(

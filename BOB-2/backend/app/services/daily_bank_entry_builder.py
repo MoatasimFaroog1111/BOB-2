@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
 from app.core.money import MONEY_ZERO, money_to_str, parse_money, validate_balanced_lines
-from app.erp.strict_bank_rule_matcher import match_by_odoo_bank_rule_strict
+from app.erp.bank_rule_resolver import resolve_by_odoo_bank_rule
 
 
 BankRuleMatcher = Callable[[dict[str, Any], list[dict[str, Any]]], dict[str, Any] | None]
@@ -39,7 +39,7 @@ class BankJournalContext:
 class DailyBankEntryBuilder:
     """Convert statement transactions into one detailed balanced entry per day."""
 
-    rule_matcher: BankRuleMatcher = match_by_odoo_bank_rule_strict
+    rule_matcher: BankRuleMatcher = resolve_by_odoo_bank_rule
     low_confidence_threshold: float = 0.70
     max_transactions: int = 10_000
 
@@ -125,8 +125,6 @@ class DailyBankEntryBuilder:
         magnitude = abs(amount)
         tx_key = self._transaction_key(transaction)
 
-        # Float conversion is used only by the deterministic rule-condition matcher.
-        # Journal arithmetic remains Decimal/fixed-point throughout this component.
         rule_input = dict(transaction)
         rule_input["amount"] = float(amount)
         suggestion = self.rule_matcher(rule_input, rules)
@@ -141,8 +139,10 @@ class DailyBankEntryBuilder:
         confidence = 0.0
         bank_rule_id: int | None = None
         bank_rule_name = ""
-        reason = "No explicit Odoo Bank Rule matched this transaction."
+        reason = "No Odoo Bank Rule candidate could be supported by the available statement evidence."
         evidence_source = "unresolved"
+        source_priority = "unresolved"
+        resolution_mode = "unresolved"
         needs_review = True
 
         if suggestion and suggestion.get("suggested_account_id"):
@@ -152,8 +152,6 @@ class DailyBankEntryBuilder:
                 account_catalog,
                 str(suggestion.get("suggested_account_label") or ""),
             )
-            # Missing ERP metadata is fail-closed: an ID alone is not enough to
-            # present an Odoo-ready accounting line.
             if counterpart_code and counterpart_name:
                 partner_id = int(suggestion["suggested_partner_id"]) if suggestion.get("suggested_partner_id") else None
                 partner_name = str(suggestion.get("suggested_partner_label") or "")
@@ -168,10 +166,12 @@ class DailyBankEntryBuilder:
                 bank_rule_name = str(suggestion.get("bank_rule_name") or "")
                 reason = str(suggestion.get("reason") or "Matched Odoo Bank Rule")
                 evidence_source = str(suggestion.get("source") or "odoo_bank_reconciliation_rule")
+                source_priority = str(suggestion.get("source_priority") or "bank_rule")
+                resolution_mode = str(suggestion.get("resolution_mode") or "review_only_odoo_rule_suggestion")
                 needs_review = bool(suggestion.get("needs_review")) or confidence < self.low_confidence_threshold
             else:
                 counterpart_account_id = None
-                reason = "Matched rule account is missing exact code/name metadata from Odoo."
+                reason = "Matched Odoo rule account is missing exact code/name metadata from ERP."
 
         bank_debit = magnitude if amount > MONEY_ZERO else MONEY_ZERO
         bank_credit = magnitude if amount < MONEY_ZERO else MONEY_ZERO
@@ -188,6 +188,8 @@ class DailyBankEntryBuilder:
             "bank_rule_name": bank_rule_name,
             "confidence": round(confidence, 4),
             "evidence_source": evidence_source,
+            "source_priority": source_priority,
+            "resolution_mode": resolution_mode,
             "reason": reason,
             "needs_review": needs_review,
         }

@@ -133,7 +133,8 @@ def _first_counterpart_line(rule: dict[str, Any]) -> dict[str, Any] | None:
 def fetch_odoo_bank_rules(erp: Any, *, company_id: int | None, bank_journal_id: int | None, limit: int = 200) -> list[dict[str, Any]]:
     rule_fields = [
         "id", "name", "sequence", "active", "company_id", "rule_type", "match_journal_ids",
-        "match_label_param", "match_note_param", "match_transaction_type", "match_amount_min", "match_amount_max", "partner_id",
+        "match_label", "match_label_param", "match_note", "match_note_param", "match_transaction_type",
+        "match_amount_min", "match_amount_max", "partner_id",
     ]
     domain: list[Any] = [["active", "=", True]]
     if company_id:

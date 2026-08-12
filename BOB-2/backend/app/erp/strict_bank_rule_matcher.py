@@ -117,12 +117,17 @@ def _amount_matches(rule: dict[str, Any], amount: float) -> tuple[bool, bool]:
     magnitude = abs(float(amount or 0.0))
 
     if not mode:
-        # Compatibility for older/custom Odoo versions that expose only bounds.
-        if minimum is None and maximum is None:
+        # Odoo 19 persists inactive amount parameters as 0.0. They are not an
+        # active filter unless match_amount is selected. Only retain non-zero
+        # bounds here for compatibility with older/custom Odoo versions that may
+        # expose bounds without the selector field.
+        legacy_minimum = minimum if minimum not in (None, 0.0) else None
+        legacy_maximum = maximum if maximum not in (None, 0.0) else None
+        if legacy_minimum is None and legacy_maximum is None:
             return True, False
-        if minimum is not None and magnitude < abs(minimum):
+        if legacy_minimum is not None and magnitude < abs(legacy_minimum):
             return False, True
-        if maximum is not None and magnitude > abs(maximum):
+        if legacy_maximum is not None and magnitude > abs(legacy_maximum):
             return False, True
         return True, True
 

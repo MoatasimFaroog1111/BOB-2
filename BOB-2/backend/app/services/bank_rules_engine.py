@@ -81,6 +81,11 @@ def _validate_regex(pattern: str) -> re.Pattern[str]:
         )
     if re.search(r"(?:\*|\+|\{\d+,?\d*\})\s*[+*{]", pattern):
         raise BankRuleDefinitionError("Nested/repeated regex quantifiers are not allowed")
+    # Reject a quantified group that already contains a quantified expression, e.g.
+    # (a+)+ or (ab*){2,}. This is a common catastrophic-backtracking shape and is not
+    # needed for deterministic bank classification rules.
+    if re.search(r"\([^()]*[+*{][^()]*\)\s*(?:[+*]|\{)", pattern):
+        raise BankRuleDefinitionError("Nested quantified regex groups are not allowed")
     try:
         return re.compile(pattern, flags=re.IGNORECASE)
     except re.error as exc:

@@ -11,7 +11,7 @@ export function MainNavigation() {
 
   const items = [
     ["/bank-reconciliation", t("bankRecon.pageTitle")],
-    ["/documents", t("sidebar.documents")],
+    ["/documents", language === "ar" ? "المحاسب الذكي" : t("sidebar.documents")],
     ["/audit", t("sidebar.audit")],
     ["/communication-tools", language === "ar" ? "أدوات الاتصال" : "Communication Tools"],
     ["/team", t("sidebar.home")],

@@ -8,6 +8,7 @@ import {
   type DailyBankReviewDraft,
   type DailyBankReviewEntry,
 } from "@/features/documents/lib/dailyBankReview";
+import { saveDailyBankReviewDraft } from "@/features/documents/lib/dailyBankReviewSession";
 import {
   createEmptyGrid,
   DEFAULT_WORKSHEET_COLUMNS,
@@ -170,7 +171,9 @@ export function useSpreadsheetChat({
       const reviewIds = Array.isArray(result.reviews)
         ? result.reviews.map((item: any) => Number(item.approval_id)).filter(Number.isFinite)
         : [];
-      setBankReviewDraft((current) => current ? { ...current, submitted: true, reviewIds } : current);
+      const submittedDraft = { ...bankReviewDraft, submitted: true, reviewIds };
+      setBankReviewDraft(submittedDraft);
+      saveDailyBankReviewDraft(submittedDraft);
       setChatMessages((prev) => [
         ...prev,
         {
@@ -292,6 +295,7 @@ export function useSpreadsheetChat({
           reviewIds: [],
         };
         setBankReviewDraft(draft);
+        saveDailyBankReviewDraft(draft);
 
         setChatMessages((prev) => [
           ...prev,
@@ -306,6 +310,7 @@ export function useSpreadsheetChat({
       }
 
       setBankReviewDraft(null);
+      saveDailyBankReviewDraft(null);
       const selectedJournal = journals.find((journal) => journal.id === selectedJournalId);
       const docClass = analyzedDocumentClass !== "unknown"
         ? analyzedDocumentClass

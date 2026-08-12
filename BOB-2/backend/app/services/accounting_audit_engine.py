@@ -74,10 +74,10 @@ class AccountingAuditEngine:
             findings.append(self._finding(
                 "error",
                 "BANK_RULE_DRIFT",
-                "Current Odoo Bank Rules produce a different entry",
-                "The accounting proposal has changed when rebuilt from the same source statement using the current Odoo rules/catalogue.",
+                "Current BOB Bank Rules produce a different entry",
+                "The accounting proposal changed when rebuilt from the same source statement using the currently approved BOB Bank Rule versions and current Odoo reference catalogue.",
                 {"submitted_entry_hash": submitted_hash, "current_entry_hash": current_entry_hash},
-                "Return the entry for regeneration using the current Odoo Bank Rules.",
+                "Return the entry for regeneration using the current approved BOB Bank Rule versions.",
             ))
 
         if not lines:
@@ -200,26 +200,27 @@ class AccountingAuditEngine:
                     "error",
                     "UNRESOLVED_COUNTERPART_ACCOUNT",
                     "Counterpart account is unresolved",
-                    "No exact Odoo account could be proven from an applicable Bank Rule. The system deliberately did not invent a fallback account.",
+                    "No exact Odoo account could be proven from an active approved BOB Bank Rule. The system deliberately did not invent a fallback account.",
                     {
                         "description": counterpart.get("source_description"),
                         "bank_rule_name": counterpart.get("bank_rule_name"),
                     },
-                    "Resolve or configure the correct Bank Rule in Odoo, then regenerate the entry.",
+                    "Create or correct the BOB Bank Rule, approve the new version, then regenerate the entry.",
                     source_row=source_row,
                 ))
 
-            if counterpart.get("evidence_source") != "odoo_bank_reconciliation_rule" or not counterpart.get("bank_rule_id"):
+            if counterpart.get("evidence_source") != "bob_bank_rule" or not counterpart.get("bank_rule_id") or not counterpart.get("bank_rule_version_id"):
                 findings.append(self._finding(
                     "error",
-                    "NO_ODOO_BANK_RULE_EVIDENCE",
-                    "Counterpart line is not supported by an Odoo Bank Rule",
-                    "The daily bank workflow requires explicit ERP rule evidence before a line can become posting-ready.",
+                    "NO_BOB_BANK_RULE_EVIDENCE",
+                    "Counterpart line is not supported by an approved BOB Bank Rule version",
+                    "The daily bank workflow requires a versioned BOB rule and a valid Odoo target account before a line can become posting-ready.",
                     {
                         "evidence_source": counterpart.get("evidence_source"),
                         "bank_rule_id": counterpart.get("bank_rule_id"),
+                        "bank_rule_version_id": counterpart.get("bank_rule_version_id"),
                     },
-                    "Configure/resolve the transaction in Odoo Bank Rules and resubmit it.",
+                    "Configure and approve the appropriate BOB Bank Rule version, then resubmit the entry.",
                     source_row=source_row,
                 ))
 
@@ -229,18 +230,18 @@ class AccountingAuditEngine:
                     "warning",
                     "LOW_RULE_CONFIDENCE",
                     "Bank Rule match needs human attention",
-                    "The matched Odoo Bank Rule is below the configured confidence threshold.",
+                    "The rule resolution is below the configured confidence threshold.",
                     {
                         "confidence": round(confidence, 4),
                         "threshold": self.low_confidence_threshold,
                         "bank_rule_name": counterpart.get("bank_rule_name"),
+                        "bank_rule_version": counterpart.get("bank_rule_version"),
                         "description": counterpart.get("source_description"),
                     },
-                    "Compare the bank description with the Odoo rule and supporting evidence before approval.",
+                    "Review the transaction and rule evidence before approval.",
                     source_row=source_row,
                 ))
 
-            # Verify that the source magnitude is preserved across both sides.
             try:
                 source_amount = abs(parse_money(counterpart.get("source_amount")))
                 bank_value = parse_money(bank_line.get("debit")) + parse_money(bank_line.get("credit"))
@@ -286,7 +287,7 @@ class AccountingAuditEngine:
                 "info",
                 "CORE_ASSERTIONS_PASSED",
                 "Core accounting and traceability checks passed",
-                "The entry is balanced, source-linked, and supported by Odoo Bank Rule evidence. Human approval is still required before any ERP posting.",
+                "The entry is balanced, source-linked, supported by an approved versioned BOB Bank Rule, and references live Odoo accounting metadata. Human approval is still required before any ERP posting.",
                 {
                     "entry_date": entry_date,
                     "transaction_count": entry.get("transaction_count"),

@@ -207,8 +207,8 @@ export function DailyBankReviewQueue() {
                 </h2>
                 <p className="mt-1 text-[11px] text-white/55">
                   {language === "ar"
-                    ? "تدقيق مستقل للقيد، كشف البنك، Odoo Bank Rules وسلسلة الأدلة. لا يوجد ترحيل إلى Odoo من هذه الشاشة."
-                    : "Independent audit of journal entries, bank statement, Odoo Bank Rules and evidence chain. This screen never posts to Odoo."}
+                    ? "تدقيق مستقل للقيد، كشف البنك، نسخة BOB Bank Rule المعتمدة، مراجع Odoo وسلسلة الأدلة. لا يوجد ترحيل إلى Odoo من هذه الشاشة."
+                    : "Independent audit of the journal entry, bank statement, approved BOB Bank Rule version, live Odoo references, and evidence chain. This screen never posts to Odoo."}
                 </p>
               </div>
               <button type="button" onClick={() => setOpen(false)} className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-white/70 hover:text-white">✕</button>

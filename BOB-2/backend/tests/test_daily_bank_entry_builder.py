@@ -29,11 +29,16 @@ def rule_matcher(txn, rules):
         "suggested_partner_label": "",
         "suggested_analytic_account_id": None,
         "suggested_analytic_account_label": "",
-        "confidence": 0.95,
-        "source": "odoo_bank_reconciliation_rule",
+        "confidence": 1.0,
+        "source": "bob_bank_rule",
+        "source_priority": "bob_rule_priority",
+        "resolution_mode": "strict_bob_rule",
         "bank_rule_id": 77,
+        "bank_rule_version_id": 771,
+        "bank_rule_version": 1,
+        "bank_rule_fingerprint": "a" * 64,
         "bank_rule_name": "Fees",
-        "reason": "Matched Odoo rule Fees",
+        "reason": "Matched approved BOB rule Fees v1",
         "needs_review": False,
     }
 
@@ -46,7 +51,7 @@ def test_groups_all_transactions_for_each_calendar_day_into_one_entry():
         {"date": "2026-08-11", "description": "THIRD FEE", "amount": "-3.00", "row_number": 3},
     ]
 
-    entries = builder.build(transactions, rules=[{"id": 77}], journal=JOURNAL, account_catalog=ACCOUNTS)
+    entries = builder.build(transactions, rules=[{"rule_id": 77}], journal=JOURNAL, account_catalog=ACCOUNTS)
 
     assert [entry["entry_date"] for entry in entries] == ["2026-08-10", "2026-08-11"]
     assert entries[0]["transaction_count"] == 2
@@ -60,7 +65,7 @@ def test_outflow_credits_bank_and_debits_bank_rule_account():
     builder = DailyBankEntryBuilder(rule_matcher=rule_matcher)
     entry = builder.build(
         [{"date": "2026-08-10", "description": "BANK FEE", "amount": "-12.50", "row_number": 4}],
-        rules=[{"id": 77}],
+        rules=[{"rule_id": 77}],
         journal=JOURNAL,
         account_catalog=ACCOUNTS,
     )[0]
@@ -75,13 +80,15 @@ def test_outflow_credits_bank_and_debits_bank_rule_account():
     assert counterpart["debit"] == "12.50"
     assert counterpart["credit"] == "0.00"
     assert counterpart["bank_rule_name"] == "Fees"
+    assert counterpart["bank_rule_version_id"] == 771
+    assert counterpart["evidence_source"] == "bob_bank_rule"
 
 
 def test_inflow_debits_bank_and_credits_rule_account():
     builder = DailyBankEntryBuilder(rule_matcher=rule_matcher)
     entry = builder.build(
         [{"date": "2026-08-10", "description": "INCOMING FEE", "amount": "25.00", "row_number": 5}],
-        rules=[{"id": 77}],
+        rules=[{"rule_id": 77}],
         journal=JOURNAL,
         account_catalog=ACCOUNTS,
     )[0]
@@ -97,7 +104,7 @@ def test_unmatched_transaction_stays_balanced_but_never_invents_account():
     builder = DailyBankEntryBuilder(rule_matcher=rule_matcher)
     entry = builder.build(
         [{"date": "2026-08-10", "description": "UNKNOWN PAYMENT", "amount": "-100.00", "row_number": 6}],
-        rules=[{"id": 77}],
+        rules=[{"rule_id": 77}],
         journal=JOURNAL,
         account_catalog=ACCOUNTS,
     )[0]
@@ -115,7 +122,7 @@ def test_duplicate_source_transaction_is_flagged_and_not_posting_ready():
     builder = DailyBankEntryBuilder(rule_matcher=rule_matcher)
     txn = {"date": "2026-08-10", "description": "BANK FEE", "amount": "-1.00", "row_number": 9}
 
-    entry = builder.build([txn, dict(txn)], rules=[{"id": 77}], journal=JOURNAL, account_catalog=ACCOUNTS)[0]
+    entry = builder.build([txn, dict(txn)], rules=[{"rule_id": 77}], journal=JOURNAL, account_catalog=ACCOUNTS)[0]
 
     assert entry["duplicate_count"] == 1
     assert entry["ready_for_review"] is False

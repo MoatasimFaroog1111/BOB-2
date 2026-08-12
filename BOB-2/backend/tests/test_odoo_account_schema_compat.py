@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-from app.erp.providers.odoo_compatible import (
-    _version_major,
+from app.erp.odoo_account_compat import (
     adapt_account_search_read_request,
+    odoo_version_major,
     restore_account_search_read_response,
 )
 
 
 def test_version_major_reads_standard_odoo_payload():
-    assert _version_major({"server_version_info": [19, 0, 0, "final", 0]}) == 19
-    assert _version_major({"server_version": "18.0+e"}) == 18
+    assert odoo_version_major({"server_version_info": [19, 0, 0, "final", 0]}) == 19
+    assert odoo_version_major({"server_version": "18.0+e"}) == 18
 
 
 def test_odoo19_rewrites_deprecated_to_active_without_mutating_input():
@@ -28,6 +28,7 @@ def test_odoo19_rewrites_deprecated_to_active_without_mutating_input():
         [{"id": 10, "name": "Expense", "code": "500001", "company_ids": [1], "active": True}],
         aliases,
     )
+    assert restored[0]["active"] is True
     assert restored[0]["deprecated"] is False
 
 
@@ -51,6 +52,7 @@ def test_odoo19_rewrites_legacy_company_and_deprecated_fields_for_bank_posting()
             "name": "Bank",
             "company_ids": [7],
             "company_id": 7,
+            "active": True,
             "deprecated": False,
         }
     ]

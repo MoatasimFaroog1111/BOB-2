@@ -1,6 +1,12 @@
 "use client";
 
-import type { BankRuleCondition, ERPAccount, ERPJournal } from "@/features/bank-rules/model/types";
+import type {
+  BankRuleCondition,
+  ERPAccount,
+  ERPAnalyticAccount,
+  ERPJournal,
+  ERPPartner,
+} from "@/features/bank-rules/model/types";
 
 export interface BankRuleEditorValue {
   name: string;
@@ -8,6 +14,8 @@ export interface BankRuleEditorValue {
   priority: number;
   conditions: BankRuleCondition[];
   accountId: number | null;
+  partnerId: number | null;
+  analyticAccountId: number | null;
   rationale: string;
   changeNote: string;
 }
@@ -17,6 +25,8 @@ interface BankRuleEditorProps {
   onChange: (value: BankRuleEditorValue) => void;
   journals: ERPJournal[];
   accounts: ERPAccount[];
+  partners: ERPPartner[];
+  analyticAccounts: ERPAnalyticAccount[];
   language: string;
   lockJournal?: boolean;
   lockName?: boolean;
@@ -35,6 +45,8 @@ export function BankRuleEditor({
   onChange,
   journals,
   accounts,
+  partners,
+  analyticAccounts,
   language,
   lockJournal = false,
   lockName = false,
@@ -196,19 +208,49 @@ export function BankRuleEditor({
         </div>
       </div>
 
-      <label className="block space-y-1">
-        <span className="text-[10px] font-bold text-white/55">{ar ? "الحساب المقابل — من Odoo فقط" : "Counterpart account — Odoo only"}</span>
-        <select
-          value={value.accountId || ""}
-          onChange={(event) => onChange({ ...value, accountId: Number(event.target.value) || null })}
-          className="h-10 w-full rounded-xl border border-white/10 bg-black/30 px-3 text-xs text-white outline-none focus:border-amber-500/50"
-        >
-          <option value="">{ar ? "اختر حسابًا فعليًا من Odoo" : "Select a live Odoo account"}</option>
-          {accounts.map((account) => (
-            <option key={account.id} value={account.id}>{account.code} — {account.name}</option>
-          ))}
-        </select>
-      </label>
+      <div className="grid gap-3 md:grid-cols-3">
+        <label className="space-y-1">
+          <span className="text-[10px] font-bold text-white/55">{ar ? "الحساب المقابل — من Odoo فقط" : "Counterpart account — Odoo only"}</span>
+          <select
+            value={value.accountId || ""}
+            onChange={(event) => onChange({ ...value, accountId: Number(event.target.value) || null })}
+            className="h-10 w-full rounded-xl border border-white/10 bg-black/30 px-3 text-xs text-white outline-none focus:border-amber-500/50"
+          >
+            <option value="">{ar ? "اختر حسابًا فعليًا من Odoo" : "Select a live Odoo account"}</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>{account.code} — {account.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-[10px] font-bold text-white/55">{ar ? "الشريك — اختياري من Odoo" : "Partner — optional Odoo reference"}</span>
+          <select
+            value={value.partnerId || ""}
+            onChange={(event) => onChange({ ...value, partnerId: Number(event.target.value) || null })}
+            className="h-10 w-full rounded-xl border border-white/10 bg-black/30 px-3 text-xs text-white outline-none focus:border-amber-500/50"
+          >
+            <option value="">{ar ? "بدون شريك محدد" : "No fixed partner"}</option>
+            {partners.map((partner) => (
+              <option key={partner.id} value={partner.id}>{partner.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <label className="space-y-1">
+          <span className="text-[10px] font-bold text-white/55">{ar ? "الحساب التحليلي — اختياري من Odoo" : "Analytic account — optional Odoo reference"}</span>
+          <select
+            value={value.analyticAccountId || ""}
+            onChange={(event) => onChange({ ...value, analyticAccountId: Number(event.target.value) || null })}
+            className="h-10 w-full rounded-xl border border-white/10 bg-black/30 px-3 text-xs text-white outline-none focus:border-amber-500/50"
+          >
+            <option value="">{ar ? "بدون حساب تحليلي ثابت" : "No fixed analytic account"}</option>
+            {analyticAccounts.map((analytic) => (
+              <option key={analytic.id} value={analytic.id}>{analytic.name}</option>
+            ))}
+          </select>
+        </label>
+      </div>
 
       <div className="grid gap-3 md:grid-cols-2">
         <label className="space-y-1">

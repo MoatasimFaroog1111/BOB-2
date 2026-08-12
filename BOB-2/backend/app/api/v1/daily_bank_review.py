@@ -11,6 +11,7 @@ from app.db.database import get_db
 from app.security.dependencies import require_permission
 from app.security.file_validation import sanitize_filename, validate_upload_file
 from app.services.daily_bank_review_service import daily_bank_review_service
+from app.services.daily_bank_supporting_analysis import daily_bank_supporting_analysis_service
 from app.services.daily_bank_supporting_evidence import daily_bank_supporting_evidence_service
 
 router = APIRouter()
@@ -110,6 +111,8 @@ async def attach_daily_bank_supporting_documents(
     if len(files) > 20:
         raise HTTPException(status_code=400, detail="A maximum of 20 supporting documents can be attached at once.")
 
+    organization_id = int(token["organization_id"])
+    user_id = int(token["user_id"])
     attached: list[dict] = []
     for upload in files:
         valid, error = await validate_upload_file(upload)
@@ -120,18 +123,30 @@ async def attach_daily_bank_supporting_documents(
             )
         content = await upload.read()
         await upload.seek(0)
-        attached.append(
-            daily_bank_supporting_evidence_service.attach(
-                db,
-                organization_id=int(token["organization_id"]),
-                user_id=int(token["user_id"]),
-                approval_id=approval_id,
-                filename=sanitize_filename(upload.filename or "supporting-document"),
-                content_type=upload.content_type,
-                content=content,
-            )
+        evidence = daily_bank_supporting_evidence_service.attach(
+            db,
+            organization_id=organization_id,
+            user_id=user_id,
+            approval_id=approval_id,
+            filename=sanitize_filename(upload.filename or "supporting-document"),
+            content_type=upload.content_type,
+            content=content,
         )
-    return {"status": "attached", "items": attached, "safe_to_post": False}
+        evidence["analysis"] = daily_bank_supporting_analysis_service.analyze_attached_document(
+            db,
+            organization_id=organization_id,
+            user_id=user_id,
+            approval_id=approval_id,
+            document_id=int(evidence["document_id"]),
+        )
+        attached.append(evidence)
+    return {
+        "status": "attached",
+        "items": attached,
+        "analysis_method": "local_document_ai_structured_fields",
+        "external_llm_used": False,
+        "safe_to_post": False,
+    }
 
 
 @router.get("/daily-bank-review/{approval_id}/supporting-documents")
@@ -185,6 +200,12 @@ def audit_daily_bank_review(
         approval_id=approval_id,
     )
     daily_bank_supporting_evidence_service.merge_verification_into_audit(
+        db,
+        organization_id=organization_id,
+        user_id=user_id,
+        approval_id=approval_id,
+    )
+    daily_bank_supporting_analysis_service.merge_semantic_findings_into_audit(
         db,
         organization_id=organization_id,
         user_id=user_id,

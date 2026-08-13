@@ -83,6 +83,14 @@ class TaxAwareAccountingAuditEngine(AccountingAuditEngine):
         current_entry_hash: str | None = None,
     ) -> dict[str, Any]:
         original_lines = [deepcopy(line) for line in entry.get("lines") or []]
+        if not any(line.get("role") == "tax" for line in original_lines):
+            return super().audit_entry(
+                entry,
+                source_document=source_document,
+                source_hash_verified=source_hash_verified,
+                current_entry_hash=current_entry_hash,
+            )
+
         groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
         for line in original_lines:
             groups[str(line.get("transaction_key") or "")].append(line)

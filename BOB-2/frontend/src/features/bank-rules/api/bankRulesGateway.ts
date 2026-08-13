@@ -6,6 +6,11 @@ class BankRulesGateway {
     return fetch(`${API_BASE_URL}/api/v1/erp/bank-rules${query}`, { cache: "no-store" });
   }
 
+  referenceCatalog(companyId?: number): Promise<Response> {
+    const query = companyId ? `?company_id=${encodeURIComponent(String(companyId))}` : "";
+    return fetch(`${API_BASE_URL}/api/v1/erp/bank-rules/reference-catalog${query}`, { cache: "no-store" });
+  }
+
   listJournals(): Promise<Response> {
     return fetch(`${API_BASE_URL}/api/v1/erp/journals`, { cache: "no-store" });
   }

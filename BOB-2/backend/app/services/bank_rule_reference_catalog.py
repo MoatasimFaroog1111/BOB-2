@@ -94,10 +94,6 @@ class BankRuleReferenceCatalogService:
                 {"fields": fields, "order": "name asc", "limit": 5000},
             )
         except xmlrpc.client.Fault:
-            # Some Odoo/custom schemas do not expose customer/supplier ranks.
-            # Fall back only for a model-level XML-RPC fault. Transport errors such
-            # as HTTP 429 must propagate to the outer rate-limit handler instead of
-            # causing a second request that worsens throttling.
             fallback_domain: list = [("active", "=", True)]
             if company_id:
                 fallback_domain.extend(
@@ -133,6 +129,35 @@ class BankRuleReferenceCatalogService:
             {"fields": ["id", "name"], "order": "name asc", "limit": 1000},
         )
 
+    @staticmethod
+    def _taxes(erp: Any, company_id: int | None) -> list[dict[str, Any]]:
+        domain: list = [["active", "=", True], ["amount_type", "=", "percent"]]
+        if company_id:
+            domain.append(["company_id", "=", company_id])
+        rows = erp.execute_kw(
+            "account.tax",
+            "search_read",
+            [domain],
+            {
+                "fields": ["id", "name", "amount", "amount_type", "type_tax_use", "price_include", "company_id"],
+                "order": "type_tax_use asc, amount asc, name asc, id asc",
+                "limit": 1000,
+            },
+        )
+        return [
+            {
+                "id": int(row["id"]),
+                "name": str(row.get("name") or ""),
+                "amount": float(row.get("amount") or 0),
+                "amount_type": str(row.get("amount_type") or ""),
+                "type_tax_use": str(row.get("type_tax_use") or ""),
+                "price_include": bool(row.get("price_include")),
+                "company_id": row.get("company_id"),
+            }
+            for row in rows
+            if row.get("id") and float(row.get("amount") or 0) > 0
+        ]
+
     def load(
         self,
         db: Session,
@@ -155,6 +180,7 @@ class BankRuleReferenceCatalogService:
                 "accounts": self._accounts(erp, effective_company_id),
                 "partners": self._partners(erp, effective_company_id),
                 "analytic_accounts": self._analytic_accounts(erp, effective_company_id),
+                "taxes": self._taxes(erp, effective_company_id),
             }
         except HTTPException:
             raise

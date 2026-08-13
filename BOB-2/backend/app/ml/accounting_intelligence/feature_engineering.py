@@ -1,8 +1,8 @@
 """Feature engineering for accounting learning and inference.
 
-Target labels (accounts, journal, partner, tax) are deliberately excluded from
-input text to prevent target leakage.  The chart of accounts is used later as a
-candidate/reference catalog, not copied into historical input features.
+Only information that can exist before posting is allowed into model input.
+Target labels such as accounts, journal, taxes, analytics and post-generated move
+identifiers are excluded to prevent target leakage and misleading offline accuracy.
 """
 
 from __future__ import annotations
@@ -60,13 +60,11 @@ def infer_document_signals(text: str) -> dict[str, Any]:
 
 def build_historical_feature_text(
     *,
-    move_name: str | None,
     reference: str | None,
     narration: str | None,
     payment_reference: str | None,
     invoice_origin: str | None,
     partner_name: str | None,
-    journal_name: str | None,
     line_descriptions: list[str],
     product_names: list[str],
     attachment_features: list[str],
@@ -74,15 +72,13 @@ def build_historical_feature_text(
     move_type: str | None,
     currency: str | None,
 ) -> str:
-    """Build model input without account/tax/analytic target names or codes."""
+    """Build pre-posting input without account/journal/tax/analytic target leakage."""
     parts = [
-        move_name,
         reference,
         narration,
         payment_reference,
         invoice_origin,
         partner_name,
-        journal_name,
         " ".join(line_descriptions),
         " ".join(product_names),
         " ".join(attachment_features),

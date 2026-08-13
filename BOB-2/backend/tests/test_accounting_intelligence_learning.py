@@ -95,8 +95,38 @@ def test_hybrid_learner_prefers_semantically_matching_historical_outcome():
     assert result["credit_accounts"][0]["id"] == 30
     assert result["journals"][0]["id"] == 5
     assert result["partners"][0]["id"] == 7
+    assert result["confidence"] > 0.60
     assert result["audit_safe"]["auto_posted_to_erp"] is False
     assert result["audit_safe"]["approval_required"] is True
+
+
+def test_single_weak_example_cannot_create_false_high_confidence():
+    catalog = AccountingReferenceCatalog(
+        accounts=({"id": 10, "code": "400020", "name": "Telephone And Internet", "account_type": "expense"},),
+    )
+    examples = [
+        RetrievedLearningExample(
+            source_reference="account.move:weak",
+            text_preview="different expense",
+            vector=[0.2, 0.98],
+            outputs={"debit_account_ids": [10]},
+            features={"amount_bucket": "1k_9k", "move_type": "in_invoice", "currency": "SAR", "expense_related": True},
+        )
+    ]
+    result = HybridAccountingLearner().predict(
+        query_text="generic monthly expense",
+        query_vector=[1.0, 0.0],
+        amount=1500,
+        move_type_hint="in_invoice",
+        currency_hint="SAR",
+        catalog=catalog,
+        examples=examples,
+        top_k=1,
+    )
+    assert result["debit_accounts"][0]["historical_consensus"] == 1.0
+    assert result["evidence_strength"] < 0.60
+    assert result["confidence"] < 0.60
+    assert result["warnings"]
 
 
 def test_low_evidence_never_enables_auto_posting():

@@ -15,6 +15,7 @@ from app.erp.bank_reconciliation import parse_file
 from app.security.dependencies import require_permission
 from app.security.file_validation import sanitize_filename, validate_upload_file
 from app.services.bank_rule_draft_editor import bank_rule_draft_editor
+from app.services.bank_rule_reference_catalog import bank_rule_reference_catalog_service
 from app.services.bank_rule_test_service import bank_rule_test_service
 from app.services.bank_rules_service import bank_rules_service
 
@@ -87,6 +88,20 @@ def list_bank_rules(
             include_disabled=include_disabled,
         ),
     }
+
+
+@router.get("/bank-rules/reference-catalog")
+def bank_rule_reference_catalog(
+    company_id: int | None = None,
+    db: Session = Depends(get_db),
+    token: dict = Depends(require_permission("manage_settings")),
+):
+    """Load all Odoo selectors for Bank Rules through one ERP provider/session."""
+    return bank_rule_reference_catalog_service.load(
+        db,
+        organization_id=int(token["organization_id"]),
+        company_id=company_id,
+    )
 
 
 @router.post("/bank-rules")

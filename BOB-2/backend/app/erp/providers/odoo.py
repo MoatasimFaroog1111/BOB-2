@@ -14,8 +14,17 @@ class OdooProvider:
         self.password = password
         self.common = common
         self.models = models
+        # XML-RPC execute_kw already sends uid + password with every object call.
+        # Re-authenticating through /xmlrpc/2/common before every query only adds
+        # load and can trigger Odoo's authentication rate limits. A provider
+        # instance is credential-scoped, so the resolved uid is safe to reuse for
+        # its lifetime.
+        self._authenticated_uid: int | None = None
 
     def authenticate(self) -> int:
+        if self._authenticated_uid is not None:
+            return self._authenticated_uid
+
         uid = self.common.authenticate(
             self.db,
             self.username,
@@ -26,7 +35,8 @@ class OdooProvider:
         if not uid:
             raise ValueError("Odoo authentication failed. Check database, username, or password.")
 
-        return uid
+        self._authenticated_uid = int(uid)
+        return self._authenticated_uid
 
     def execute_kw(self, model: str, method: str, args: list, kwargs: dict | None = None):
         uid = self.authenticate()

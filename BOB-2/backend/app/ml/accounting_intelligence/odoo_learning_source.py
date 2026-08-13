@@ -1,8 +1,10 @@
 """Read-only Odoo adapter for accounting learning data.
 
-No create/write/unlink/post methods are exposed.  Field discovery keeps the
+No create/write/unlink/post methods are exposed. Field discovery keeps the
 adapter tolerant of supported Odoo schema differences without weakening the
-provider boundary.
+provider boundary. Reference catalogs can be company-scoped so multi-company
+connections never enrich one company's recommendations with another company's
+accounting configuration.
 """
 
 from __future__ import annotations
@@ -50,7 +52,63 @@ class OdooAccountingLearningSource:
             kwargs["order"] = order
         return list(self.erp.execute_kw(model, "search_read", [domain], kwargs) or [])
 
-    def reference_catalog(self) -> AccountingReferenceCatalog:
+    @staticmethod
+    def _many2one_id(value: Any) -> int | None:
+        if isinstance(value, (list, tuple)) and value:
+            try:
+                return int(value[0])
+            except (ValueError, TypeError):
+                return None
+        try:
+            return int(value) if value else None
+        except (ValueError, TypeError):
+            return None
+
+    @staticmethod
+    def _many2one_name(value: Any) -> str:
+        if isinstance(value, (list, tuple)) and len(value) > 1:
+            return str(value[1] or "")
+        return ""
+
+    @staticmethod
+    def _many2many_ids(value: Any) -> set[int]:
+        result: set[int] = set()
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                try:
+                    if isinstance(item, (list, tuple)) and item:
+                        result.add(int(item[0]))
+                    else:
+                        result.add(int(item))
+                except (TypeError, ValueError):
+                    continue
+        return result
+
+    @classmethod
+    def _company_scoped_rows(
+        cls,
+        rows: list[dict[str, Any]],
+        company_id: int | None,
+    ) -> list[dict[str, Any]]:
+        """Keep shared records and records belonging to the selected company only."""
+        if not company_id:
+            return rows
+        target = int(company_id)
+        scoped: list[dict[str, Any]] = []
+        for row in rows:
+            if "company_ids" in row:
+                raw_company_ids = row.get("company_ids")
+                company_ids = cls._many2many_ids(raw_company_ids)
+                if raw_company_ids and company_ids and target not in company_ids:
+                    continue
+            elif "company_id" in row:
+                row_company_id = cls._many2one_id(row.get("company_id"))
+                if row_company_id is not None and row_company_id != target:
+                    continue
+            scoped.append(row)
+        return scoped
+
+    def reference_catalog(self, *, company_id: int | None = None) -> AccountingReferenceCatalog:
         accounts = self._search_read(
             "account.account",
             [],
@@ -75,7 +133,10 @@ class OdooAccountingLearningSource:
         partners = self._search_read(
             "res.partner",
             [["active", "=", True]],
-            ["id", "name", "vat", "email", "phone", "is_company", "customer_rank", "supplier_rank"],
+            [
+                "id", "name", "vat", "email", "phone", "is_company", "customer_rank",
+                "supplier_rank", "company_id",
+            ],
             limit=10000,
             order="id asc",
         )
@@ -93,38 +154,21 @@ class OdooAccountingLearningSource:
             products = self._search_read(
                 "product.product",
                 [["active", "=", True]],
-                ["id", "name", "default_code", "categ_id"],
+                ["id", "name", "default_code", "categ_id", "company_id"],
                 limit=10000,
                 order="id asc",
             )
         except Exception:
             products = []
+
         return AccountingReferenceCatalog(
-            accounts=tuple(accounts),
-            journals=tuple(journals),
-            taxes=tuple(taxes),
-            partners=tuple(partners),
-            analytic_accounts=tuple(analytics),
-            products=tuple(products),
+            accounts=tuple(self._company_scoped_rows(accounts, company_id)),
+            journals=tuple(self._company_scoped_rows(journals, company_id)),
+            taxes=tuple(self._company_scoped_rows(taxes, company_id)),
+            partners=tuple(self._company_scoped_rows(partners, company_id)),
+            analytic_accounts=tuple(self._company_scoped_rows(analytics, company_id)),
+            products=tuple(self._company_scoped_rows(products, company_id)),
         )
-
-    @staticmethod
-    def _many2one_id(value: Any) -> int | None:
-        if isinstance(value, (list, tuple)) and value:
-            try:
-                return int(value[0])
-            except (ValueError, TypeError):
-                return None
-        try:
-            return int(value) if value else None
-        except (ValueError, TypeError):
-            return None
-
-    @staticmethod
-    def _many2one_name(value: Any) -> str:
-        if isinstance(value, (list, tuple)) and len(value) > 1:
-            return str(value[1] or "")
-        return ""
 
     @staticmethod
     def _analytic_ids(value: Any) -> set[int]:

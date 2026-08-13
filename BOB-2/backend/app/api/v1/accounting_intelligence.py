@@ -19,6 +19,8 @@ class LearningSyncRequest(BaseModel):
     date_to: str | None = None
     limit: int = Field(default=1000, ge=1, le=5000)
     company_id: int | None = Field(default=None, ge=1)
+    include_attachment_content: bool = True
+    attachment_content_limit: int = Field(default=100, ge=1, le=500)
 
 
 class AccountingInterpretRequest(BaseModel):
@@ -54,7 +56,7 @@ def sync_accounting_learning(
     db: Session = Depends(get_db),
     principal: dict = Depends(require_permission("manage_settings")),
 ):
-    """Index posted ERP history as read-only accounting learning examples."""
+    """Index posted ERP history and optional guarded attachment text as learning evidence."""
     organization_id = organization_id_from_principal(principal)
     try:
         return AccountingIntelligenceService(db).sync_historical_learning(
@@ -63,6 +65,8 @@ def sync_accounting_learning(
             date_to=payload.date_to,
             limit=payload.limit,
             company_id=payload.company_id,
+            include_attachment_content=payload.include_attachment_content,
+            attachment_content_limit=payload.attachment_content_limit,
         )
     except HTTPException:
         raise
@@ -81,7 +85,7 @@ def interpret_accounting_input(
 ):
     """Channel-neutral accounting interpretation for documents, chat, or voice text.
 
-    This endpoint only returns learned recommendations and audit warnings.  It
+    This endpoint only returns learned recommendations and audit warnings. It
     never posts or mutates the connected ERP.
     """
     organization_id = organization_id_from_principal(principal)

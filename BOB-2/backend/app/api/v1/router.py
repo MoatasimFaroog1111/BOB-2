@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends
 from app.api.v1.account_access import router as account_access_router
 from app.api.v1.accounting_ai import router as accounting_ai_router
 from app.api.v1.accounting_command_router import router as accounting_command_router
+from app.api.v1.accounting_intelligence import router as accounting_intelligence_router
 from app.api.v1.agents import router as agents_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.bank_posting_v2 import router as bank_posting_v2_router
@@ -96,4 +97,10 @@ api_router.include_router(
 api_router.include_router(journal_entry_actions_router, prefix="/erp", tags=["ERP Journal Entry Actions"], dependencies=financial_access)
 api_router.include_router(bank_posting_v2_router, prefix="/erp", tags=["ERP Bank Posting"], dependencies=financial_access)
 api_router.include_router(accounting_ai_router, prefix="/accounting-ai", tags=["Accounting AI Matching"], dependencies=financial_access)
+api_router.include_router(
+    accounting_intelligence_router,
+    prefix="/accounting-intelligence",
+    tags=["Accounting Intelligence Learning"],
+    dependencies=financial_access,
+)
 api_router.include_router(agents_router, prefix="/agents", tags=["GMAWS Accounting Agents"], dependencies=financial_access)

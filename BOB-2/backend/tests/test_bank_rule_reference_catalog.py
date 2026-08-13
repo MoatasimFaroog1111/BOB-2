@@ -20,6 +20,16 @@ class FakeProvider:
             return [{"id": 200, "name": "STC", "customer_rank": 0, "supplier_rank": 1, "company_id": False}]
         if model == "account.analytic.account":
             return [{"id": 300, "name": "Head Office"}]
+        if model == "account.tax":
+            return [{
+                "id": 400,
+                "name": "VAT 15% Purchases",
+                "amount": 15.0,
+                "amount_type": "percent",
+                "type_tax_use": "purchase",
+                "price_include": False,
+                "company_id": [7, "Guardian"],
+            }]
         raise AssertionError(f"Unexpected model: {model}")
 
 
@@ -47,10 +57,14 @@ def test_catalog_resolves_one_provider_for_all_reference_sections():
     assert result["accounts"][0]["code"] == "101001"
     assert result["partners"][0]["name"] == "STC"
     assert result["analytic_accounts"][0]["name"] == "Head Office"
+    assert result["taxes"][0]["id"] == 400
+    assert result["taxes"][0]["amount"] == 15.0
+    assert result["taxes"][0]["type_tax_use"] == "purchase"
     assert provider.calls == [
         ("res.users", "search_read"),
         ("account.journal", "search_read"),
         ("account.account", "search_read"),
         ("res.partner", "search_read"),
         ("account.analytic.account", "search_read"),
+        ("account.tax", "search_read"),
     ]

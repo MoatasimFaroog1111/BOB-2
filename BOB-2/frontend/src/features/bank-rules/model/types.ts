@@ -21,6 +21,15 @@ export interface ERPAnalyticAccount {
   name: string;
 }
 
+export interface ERPTax {
+  id: number;
+  name: string;
+  amount: number;
+  amount_type: string;
+  type_tax_use: string;
+  price_include: boolean;
+}
+
 export interface BankRuleCondition {
   field: "statement_text" | "amount" | "direction";
   operator: string;
@@ -37,6 +46,16 @@ export interface BankRuleTarget {
   partner_name?: string;
   analytic_account_id?: number | null;
   analytic_account_name?: string;
+  tax_id?: number | null;
+  tax_name?: string;
+  tax_rate?: number | null;
+  tax_amount_type?: string;
+  tax_type_use?: string;
+  tax_price_include?: boolean;
+  tax_account_id?: number | null;
+  tax_account_code?: string;
+  tax_account_name?: string;
+  tax_amount_mode?: "included_in_bank_amount" | null;
 }
 
 export interface BankRuleVersion {

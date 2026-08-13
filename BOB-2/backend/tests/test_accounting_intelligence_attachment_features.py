@@ -61,6 +61,13 @@ def test_invalid_base64_is_rejected_before_parser():
     assert result.text == ""
 
 
+def test_non_ascii_base64_payload_is_rejected_before_parser():
+    extractor = GuardedERPAttachmentFeatureExtractor(document_ai=ExplodingDocumentAI())
+    result = extractor.extract({"id": 3, "name": "invoice.pdf", "datas": "بيانات-ليست-base64"})
+    assert result.status == "rejected"
+    assert result.text == ""
+
+
 def test_enricher_feeds_extracted_attachment_text_into_learning_features():
     example = HistoricalAccountingExample(
         source_id=1,

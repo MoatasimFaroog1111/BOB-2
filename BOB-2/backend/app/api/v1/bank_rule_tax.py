@@ -1,13 +1,15 @@
 """Tax configuration boundary for BOB Bank Rule drafts."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
+from app.models.bank_rules import BankRule
 from app.security.dependencies import require_permission
 from app.services.bank_rule_draft_editor import bank_rule_draft_editor
+from app.services.bank_rule_reference_catalog import bank_rule_reference_catalog_service
 from app.services.bank_rules_service import bank_rules_service
 
 router = APIRouter()
@@ -26,6 +28,25 @@ def configure_bank_rule_draft_tax(
     token: dict = Depends(require_permission("manage_settings")),
 ):
     organization_id = int(token["organization_id"])
+    rule = (
+        db.query(BankRule)
+        .filter(BankRule.id == rule_id, BankRule.organization_id == organization_id)
+        .first()
+    )
+    if not rule:
+        raise HTTPException(status_code=404, detail="Bank Rule not found.")
+    if payload.tax_id:
+        catalog = bank_rule_reference_catalog_service.load(
+            db,
+            organization_id=organization_id,
+            company_id=rule.company_id,
+        )
+        allowed_tax_ids = {int(row.get("id") or 0) for row in catalog.get("taxes") or []}
+        if int(payload.tax_id) not in allowed_tax_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="Referenced Odoo tax is inactive, unsupported, or belongs to another company.",
+            )
     bank_rule_draft_editor.set_tax(
         db,
         organization_id=organization_id,

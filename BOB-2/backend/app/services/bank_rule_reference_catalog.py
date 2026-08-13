@@ -93,7 +93,11 @@ class BankRuleReferenceCatalogService:
                 [domain],
                 {"fields": fields, "order": "name asc", "limit": 5000},
             )
-        except Exception:
+        except xmlrpc.client.Fault:
+            # Some Odoo/custom schemas do not expose customer/supplier ranks.
+            # Fall back only for a model-level XML-RPC fault. Transport errors such
+            # as HTTP 429 must propagate to the outer rate-limit handler instead of
+            # causing a second request that worsens throttling.
             fallback_domain: list = [("active", "=", True)]
             if company_id:
                 fallback_domain.extend(

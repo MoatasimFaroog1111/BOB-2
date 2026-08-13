@@ -17,7 +17,7 @@ export interface BankRuleEditorValue {
   accountId: number | null;
   partnerId: number | null;
   analyticAccountId: number | null;
-  taxId: number | null;
+  taxId?: number | null;
   rationale: string;
   changeNote: string;
 }
@@ -29,7 +29,7 @@ interface BankRuleEditorProps {
   accounts: ERPAccount[];
   partners: ERPPartner[];
   analyticAccounts: ERPAnalyticAccount[];
-  taxes: ERPTax[];
+  taxes?: ERPTax[];
   language: string;
   lockJournal?: boolean;
   lockName?: boolean;
@@ -50,7 +50,7 @@ export function BankRuleEditor({
   accounts,
   partners,
   analyticAccounts,
-  taxes,
+  taxes = [],
   language,
   lockJournal = false,
   lockName = false,

@@ -36,10 +36,10 @@ class AccountingIntelligenceService:
         self.embedding_provider = embedding_provider or EmbeddingProvider()
         self.learner = learner or HybridAccountingLearner()
 
-    def _source_and_catalog(self, organization_id: int):
+    def _source_and_catalog(self, organization_id: int, company_id: int | None = None):
         _connection, erp = tenant_erp_resolver.resolve(self.db, organization_id)
         source = OdooAccountingLearningSource(erp)
-        return source, source.reference_catalog(), erp
+        return source, source.reference_catalog(company_id=company_id), erp
 
     @staticmethod
     def _classification_payload(example) -> dict[str, Any]:
@@ -77,7 +77,7 @@ class AccountingIntelligenceService:
         include_attachment_content: bool = True,
         attachment_content_limit: int = 100,
     ) -> dict[str, Any]:
-        source, catalog, erp = self._source_and_catalog(organization_id)
+        source, catalog, erp = self._source_and_catalog(organization_id, company_id)
         examples = source.historical_examples(
             date_from=date_from,
             date_to=date_to,
@@ -188,6 +188,7 @@ class AccountingIntelligenceService:
                     "attachment_content_limit": attachment_content_limit,
                     "attachment_content_learning": attachment_content_stats,
                     "reference_catalog": self._catalog_counts(catalog),
+                    "company_scope_applied": bool(company_id),
                     "auto_posted_to_erp": False,
                 },
             )
@@ -202,6 +203,7 @@ class AccountingIntelligenceService:
             "vector_indexed": indexed,
             "attachment_content_learning": attachment_content_stats,
             "reference_catalog": self._catalog_counts(catalog),
+            "company_scope": {"company_id": company_id, "applied": bool(company_id)},
             "safety": {
                 "erp_mutation": False,
                 "training_source": "posted historical accounting entries",
@@ -224,7 +226,12 @@ class AccountingIntelligenceService:
             "products": len(catalog.products),
         }
 
-    def _learning_examples(self, organization_id: int, limit: int = 1500) -> list[RetrievedLearningExample]:
+    def _learning_examples(
+        self,
+        organization_id: int,
+        limit: int = 1500,
+        company_id: int | None = None,
+    ) -> list[RetrievedLearningExample]:
         rows = (
             self.db.query(AIDocumentEmbedding)
             .filter(
@@ -238,6 +245,17 @@ class AccountingIntelligenceService:
         result: list[RetrievedLearningExample] = []
         for row in rows:
             classification = row.classification or {}
+            if company_id:
+                source = classification.get("source") or {}
+                feature_metadata = source.get("feature_metadata") or {}
+                try:
+                    learned_company_id = int(feature_metadata.get("company_id") or 0)
+                except (TypeError, ValueError):
+                    learned_company_id = 0
+                # Unknown/legacy company ownership is excluded from a company-scoped
+                # prediction rather than risking cross-company accounting evidence.
+                if learned_company_id != int(company_id):
+                    continue
             outputs = classification.get("outputs") or {}
             features = classification.get("learning_features") or {}
             if not row.embedding_vector or not outputs:
@@ -262,6 +280,7 @@ class AccountingIntelligenceService:
         move_type_hint: str | None = None,
         currency_hint: str | None = None,
         top_k: int = 12,
+        company_id: int | None = None,
     ) -> dict[str, Any]:
         clean_text = text.strip()
         if len(clean_text) < 4:
@@ -270,7 +289,7 @@ class AccountingIntelligenceService:
         catalog_live = True
         catalog_error_type: str | None = None
         try:
-            _source, catalog, _erp = self._source_and_catalog(organization_id)
+            _source, catalog, _erp = self._source_and_catalog(organization_id, company_id)
         except Exception as exc:
             # Learned memory remains usable when the ERP is temporarily unavailable.
             # IDs are returned without pretending that live names/codes were validated.
@@ -278,7 +297,7 @@ class AccountingIntelligenceService:
             catalog_live = False
             catalog_error_type = type(exc).__name__
 
-        examples = self._learning_examples(organization_id)
+        examples = self._learning_examples(organization_id, company_id=company_id)
         vector, model_name = self.embedding_provider.embed(clean_text)
         prediction = self.learner.predict(
             query_text=clean_text,
@@ -294,6 +313,7 @@ class AccountingIntelligenceService:
         prediction["learning_examples_available"] = len(examples)
         prediction["reference_catalog"] = self._catalog_counts(catalog)
         prediction["live_erp_reference_catalog_available"] = catalog_live
+        prediction["company_scope"] = {"company_id": company_id, "applied": bool(company_id)}
         if not catalog_live:
             finding = {
                 "code": "LIVE_ERP_REFERENCE_CATALOG_UNAVAILABLE",

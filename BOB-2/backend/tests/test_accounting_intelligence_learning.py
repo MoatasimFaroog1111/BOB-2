@@ -7,6 +7,7 @@ from app.ml.accounting_intelligence.hybrid_learner import (
     HybridAccountingLearner,
     RetrievedLearningExample,
 )
+from app.ml.accounting_intelligence.odoo_learning_source import OdooAccountingLearningSource
 
 
 def test_feature_text_does_not_accept_target_account_fields():
@@ -27,8 +28,25 @@ def test_feature_text_does_not_accept_target_account_fields():
     )
     assert "stc" in text
     assert "amount_bucket:1k_9k" in text
+    # Post-generated move number and target journal are accepted only for backward
+    # compatibility and deliberately ignored by the feature builder.
+    assert "bill/2026/001" not in text
+    assert "vendor bills" not in text
     # The builder has no account/tax/analytic target parameter, preventing target leakage by contract.
     assert "400020" not in text
+
+
+def test_company_scoping_keeps_shared_and_selected_odoo_references_only():
+    rows = [
+        {"id": 1, "company_id": False},
+        {"id": 2, "company_id": [7, "Company A"]},
+        {"id": 3, "company_id": [8, "Company B"]},
+        {"id": 4, "company_ids": [7, 8]},
+        {"id": 5, "company_ids": [8]},
+        {"id": 6, "company_ids": []},
+    ]
+    scoped = OdooAccountingLearningSource._company_scoped_rows(rows, 7)
+    assert [row["id"] for row in scoped] == [1, 2, 4, 6]
 
 
 def test_amount_bucket_is_stable_for_accounting_ranges():

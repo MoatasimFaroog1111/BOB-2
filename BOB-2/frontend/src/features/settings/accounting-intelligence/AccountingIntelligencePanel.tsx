@@ -25,6 +25,8 @@ export function AccountingIntelligencePanel() {
   const [limit, setLimit] = useState(1000);
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+  const [includeAttachmentContent, setIncludeAttachmentContent] = useState(true);
+  const [attachmentContentLimit, setAttachmentContentLimit] = useState(100);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -49,6 +51,8 @@ export function AccountingIntelligencePanel() {
         date_to: dateTo || null,
         limit,
         company_id: selectedCompanyId(),
+        include_attachment_content: includeAttachmentContent,
+        attachment_content_limit: attachmentContentLimit,
       });
       setLastSync(result);
       await loadStatus();
@@ -72,8 +76,8 @@ export function AccountingIntelligencePanel() {
             </h1>
             <p className="text-sm leading-6 text-white/60">
               {ar
-                ? "يبني طبقة تعلم من القيود المحاسبية المرحّلة فعليًا في النظام المرتبط، ويستخدم شجرة الحسابات والدفاتر والشركاء والضرائب والتحليلي وبيانات المرفقات كمرجع وخصائص. لا ينشئ أو يرحّل أي قيد تلقائيًا."
-                : "Builds a learning layer from posted accounting history in the connected ERP and uses accounts, journals, partners, taxes, analytics, and attachment metadata as references/features. It never auto-posts entries."}
+                ? "يبني طبقة تعلم من القيود المحاسبية المرحّلة فعليًا في النظام المرتبط، ويستخدم شجرة الحسابات والدفاتر والشركاء والضرائب والتحليلي ومحتوى المرفقات الآمن كمرجع وخصائص. لا ينشئ أو يرحّل أي قيد تلقائيًا."
+                : "Builds a learning layer from posted accounting history in the connected ERP and uses accounts, journals, partners, taxes, analytics, and safely extracted attachment content as references/features. It never auto-posts entries."}
             </p>
           </div>
           <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">
@@ -133,6 +137,39 @@ export function AccountingIntelligencePanel() {
           </label>
         </div>
 
+        <div className="mt-4 grid gap-4 rounded-xl border border-white/10 bg-white/[0.02] p-4 md:grid-cols-[1fr_220px] md:items-end">
+          <label className="flex cursor-pointer items-start gap-3 text-sm text-white/70">
+            <input
+              type="checkbox"
+              checked={includeAttachmentContent}
+              onChange={(event) => setIncludeAttachmentContent(event.target.checked)}
+              className="mt-1 h-4 w-4 accent-amber-400"
+            />
+            <span>
+              <span className="block font-medium text-white/85">
+                {ar ? "التعلّم من محتوى مرفقات النظام المحاسبي" : "Learn from ERP attachment content"}
+              </span>
+              <span className="mt-1 block text-xs leading-5 text-white/45">
+                {ar
+                  ? "يقرأ عددًا محدودًا من PDF/الصور/النصوص، ويمررها أولًا عبر حدود الحجم وفحص البرمجيات الخبيثة والتحقق من نوع المحتوى ثم OCR الحالي."
+                  : "Reads a bounded set of PDFs/images/text files only after size limits, malware scanning, content/type validation, then the existing OCR pipeline."}
+              </span>
+            </span>
+          </label>
+          <label className="space-y-2 text-sm text-white/70">
+            <span>{ar ? "حد المرفقات في الدفعة" : "Attachment batch limit"}</span>
+            <input
+              type="number"
+              min={1}
+              max={500}
+              disabled={!includeAttachmentContent}
+              value={attachmentContentLimit}
+              onChange={(event) => setAttachmentContentLimit(Math.min(500, Math.max(1, Number(event.target.value) || 1)))}
+              className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2 text-white outline-none focus:border-amber-400/50 disabled:opacity-40"
+            />
+          </label>
+        </div>
+
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <button
             type="button"
@@ -150,8 +187,8 @@ export function AccountingIntelligencePanel() {
           </button>
           <span className="text-xs text-white/45">
             {ar
-              ? "يستخدم القيود المرحّلة فقط كـ Outputs/Labels."
-              : "Only posted entries are used as learned outputs/labels."}
+              ? "القيود المرحّلة هي Outputs/Labels؛ المرفقات والبيانات السابقة للترحيل هي Features."
+              : "Posted entries are Outputs/Labels; attachments and pre-posting evidence are Features."}
           </span>
         </div>
       </div>
@@ -168,6 +205,13 @@ export function AccountingIntelligencePanel() {
             <Metric label={ar ? "جديدة" : "Created"} value={String(lastSync.created)} compact />
             <Metric label={ar ? "محدثة" : "Updated"} value={String(lastSync.updated)} compact />
             <Metric label={ar ? "بدون تغيير" : "Unchanged"} value={String(lastSync.unchanged)} compact />
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            <Metric label={ar ? "مرفقات مطلوبة" : "Attachments requested"} value={String(lastSync.attachment_content_learning.requested)} compact />
+            <Metric label={ar ? "تم استخراجها" : "Text extracted"} value={String(lastSync.attachment_content_learning.extracted)} compact />
+            <Metric label={ar ? "مرفوضة أمنيًا" : "Rejected"} value={String(lastSync.attachment_content_learning.rejected)} compact />
+            <Metric label={ar ? "تم تجاوزها" : "Skipped"} value={String(lastSync.attachment_content_learning.skipped)} compact />
+            <Metric label={ar ? "فشل استخراجها" : "Failed"} value={String(lastSync.attachment_content_learning.failed)} compact />
           </div>
           <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-4 text-xs leading-6 text-white/55">
             {ar

@@ -142,9 +142,10 @@ class HybridAccountingLearner:
         candidates: list[dict[str, Any]] = []
         for account_id, consensus in votes[: max(limit * 2, 10)]:
             account = account_map.get(account_id)
-            if not account or bool(account.get("deprecated")):
+            if account and bool(account.get("deprecated")):
                 continue
-            lexical = lexical_account_score(query_text, account)
+            account = account or {"id": account_id}
+            lexical = lexical_account_score(query_text, account) if account_map else 0.0
             learned_confidence = consensus * evidence_strength
             combined = min(0.995, learned_confidence * 0.92 + lexical * 0.08)
             candidates.append(
@@ -157,10 +158,20 @@ class HybridAccountingLearner:
                     "historical_consensus": round(consensus, 4),
                     "evidence_strength": round(evidence_strength, 4),
                     "chart_semantic_score": round(lexical, 4),
+                    "live_reference_resolved": account_id in account_map,
                 }
             )
         candidates.sort(key=lambda item: item["confidence"], reverse=True)
         return candidates[:limit]
+
+    @staticmethod
+    def _finding(code: str, severity: str, message: str, evidence: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "code": code,
+            "severity": severity,
+            "message": message,
+            "evidence": evidence or {},
+        }
 
     def predict(
         self,
@@ -222,14 +233,13 @@ class HybridAccountingLearner:
         ) -> list[dict[str, Any]]:
             items: list[dict[str, Any]] = []
             for identifier, consensus in votes[:limit]:
-                row = mapping.get(identifier)
-                if not row:
-                    continue
+                row = mapping.get(identifier) or {}
                 item = {
                     "id": identifier,
                     "confidence": round(consensus * evidence_strength, 4),
                     "historical_consensus": round(consensus, 4),
                     "evidence_strength": round(evidence_strength, 4),
+                    "live_reference_resolved": identifier in mapping,
                 }
                 for field in fields:
                     item[field] = row.get(field)
@@ -246,14 +256,59 @@ class HybridAccountingLearner:
             if bucket:
                 strongest = max(strongest, float(bucket[0]["confidence"]))
 
-        warnings: list[str] = []
+        findings: list[dict[str, Any]] = []
         if not retrieved:
-            warnings.append("No sufficiently similar historical posted entries were found.")
+            findings.append(self._finding(
+                "NO_HISTORICAL_EVIDENCE",
+                "high",
+                "No sufficiently similar posted accounting history was found; classification must remain unresolved.",
+            ))
         if strongest < 0.60:
-            warnings.append("Low learned confidence: accountant review is mandatory.")
+            findings.append(self._finding(
+                "LOW_LEARNED_CONFIDENCE",
+                "medium",
+                "Learned confidence is below the accountant-review threshold.",
+                {"confidence": round(strongest, 4), "threshold": 0.60},
+            ))
+        if not debit_candidates or not credit_candidates:
+            findings.append(self._finding(
+                "INCOMPLETE_DOUBLE_ENTRY_CLASSIFICATION",
+                "high",
+                "The learned evidence did not resolve both debit and credit sides.",
+            ))
+        if not journal_candidates:
+            findings.append(self._finding(
+                "JOURNAL_UNRESOLVED",
+                "medium",
+                "The target journal could not be resolved from learned posted history.",
+            ))
         if debit_candidates and credit_candidates and debit_candidates[0]["id"] == credit_candidates[0]["id"]:
-            warnings.append("Top learned debit and credit accounts are identical; do not auto-apply this suggestion.")
+            findings.append(self._finding(
+                "CONTRADICTORY_ACCOUNT_SIDES",
+                "high",
+                "Top learned debit and credit accounts are identical.",
+                {"account_id": debit_candidates[0]["id"]},
+            ))
+        if query_features["vat_relevant"] and not tax_candidates:
+            findings.append(self._finding(
+                "VAT_SIGNAL_WITHOUT_TAX_RESOLUTION",
+                "medium",
+                "VAT/tax evidence is present but no historical tax candidate was resolved.",
+            ))
+        if amount is None:
+            findings.append(self._finding(
+                "AMOUNT_NOT_SUPPLIED",
+                "info",
+                "No explicit amount was supplied to the intelligence layer; amount-based similarity is unavailable.",
+            ))
+        elif abs(float(amount)) == 0:
+            findings.append(self._finding(
+                "ZERO_AMOUNT",
+                "info",
+                "The supplied accounting amount is zero and should be verified before entry preparation.",
+            ))
 
+        warnings = [finding["message"] for finding in findings if finding["severity"] in {"high", "medium"}]
         return {
             "query_features": query_features,
             "debit_accounts": debit_candidates,
@@ -265,6 +320,7 @@ class HybridAccountingLearner:
             "retrieved_examples": retrieved,
             "evidence_strength": round(evidence_strength, 4),
             "confidence": round(strongest, 4),
+            "audit_findings": findings,
             "warnings": warnings,
             "explainability": {
                 "method": "deep semantic embedding + structured accounting similarity + weighted historical outcomes + chart candidate semantics",

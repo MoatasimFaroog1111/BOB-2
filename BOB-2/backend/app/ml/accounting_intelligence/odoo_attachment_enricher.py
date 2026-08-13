@@ -10,6 +10,7 @@ from typing import Any
 from app.core.config import settings
 from app.ml.accounting_intelligence.attachment_features import GuardedERPAttachmentFeatureExtractor
 from app.ml.accounting_intelligence.contracts import HistoricalAccountingExample
+from app.ml.accounting_intelligence.feature_engineering import normalize_accounting_text
 
 _SUPPORTED_EXTENSIONS = {".pdf", ".png", ".jpg", ".jpeg", ".webp", ".txt", ".csv"}
 
@@ -139,9 +140,15 @@ class OdooAttachmentLearningEnricher:
             metadata = dict(example.feature_metadata or {})
             if statuses:
                 metadata["attachment_content_learning"] = dict(statuses)
+            augmented_text = example.text
+            if content_features:
+                augmented_text = normalize_accounting_text(
+                    f"{example.text} | {' | '.join(content_features)}"
+                )
             enriched.append(
                 replace(
                     example,
+                    text=augmented_text,
                     attachment_features=tuple(list(example.attachment_features) + content_features),
                     feature_metadata=metadata,
                 )

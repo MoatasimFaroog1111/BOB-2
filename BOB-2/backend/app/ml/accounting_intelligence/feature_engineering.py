@@ -71,8 +71,16 @@ def build_historical_feature_text(
     amount: float | None,
     move_type: str | None,
     currency: str | None,
+    move_name: str | None = None,
+    journal_name: str | None = None,
 ) -> str:
-    """Build pre-posting input without account/journal/tax/analytic target leakage."""
+    """Build pre-posting input without target leakage.
+
+    ``move_name`` and ``journal_name`` are accepted only for backwards-compatible
+    callers and are intentionally ignored because both are post/accounting-routing
+    outcomes rather than evidence available on a new incoming document or command.
+    """
+    del move_name, journal_name
     parts = [
         reference,
         narration,

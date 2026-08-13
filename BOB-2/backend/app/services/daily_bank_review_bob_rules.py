@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.money import MONEY_ZERO, money_to_str, parse_money
 from app.erp.bank_reconciliation import parse_file
 from app.services.bank_rule_tax import BankRuleTaxError, split_tax_inclusive
+from app.services.bank_rule_tax_audit import TaxAwareAccountingAuditEngine
 from app.services.daily_bank_context import BOBDailyBankContextLoader, bob_daily_bank_context_loader
 from app.services.daily_bank_entry_builder import BankJournalContext, DailyBankEntryBuilder, DailyBankEntryBuildError
 from app.services.daily_bank_review_service import DailyBankReviewService
@@ -120,6 +121,7 @@ class BOBRulesDailyBankReviewService(DailyBankReviewService):
         **kwargs: Any,
     ) -> None:
         kwargs.setdefault("builder", BOBTaxAwareDailyBankEntryBuilder())
+        kwargs.setdefault("auditor", TaxAwareAccountingAuditEngine())
         super().__init__(**kwargs)
         self._bob_context_loader = bob_context_loader or bob_daily_bank_context_loader
 

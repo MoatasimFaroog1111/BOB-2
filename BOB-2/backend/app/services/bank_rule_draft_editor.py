@@ -37,6 +37,7 @@ def _fingerprint(rule: BankRule, conditions: list[dict[str, Any]], target: dict[
 
 def _clean_target(target: dict[str, Any]) -> dict[str, Any]:
     tax_id = int(target.get("tax_id") or 0) or None
+    tax_account_id = (int(target.get("tax_account_id") or 0) or None) if tax_id else None
     return {
         "account_id": int(target.get("account_id") or 0) or None,
         "account_code": str(target.get("account_code") or ""),
@@ -51,7 +52,7 @@ def _clean_target(target: dict[str, Any]) -> dict[str, Any]:
         "tax_amount_type": str(target.get("tax_amount_type") or "") if tax_id else "",
         "tax_type_use": str(target.get("tax_type_use") or "") if tax_id else "",
         "tax_price_include": bool(target.get("tax_price_include")) if tax_id else False,
-        "tax_account_id": int(target.get("tax_account_id") or 0) or None if tax_id else None,
+        "tax_account_id": tax_account_id,
         "tax_account_code": str(target.get("tax_account_code") or "") if tax_id else "",
         "tax_account_name": str(target.get("tax_account_name") or "") if tax_id else "",
         "tax_amount_mode": "included_in_bank_amount" if tax_id else None,
@@ -112,7 +113,15 @@ class BankRuleDraftEditor:
         clean_target = _clean_target(target)
         if not clean_target["account_id"]:
             raise HTTPException(status_code=422, detail="A counterpart Odoo account is required.")
-        if clean_target["tax_id"]:
+        # The legacy editor intentionally owns account/partner/analytic fields only.
+        # Preserve tax configured by the dedicated tax component unless the caller
+        # explicitly includes tax_id in its target contract.
+        if "tax_id" not in target:
+            existing_target = dict(version.target or {})
+            for key in _TAX_KEYS:
+                if key in existing_target:
+                    clean_target[key] = existing_target[key]
+        elif clean_target["tax_id"]:
             clean_target["tax_company_id"] = rule.company_id
         source_snapshot = dict(version.source_snapshot or {})
         source_snapshot["import_requires_manual_configuration"] = False

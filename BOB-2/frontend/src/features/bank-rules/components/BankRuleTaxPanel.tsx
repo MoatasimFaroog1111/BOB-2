@@ -27,7 +27,7 @@ export function BankRuleTaxPanel() {
     try {
       const [rulesResponse, catalog] = await Promise.all([
         bankRulesGateway.listRules(),
-        bankRulesGateway.referenceCatalog() as Promise<ReferenceCatalogWithTaxes>,
+        bankRulesGateway.referenceCatalog() as unknown as Promise<ReferenceCatalogWithTaxes>,
       ]);
       if (!rulesResponse.ok) throw new Error(await rulesResponse.text());
       const rulesBody = await rulesResponse.json();

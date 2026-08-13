@@ -53,11 +53,11 @@ class GuardedERPAttachmentFeatureExtractor:
     def _decode_base64(value: Any) -> bytes:
         if not value:
             return b""
-        if isinstance(value, bytes):
-            encoded = value
-        else:
-            encoded = str(value).encode("ascii", errors="strict")
         try:
+            if isinstance(value, bytes):
+                encoded = value
+            else:
+                encoded = str(value).encode("ascii", errors="strict")
             return base64.b64decode(encoded, validate=True)
         except (binascii.Error, ValueError, UnicodeEncodeError) as exc:
             raise FileValidationError("ERP attachment payload is not valid base64") from exc

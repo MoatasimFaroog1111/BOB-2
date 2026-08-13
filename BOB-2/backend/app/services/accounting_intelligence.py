@@ -13,6 +13,7 @@ from app.ml.accounting_intelligence.hybrid_learner import (
     HybridAccountingLearner,
     RetrievedLearningExample,
 )
+from app.ml.accounting_intelligence.odoo_attachment_enricher import OdooAttachmentLearningEnricher
 from app.ml.accounting_intelligence.odoo_learning_source import OdooAccountingLearningSource
 from app.models.ai_accounting import AIDecisionAuditLog, AIDocumentEmbedding
 from app.services.accounting_ai import EmbeddingProvider
@@ -38,7 +39,7 @@ class AccountingIntelligenceService:
     def _source_and_catalog(self, organization_id: int):
         _connection, erp = tenant_erp_resolver.resolve(self.db, organization_id)
         source = OdooAccountingLearningSource(erp)
-        return source, source.reference_catalog()
+        return source, source.reference_catalog(), erp
 
     @staticmethod
     def _classification_payload(example) -> dict[str, Any]:
@@ -73,14 +74,29 @@ class AccountingIntelligenceService:
         date_to: str | None = None,
         limit: int = 1000,
         company_id: int | None = None,
+        include_attachment_content: bool = True,
+        attachment_content_limit: int = 100,
     ) -> dict[str, Any]:
-        source, catalog = self._source_and_catalog(organization_id)
+        source, catalog, erp = self._source_and_catalog(organization_id)
         examples = source.historical_examples(
             date_from=date_from,
             date_to=date_to,
             limit=limit,
             company_id=company_id,
         )
+
+        attachment_content_stats = {
+            "requested": 0,
+            "extracted": 0,
+            "rejected": 0,
+            "skipped": 0,
+            "failed": 0,
+        }
+        if include_attachment_content and examples:
+            examples, attachment_content_stats = OdooAttachmentLearningEnricher(erp).enrich(
+                examples,
+                max_attachments=min(max(int(attachment_content_limit), 1), 500),
+            )
 
         created = 0
         updated = 0
@@ -168,6 +184,9 @@ class AccountingIntelligenceService:
                     "date_from": date_from,
                     "date_to": date_to,
                     "company_id": company_id,
+                    "include_attachment_content": include_attachment_content,
+                    "attachment_content_limit": attachment_content_limit,
+                    "attachment_content_learning": attachment_content_stats,
                     "reference_catalog": self._catalog_counts(catalog),
                     "auto_posted_to_erp": False,
                 },
@@ -181,12 +200,16 @@ class AccountingIntelligenceService:
             "updated": updated,
             "unchanged": unchanged,
             "vector_indexed": indexed,
+            "attachment_content_learning": attachment_content_stats,
             "reference_catalog": self._catalog_counts(catalog),
             "safety": {
                 "erp_mutation": False,
                 "training_source": "posted historical accounting entries",
-                "raw_attachment_binaries_read": False,
                 "attachment_metadata_used_as_features": True,
+                "attachment_content_enabled": include_attachment_content,
+                "raw_attachment_binaries_read": bool(attachment_content_stats["requested"]),
+                "attachment_content_used_as_features": bool(attachment_content_stats["extracted"]),
+                "attachment_content_guard": "size + malware scan + content/type validation before existing OCR/parser",
             },
         }
 
@@ -247,7 +270,7 @@ class AccountingIntelligenceService:
         catalog_live = True
         catalog_error_type: str | None = None
         try:
-            _source, catalog = self._source_and_catalog(organization_id)
+            _source, catalog, _erp = self._source_and_catalog(organization_id)
         except Exception as exc:
             # Learned memory remains usable when the ERP is temporarily unavailable.
             # IDs are returned without pretending that live names/codes were validated.

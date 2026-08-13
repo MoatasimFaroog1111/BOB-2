@@ -25,6 +25,14 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
     badge: "AI",
   },
   {
+    href: "/settings/accounting-intelligence",
+    titleAr: "ذاكرة المحاسب الذكي",
+    titleEn: "Accounting Intelligence",
+    descriptionAr: "تعلّم آمن من القيود المرحّلة وشجرة الحسابات والمراجع المحاسبية في النظام المرتبط.",
+    descriptionEn: "Safe learning from posted entries, chart of accounts, and accounting references in the connected ERP.",
+    badge: "LEARNING",
+  },
+  {
     href: "/settings/accounting-systems",
     titleAr: "الأنظمة المحاسبية",
     titleEn: "Accounting Systems",

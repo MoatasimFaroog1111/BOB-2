@@ -11,6 +11,7 @@ from app.api.v1.bank_reconciliation_compat import router as bank_reconciliation_
 from app.api.v1.bank_reconciliation_entry_suggestions import router as bank_reconciliation_entry_suggestions_router
 from app.api.v1.bank_reconciliation_hardening import router as bank_reconciliation_hardening_router
 from app.api.v1.bank_rule_entry_suggestions import router as bank_rule_entry_suggestions_router
+from app.api.v1.bank_rule_tax import router as bank_rule_tax_router
 from app.api.v1.bank_rules import router as bank_rules_router
 from app.api.v1.chat_journal_lookup import router as chat_journal_lookup_router
 from app.api.v1.chat_spreadsheet_intent_guard import router as chat_spreadsheet_intent_guard_router
@@ -20,9 +21,7 @@ from app.api.v1.erp_catalog import router as erp_catalog_router
 from app.api.v1.erp_connections import router as erp_connections_router
 from app.api.v1.erp_document_parsing import router as erp_document_parsing_router
 from app.api.v1.erp_documents import router as erp_documents_router
-from app.api.v1.erp_monetary_legacy import (
-    router as erp_monetary_legacy_router,
-)
+from app.api.v1.erp_monetary_legacy import router as erp_monetary_legacy_router
 from app.api.v1.erp_partners import router as erp_partners_router
 from app.api.v1.erp_telegram_config import router as erp_telegram_config_router
 from app.api.v1.journal import router as journal_router
@@ -43,31 +42,11 @@ api_router.include_router(auth_router, prefix="/auth", tags=["Security"])
 api_router.include_router(account_access_router, prefix="/auth", tags=["Account Access"])
 api_router.include_router(mfa_router, prefix="/auth", tags=["Multi-Factor Authentication"])
 api_router.include_router(journal_router, prefix="/journal", tags=["Journal Entries"])
-api_router.include_router(
-    telegram_admin_router,
-    prefix="/telegram",
-    tags=["Telegram Administration"],
-)
-api_router.include_router(
-    telegram_authorizations_router,
-    prefix="/telegram",
-    tags=["Telegram Authorizations"],
-)
-api_router.include_router(
-    telegram_approvals_router,
-    prefix="/telegram",
-    tags=["Telegram Approvals"],
-)
-api_router.include_router(
-    llm_admin_router,
-    prefix="/llm",
-    tags=["External LLM Administration"],
-)
-api_router.include_router(
-    communication_tools_router,
-    prefix="/communication-tools",
-    tags=["Communication Tools"],
-)
+api_router.include_router(telegram_admin_router, prefix="/telegram", tags=["Telegram Administration"])
+api_router.include_router(telegram_authorizations_router, prefix="/telegram", tags=["Telegram Authorizations"])
+api_router.include_router(telegram_approvals_router, prefix="/telegram", tags=["Telegram Approvals"])
+api_router.include_router(llm_admin_router, prefix="/llm", tags=["External LLM Administration"])
+api_router.include_router(communication_tools_router, prefix="/communication-tools", tags=["Communication Tools"])
 
 # The centralized dependency is method-aware: reads require view_financials,
 # mutations require create_entries by default, settings require manage_settings,
@@ -79,6 +58,7 @@ api_router.include_router(bank_reconciliation_hardening_router, prefix="/erp", t
 api_router.include_router(bank_rule_entry_suggestions_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
 api_router.include_router(bank_reconciliation_entry_suggestions_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
 api_router.include_router(bank_rules_router, prefix="/erp", tags=["BOB Bank Rules"], dependencies=financial_access)
+api_router.include_router(bank_rule_tax_router, prefix="/erp", tags=["BOB Bank Rule Taxes"], dependencies=financial_access)
 api_router.include_router(daily_bank_review_router, prefix="/erp", tags=["ERP Daily Bank Audit Workflow"], dependencies=financial_access)
 api_router.include_router(accounting_command_router, prefix="/erp", tags=["ERP Accounting Command Brain"], dependencies=financial_access)
 api_router.include_router(chat_spreadsheet_intent_guard_router, prefix="/erp", tags=["ERP Smart Chat Intent Guard"], dependencies=financial_access)
@@ -88,19 +68,9 @@ api_router.include_router(erp_documents_router, prefix="/erp", tags=["ERP Docume
 api_router.include_router(erp_document_parsing_router, prefix="/erp", tags=["ERP Document Parsing"], dependencies=financial_access)
 api_router.include_router(erp_catalog_router, prefix="/erp", tags=["ERP Catalog"], dependencies=financial_access)
 api_router.include_router(erp_telegram_config_router, prefix="/erp", tags=["ERP Telegram Compatibility"], dependencies=financial_access)
-api_router.include_router(
-    erp_monetary_legacy_router,
-    prefix="/erp",
-    tags=["ERP Fixed-Point Monetary Compatibility"],
-    dependencies=financial_access,
-)
+api_router.include_router(erp_monetary_legacy_router, prefix="/erp", tags=["ERP Fixed-Point Monetary Compatibility"], dependencies=financial_access)
 api_router.include_router(journal_entry_actions_router, prefix="/erp", tags=["ERP Journal Entry Actions"], dependencies=financial_access)
 api_router.include_router(bank_posting_v2_router, prefix="/erp", tags=["ERP Bank Posting"], dependencies=financial_access)
 api_router.include_router(accounting_ai_router, prefix="/accounting-ai", tags=["Accounting AI Matching"], dependencies=financial_access)
-api_router.include_router(
-    accounting_intelligence_router,
-    prefix="/accounting-intelligence",
-    tags=["Accounting Intelligence Learning"],
-    dependencies=financial_access,
-)
+api_router.include_router(accounting_intelligence_router, prefix="/accounting-intelligence", tags=["Accounting Intelligence Learning"], dependencies=financial_access)
 api_router.include_router(agents_router, prefix="/agents", tags=["GMAWS Accounting Agents"], dependencies=financial_access)

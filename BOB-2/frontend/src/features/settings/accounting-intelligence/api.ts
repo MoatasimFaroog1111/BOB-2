@@ -13,6 +13,16 @@ export type AccountingLearningSyncRequest = {
   date_to?: string | null;
   limit: number;
   company_id?: number | null;
+  include_attachment_content: boolean;
+  attachment_content_limit: number;
+};
+
+export type AttachmentContentLearningStats = {
+  requested: number;
+  extracted: number;
+  rejected: number;
+  skipped: number;
+  failed: number;
 };
 
 export type AccountingLearningSyncResult = {
@@ -22,12 +32,16 @@ export type AccountingLearningSyncResult = {
   updated: number;
   unchanged: number;
   vector_indexed: number;
+  attachment_content_learning: AttachmentContentLearningStats;
   reference_catalog: Record<string, number>;
   safety: {
     erp_mutation: boolean;
     training_source: string;
-    raw_attachment_binaries_read: boolean;
     attachment_metadata_used_as_features: boolean;
+    attachment_content_enabled: boolean;
+    raw_attachment_binaries_read: boolean;
+    attachment_content_used_as_features: boolean;
+    attachment_content_guard: string;
   };
 };
 

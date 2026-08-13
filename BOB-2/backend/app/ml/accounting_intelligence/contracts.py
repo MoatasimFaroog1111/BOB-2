@@ -43,7 +43,7 @@ class HistoricalAccountingExample:
 class AccountingLearningSource(Protocol):
     """Read-only source used to build accounting training examples."""
 
-    def reference_catalog(self) -> AccountingReferenceCatalog: ...
+    def reference_catalog(self, *, company_id: int | None = None) -> AccountingReferenceCatalog: ...
 
     def historical_examples(
         self,

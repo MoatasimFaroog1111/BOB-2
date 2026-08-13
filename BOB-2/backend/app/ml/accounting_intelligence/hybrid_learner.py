@@ -1,6 +1,6 @@
 """Hybrid deep-semantic + structured-feature accounting learner.
 
-Sentence-transformer embeddings provide the deep semantic signal.  Structured
+Sentence-transformer embeddings provide the deep semantic signal. Structured
 accounting features and chart-of-account candidate semantics are combined with
 historical posted outcomes to produce explainable ranked recommendations.
 """
@@ -35,6 +35,8 @@ class HybridAccountingLearner:
 
     def __init__(self, *, semantic_weight: float = 0.82, structured_weight: float = 0.18):
         total = semantic_weight + structured_weight
+        if total <= 0:
+            raise ValueError("Hybrid learner weights must have a positive total.")
         self.semantic_weight = semantic_weight / total
         self.structured_weight = structured_weight / total
 
@@ -91,6 +93,7 @@ class HybridAccountingLearner:
 
     @staticmethod
     def _weighted_vote(retrieved: list[dict[str, Any]], output_key: str) -> list[tuple[int, float]]:
+        """Return consensus confidence, separate from absolute evidence strength."""
         votes: dict[int, float] = defaultdict(float)
         total = 0.0
         for row in retrieved:
@@ -132,18 +135,18 @@ class HybridAccountingLearner:
         query_text: str,
         votes: list[tuple[int, float]],
         catalog: AccountingReferenceCatalog,
+        evidence_strength: float,
         limit: int = 5,
     ) -> list[dict[str, Any]]:
         account_map = self._catalog_map(catalog.accounts)
         candidates: list[dict[str, Any]] = []
-        for account_id, historical_confidence in votes[: max(limit * 2, 10)]:
+        for account_id, consensus in votes[: max(limit * 2, 10)]:
             account = account_map.get(account_id)
-            if not account:
-                continue
-            if bool(account.get("deprecated")):
+            if not account or bool(account.get("deprecated")):
                 continue
             lexical = lexical_account_score(query_text, account)
-            combined = min(0.995, historical_confidence * 0.92 + lexical * 0.08)
+            learned_confidence = consensus * evidence_strength
+            combined = min(0.995, learned_confidence * 0.92 + lexical * 0.08)
             candidates.append(
                 {
                     "id": account_id,
@@ -151,7 +154,8 @@ class HybridAccountingLearner:
                     "name": account.get("name"),
                     "account_type": account.get("account_type"),
                     "confidence": round(combined, 4),
-                    "historical_confidence": round(historical_confidence, 4),
+                    "historical_consensus": round(consensus, 4),
+                    "evidence_strength": round(evidence_strength, 4),
                     "chart_semantic_score": round(lexical, 4),
                 }
             )
@@ -183,6 +187,7 @@ class HybridAccountingLearner:
             examples=examples,
             top_k=top_k,
         )
+        evidence_strength = max((float(row["score"]) for row in retrieved), default=0.0)
 
         debit_votes = self._weighted_vote(retrieved, "debit_account_ids")
         credit_votes = self._weighted_vote(retrieved, "credit_account_ids")
@@ -195,11 +200,13 @@ class HybridAccountingLearner:
             query_text=query_text,
             votes=debit_votes,
             catalog=catalog,
+            evidence_strength=evidence_strength,
         )
         credit_candidates = self._account_candidates(
             query_text=query_text,
             votes=credit_votes,
             catalog=catalog,
+            evidence_strength=evidence_strength,
         )
 
         journal_map = self._catalog_map(catalog.journals)
@@ -207,24 +214,37 @@ class HybridAccountingLearner:
         tax_map = self._catalog_map(catalog.taxes)
         analytic_map = self._catalog_map(catalog.analytic_accounts)
 
-        def enrich(votes: list[tuple[int, float]], mapping: dict[int, dict[str, Any]], fields: tuple[str, ...], limit: int = 5):
+        def enrich(
+            votes: list[tuple[int, float]],
+            mapping: dict[int, dict[str, Any]],
+            fields: tuple[str, ...],
+            limit: int = 5,
+        ) -> list[dict[str, Any]]:
             items: list[dict[str, Any]] = []
-            for identifier, confidence in votes[:limit]:
+            for identifier, consensus in votes[:limit]:
                 row = mapping.get(identifier)
                 if not row:
                     continue
-                item = {"id": identifier, "confidence": round(confidence, 4)}
+                item = {
+                    "id": identifier,
+                    "confidence": round(consensus * evidence_strength, 4),
+                    "historical_consensus": round(consensus, 4),
+                    "evidence_strength": round(evidence_strength, 4),
+                }
                 for field in fields:
                     item[field] = row.get(field)
                 items.append(item)
             return items
 
+        journal_candidates = enrich(journal_votes, journal_map, ("code", "name", "type"))
+        partner_candidates = enrich(partner_votes, partner_map, ("name", "vat", "customer_rank", "supplier_rank"))
+        tax_candidates = enrich(tax_votes, tax_map, ("name", "amount", "type_tax_use"))
+        analytic_candidates = enrich(analytic_votes, analytic_map, ("code", "name"))
+
         strongest = 0.0
-        for bucket in (debit_candidates, credit_candidates):
+        for bucket in (debit_candidates, credit_candidates, journal_candidates):
             if bucket:
                 strongest = max(strongest, float(bucket[0]["confidence"]))
-        if journal_votes:
-            strongest = max(strongest, float(journal_votes[0][1]))
 
         warnings: list[str] = []
         if not retrieved:
@@ -238,17 +258,19 @@ class HybridAccountingLearner:
             "query_features": query_features,
             "debit_accounts": debit_candidates,
             "credit_accounts": credit_candidates,
-            "journals": enrich(journal_votes, journal_map, ("code", "name", "type")),
-            "partners": enrich(partner_votes, partner_map, ("name", "vat", "customer_rank", "supplier_rank")),
-            "taxes": enrich(tax_votes, tax_map, ("name", "amount", "type_tax_use")),
-            "analytic_accounts": enrich(analytic_votes, analytic_map, ("code", "name")),
+            "journals": journal_candidates,
+            "partners": partner_candidates,
+            "taxes": tax_candidates,
+            "analytic_accounts": analytic_candidates,
             "retrieved_examples": retrieved,
+            "evidence_strength": round(evidence_strength, 4),
             "confidence": round(strongest, 4),
             "warnings": warnings,
             "explainability": {
                 "method": "deep semantic embedding + structured accounting similarity + weighted historical outcomes + chart candidate semantics",
                 "semantic_weight": round(self.semantic_weight, 4),
                 "structured_weight": round(self.structured_weight, 4),
+                "confidence_calibration": "historical consensus multiplied by strongest retrieved evidence",
                 "query_normalized": normalize_accounting_text(query_text)[:1000],
             },
             "audit_safe": {

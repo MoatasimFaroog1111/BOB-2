@@ -243,7 +243,18 @@ class AccountingIntelligenceService:
         clean_text = text.strip()
         if len(clean_text) < 4:
             raise ValueError("Accounting intelligence input is too short.")
-        _source, catalog = self._source_and_catalog(organization_id)
+
+        catalog_live = True
+        catalog_error_type: str | None = None
+        try:
+            _source, catalog = self._source_and_catalog(organization_id)
+        except Exception as exc:
+            # Learned memory remains usable when the ERP is temporarily unavailable.
+            # IDs are returned without pretending that live names/codes were validated.
+            catalog = AccountingReferenceCatalog()
+            catalog_live = False
+            catalog_error_type = type(exc).__name__
+
         examples = self._learning_examples(organization_id)
         vector, model_name = self.embedding_provider.embed(clean_text)
         prediction = self.learner.predict(
@@ -259,6 +270,16 @@ class AccountingIntelligenceService:
         prediction["embedding_model"] = model_name
         prediction["learning_examples_available"] = len(examples)
         prediction["reference_catalog"] = self._catalog_counts(catalog)
+        prediction["live_erp_reference_catalog_available"] = catalog_live
+        if not catalog_live:
+            finding = {
+                "code": "LIVE_ERP_REFERENCE_CATALOG_UNAVAILABLE",
+                "severity": "medium",
+                "message": "Learned IDs are available from BOB memory, but live ERP names/codes could not be revalidated.",
+                "evidence": {"error_type": catalog_error_type},
+            }
+            prediction.setdefault("audit_findings", []).append(finding)
+            prediction.setdefault("warnings", []).append(finding["message"])
         return prediction
 
     def status(self, *, organization_id: int) -> dict[str, Any]:

@@ -1,30 +1,71 @@
 import { API_BASE_URL } from "@/lib/api";
 
+interface BankRuleReferenceCatalog {
+  journals?: unknown[];
+  accounts?: unknown[];
+  partners?: unknown[];
+  analytic_accounts?: unknown[];
+}
+
 class BankRulesGateway {
+  private referenceCatalogPromise: Promise<BankRuleReferenceCatalog> | null = null;
+
   listRules(journalId?: number): Promise<Response> {
     const query = journalId ? `?journal_id=${encodeURIComponent(String(journalId))}` : "";
     return fetch(`${API_BASE_URL}/api/v1/erp/bank-rules${query}`, { cache: "no-store" });
   }
 
-  referenceCatalog(companyId?: number): Promise<Response> {
-    const query = companyId ? `?company_id=${encodeURIComponent(String(companyId))}` : "";
-    return fetch(`${API_BASE_URL}/api/v1/erp/bank-rules/reference-catalog${query}`, { cache: "no-store" });
+  private loadReferenceCatalog(): Promise<BankRuleReferenceCatalog> {
+    if (!this.referenceCatalogPromise) {
+      this.referenceCatalogPromise = fetch(
+        `${API_BASE_URL}/api/v1/erp/bank-rules/reference-catalog`,
+        { cache: "no-store" },
+      )
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(await response.text());
+          }
+          return response.json() as Promise<BankRuleReferenceCatalog>;
+        })
+        .catch((error) => {
+          // A transient Odoo 429 must be retryable on the next user/page attempt.
+          this.referenceCatalogPromise = null;
+          throw error;
+        });
+    }
+    return this.referenceCatalogPromise;
+  }
+
+  private catalogSlice(key: keyof BankRuleReferenceCatalog): Promise<Response> {
+    return this.loadReferenceCatalog()
+      .then((catalog) => new Response(JSON.stringify(catalog[key] || []), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .catch((error) => new Response(
+        JSON.stringify({ detail: error instanceof Error ? error.message : String(error) }),
+        { status: 503, headers: { "Content-Type": "application/json" } },
+      ));
+  }
+
+  referenceCatalog(): Promise<BankRuleReferenceCatalog> {
+    return this.loadReferenceCatalog();
   }
 
   listJournals(): Promise<Response> {
-    return fetch(`${API_BASE_URL}/api/v1/erp/journals`, { cache: "no-store" });
+    return this.catalogSlice("journals");
   }
 
   listAccounts(): Promise<Response> {
-    return fetch(`${API_BASE_URL}/api/v1/erp/accounts`, { cache: "no-store" });
+    return this.catalogSlice("accounts");
   }
 
   listPartners(): Promise<Response> {
-    return fetch(`${API_BASE_URL}/api/v1/erp/partners`, { cache: "no-store" });
+    return this.catalogSlice("partners");
   }
 
   listAnalyticAccounts(): Promise<Response> {
-    return fetch(`${API_BASE_URL}/api/v1/erp/analytic-accounts`, { cache: "no-store" });
+    return this.catalogSlice("analytic_accounts");
   }
 
   createRule(payload: unknown): Promise<Response> {

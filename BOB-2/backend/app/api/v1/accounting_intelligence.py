@@ -38,6 +38,7 @@ class AccountingInterpretRequest(BaseModel):
     amount: float | None = None
     move_type_hint: str | None = Field(default=None, max_length=80)
     currency_hint: str | None = Field(default=None, max_length=20)
+    company_id: int | None = Field(default=None, ge=1)
     top_k: int = Field(default=12, ge=1, le=50)
 
 
@@ -96,6 +97,7 @@ def interpret_accounting_input(
             amount=payload.amount,
             move_type_hint=payload.move_type_hint,
             currency_hint=payload.currency_hint,
+            company_id=payload.company_id,
             top_k=payload.top_k,
         )
         return {

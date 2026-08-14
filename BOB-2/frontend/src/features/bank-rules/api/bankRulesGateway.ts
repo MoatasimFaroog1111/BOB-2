@@ -5,6 +5,7 @@ interface BankRuleReferenceCatalog {
   accounts?: unknown[];
   partners?: unknown[];
   analytic_accounts?: unknown[];
+  taxes?: unknown[];
 }
 
 class BankRulesGateway {
@@ -68,6 +69,10 @@ class BankRulesGateway {
     return this.catalogSlice("analytic_accounts");
   }
 
+  listTaxes(): Promise<Response> {
+    return this.catalogSlice("taxes");
+  }
+
   createRule(payload: unknown): Promise<Response> {
     return fetch(`${API_BASE_URL}/api/v1/erp/bank-rules`, {
       method: "POST",
@@ -89,6 +94,14 @@ class BankRulesGateway {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+    });
+  }
+
+  configureDraftTax(ruleId: number, versionId: number, taxId: number | null): Promise<Response> {
+    return fetch(`${API_BASE_URL}/api/v1/erp/bank-rules/${ruleId}/draft-tax`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version_id: versionId, tax_id: taxId }),
     });
   }
 

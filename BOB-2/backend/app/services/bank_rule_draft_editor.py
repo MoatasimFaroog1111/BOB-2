@@ -113,16 +113,16 @@ class BankRuleDraftEditor:
         clean_target = _clean_target(target)
         if not clean_target["account_id"]:
             raise HTTPException(status_code=422, detail="A counterpart Odoo account is required.")
+        existing_target = dict(version.target or {})
         # The legacy editor intentionally owns account/partner/analytic fields only.
         # Preserve tax configured by the dedicated tax component unless the caller
         # explicitly includes tax_id in its target contract.
         if "tax_id" not in target:
-            existing_target = dict(version.target or {})
             for key in _TAX_KEYS:
                 if key in existing_target:
                     clean_target[key] = existing_target[key]
         elif clean_target["tax_id"]:
-            clean_target["tax_company_id"] = rule.company_id
+            clean_target["tax_company_id"] = rule.company_id or existing_target.get("tax_company_id")
         source_snapshot = dict(version.source_snapshot or {})
         source_snapshot["import_requires_manual_configuration"] = False
         source_snapshot["draft_last_edited_by_user_id"] = user_id
@@ -160,6 +160,7 @@ class BankRuleDraftEditor:
         rule_id: int,
         version_id: int,
         tax_id: int | None,
+        tax_company_id: int | None = None,
     ) -> BankRuleVersion:
         """Attach/clear tax intent on a draft created by the core versioning service."""
         rule, version = self._rule_and_version(
@@ -172,7 +173,13 @@ class BankRuleDraftEditor:
         for key in _TAX_KEYS:
             target.pop(key, None)
         selected = int(tax_id or 0)
+        effective_tax_company_id = int(tax_company_id or rule.company_id or 0) or None
         if selected > 0:
+            if not effective_tax_company_id:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Bank Rule tax company could not be resolved from the selected bank journal.",
+                )
             target.update({
                 "tax_id": selected,
                 "tax_name": "",
@@ -184,7 +191,7 @@ class BankRuleDraftEditor:
                 "tax_account_code": "",
                 "tax_account_name": "",
                 "tax_amount_mode": "included_in_bank_amount",
-                "tax_company_id": rule.company_id,
+                "tax_company_id": effective_tax_company_id,
             })
         version.target = target
         version.fingerprint = _fingerprint(rule, list(version.conditions or []), target)
@@ -195,7 +202,12 @@ class BankRuleDraftEditor:
                 action="bank_rule.draft_tax_configured",
                 entity_type="bank_rule",
                 entity_id=str(rule.id),
-                details={"version_id": version.id, "tax_id": selected or None, "fingerprint": version.fingerprint},
+                details={
+                    "version_id": version.id,
+                    "tax_id": selected or None,
+                    "tax_company_id": effective_tax_company_id if selected else None,
+                    "fingerprint": version.fingerprint,
+                },
             )
         )
         db.commit()

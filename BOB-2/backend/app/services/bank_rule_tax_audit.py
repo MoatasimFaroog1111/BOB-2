@@ -83,7 +83,9 @@ class TaxAwareAccountingAuditEngine(AccountingAuditEngine):
         current_entry_hash: str | None = None,
     ) -> dict[str, Any]:
         original_lines = [deepcopy(line) for line in entry.get("lines") or []]
-        if not any(line.get("role") == "tax" for line in original_lines):
+        has_tax_line = any(line.get("role") == "tax" for line in original_lines)
+        has_failed_tax = any(line.get("tax_resolution_failed") for line in original_lines)
+        if not has_tax_line and not has_failed_tax:
             return super().audit_entry(
                 entry,
                 source_document=source_document,
@@ -98,11 +100,28 @@ class TaxAwareAccountingAuditEngine(AccountingAuditEngine):
         synthetic_lines: list[dict[str, Any]] = []
         tax_findings: list[dict[str, Any]] = []
         for key, lines in groups.items():
+            source_row = next((line.get("source_row") for line in lines if line.get("source_row") is not None), None)
+            failed_lines = [line for line in lines if line.get("tax_resolution_failed")]
+            if failed_lines:
+                first = failed_lines[0]
+                tax_findings.append(self._tax_finding(
+                    "TAX_RESOLUTION_FAILED",
+                    "Approved Bank Rule tax could not be resolved safely",
+                    str(first.get("tax_error") or "The configured tax could not be resolved against current Odoo metadata."),
+                    {
+                        "transaction_key": key,
+                        "tax_id": first.get("tax_id"),
+                        "line_count": len(lines),
+                    },
+                    source_row,
+                ))
+                synthetic_lines.extend(lines)
+                continue
+
             tax_lines = [line for line in lines if line.get("role") == "tax"]
             if not tax_lines:
                 synthetic_lines.extend(lines)
                 continue
-            source_row = next((line.get("source_row") for line in lines if line.get("source_row") is not None), None)
             bank_lines = [line for line in lines if line.get("role") == "bank"]
             counterparts = [line for line in lines if line.get("role") == "counterpart"]
             if len(lines) != 3 or len(bank_lines) != 1 or len(counterparts) != 1 or len(tax_lines) != 1:

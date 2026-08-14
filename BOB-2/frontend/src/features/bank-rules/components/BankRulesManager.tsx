@@ -14,6 +14,7 @@ import type {
   ERPAnalyticAccount,
   ERPJournal,
   ERPPartner,
+  ERPTax,
 } from "@/features/bank-rules/model/types";
 import { useLanguage } from "@/lib/LanguageContext";
 
@@ -47,6 +48,7 @@ function emptyEditor(journalId: number | null): BankRuleEditorValue {
     accountId: null,
     partnerId: null,
     analyticAccountId: null,
+    taxId: null,
     rationale: "",
     changeNote: "",
   };
@@ -90,6 +92,7 @@ export function BankRulesManager() {
   const [accounts, setAccounts] = useState<ERPAccount[]>([]);
   const [partners, setPartners] = useState<ERPPartner[]>([]);
   const [analyticAccounts, setAnalyticAccounts] = useState<ERPAnalyticAccount[]>([]);
+  const [taxes, setTaxes] = useState<ERPTax[]>([]);
   const [rules, setRules] = useState<BankRule[]>([]);
   const [selectedJournalId, setSelectedJournalId] = useState<number | null>(null);
   const [editorSession, setEditorSession] = useState<EditorSession | null>(null);
@@ -116,27 +119,31 @@ export function BankRulesManager() {
     setLoading(true);
     setError("");
     try {
-      const [journalResponse, accountResponse, partnerResponse, analyticResponse] = await Promise.all([
+      const [journalResponse, accountResponse, partnerResponse, analyticResponse, taxResponse] = await Promise.all([
         bankRulesGateway.listJournals(),
         bankRulesGateway.listAccounts(),
         bankRulesGateway.listPartners(),
         bankRulesGateway.listAnalyticAccounts(),
+        bankRulesGateway.listTaxes(),
       ]);
       if (!journalResponse.ok) throw new Error(await journalResponse.text());
       if (!accountResponse.ok) throw new Error(await accountResponse.text());
       if (!partnerResponse.ok) throw new Error(await partnerResponse.text());
       if (!analyticResponse.ok) throw new Error(await analyticResponse.text());
+      if (!taxResponse.ok) throw new Error(await taxResponse.text());
 
       const journalRows = (await journalResponse.json()) as ERPJournal[];
       const accountRows = (await accountResponse.json()) as ERPAccount[];
       const partnerRows = (await partnerResponse.json()) as ERPPartner[];
       const analyticRows = (await analyticResponse.json()) as ERPAnalyticAccount[];
+      const taxRows = (await taxResponse.json()) as ERPTax[];
       const banks = journalRows.filter((journal) => journal.type === "bank");
 
       setJournals(journalRows);
       setAccounts(accountRows);
       setPartners(partnerRows);
       setAnalyticAccounts(analyticRows);
+      setTaxes(taxRows);
       const firstJournal = banks[0]?.id || null;
       setSelectedJournalId(firstJournal);
       await loadRules(firstJournal);
@@ -195,6 +202,7 @@ export function BankRulesManager() {
       accountId: Number(version.target?.account_id || 0) || null,
       partnerId: Number(version.target?.partner_id || 0) || null,
       analyticAccountId: Number(version.target?.analytic_account_id || 0) || null,
+      taxId: Number(version.target?.tax_id || 0) || null,
       rationale: version.rationale || "",
       changeNote: version.change_note || "",
     });
@@ -237,9 +245,28 @@ export function BankRulesManager() {
         });
       }
       if (!response.ok) throw new Error(await response.text());
+
+      const savedRule = (await response.json()) as BankRule;
+      const savedRuleId = Number(savedRule.id || editorSession.ruleId || 0);
+      const savedVersionId = Number(savedRule.draft_version?.id || editorSession.versionId || 0);
+      if (!savedRuleId || !savedVersionId) {
+        throw new Error(ar ? "تم حفظ القاعدة لكن تعذر تحديد نسخة المسودة لحفظ الضريبة." : "Rule saved, but the draft version could not be resolved for tax configuration.");
+      }
+
+      const taxResponse = await bankRulesGateway.configureDraftTax(
+        savedRuleId,
+        savedVersionId,
+        editorValue.taxId || null,
+      );
+      if (!taxResponse.ok) throw new Error(await taxResponse.text());
+
       setEditorSession(null);
       setEditorValue(emptyEditor(selectedJournalId));
-      setNotice(ar ? "تم حفظ المسودة. لن تُستخدم في القيود قبل الاعتماد." : "Draft saved. It will not be used in entries until approved.");
+      setNotice(
+        ar
+          ? "تم حفظ المسودة والضريبة. لن تُستخدم في القيود قبل الاعتماد."
+          : "Draft and tax saved. They will not be used in entries until approval.",
+      );
       await loadRules(selectedJournalId || undefined);
     } catch (err: any) {
       setError(String(err?.message || err));
@@ -322,8 +349,17 @@ export function BankRulesManager() {
         change_note: ar ? "مسودة تعديل جديدة" : "New revision draft",
       });
       if (!response.ok) throw new Error(await response.text());
+
+      const savedRule = (await response.json()) as BankRule;
+      const draftVersionId = Number(savedRule.draft_version?.id || 0);
+      const approvedTaxId = Number(approved.target?.tax_id || 0) || null;
+      if (approvedTaxId && draftVersionId) {
+        const taxResponse = await bankRulesGateway.configureDraftTax(rule.id, draftVersionId, approvedTaxId);
+        if (!taxResponse.ok) throw new Error(await taxResponse.text());
+      }
+
       await loadRules(selectedJournalId || undefined);
-      setNotice(ar ? "تم إنشاء نسخة مسودة جديدة. النسخة المعتمدة الحالية ما زالت فعالة حتى اعتماد المسودة." : "New draft version created. The currently approved version remains active until the draft is approved.");
+      setNotice(ar ? "تم إنشاء نسخة مسودة جديدة مع الاحتفاظ بإعداد الضريبة. النسخة المعتمدة الحالية ما زالت فعالة حتى اعتماد المسودة." : "New draft version created with its tax configuration preserved. The currently approved version remains active until the draft is approved.");
     } catch (err: any) {
       setError(String(err?.message || err));
     } finally {
@@ -379,8 +415,8 @@ export function BankRulesManager() {
             <h1 className="mt-1 text-2xl font-black text-white">{ar ? "قواعد البنك" : "Bank Rules"}</h1>
             <p className="mt-2 text-sm leading-6 text-white/60">
               {ar
-                ? "BOB هو مصدر الحقيقة لقواعد التصنيف. Odoo يُستخدم فقط للتحقق من اليومية والحسابات والشركاء والحسابات التحليلية الفعلية. المسودة لا تؤثر على القيود حتى تُختبر وتُعتمد."
-                : "BOB is the source of truth for classification rules. Odoo is used only to verify live journals, accounts, partners, and analytic accounts. Drafts never affect entries until reviewed and approved."}
+                ? "BOB هو مصدر الحقيقة لقواعد التصنيف. Odoo يُستخدم للتحقق من اليومية والحسابات والشركاء والحسابات التحليلية والضرائب الفعلية. المسودة لا تؤثر على القيود حتى تُختبر وتُعتمد."
+                : "BOB is the source of truth for classification rules. Odoo verifies live journals, accounts, partners, analytic accounts, and taxes. Drafts never affect entries until reviewed and approved."}
             </p>
           </div>
           <div className="rounded-xl border border-red-500/20 bg-red-500/[0.05] px-4 py-3 text-[10px] text-red-200">
@@ -450,6 +486,7 @@ export function BankRulesManager() {
             accounts={accounts}
             partners={partners}
             analyticAccounts={analyticAccounts}
+            taxes={taxes}
             language={language}
             lockName={editorSession.mode === "edit_draft"}
             lockJournal={editorSession.mode === "edit_draft"}
@@ -506,6 +543,12 @@ export function BankRulesManager() {
                     <div>{ar ? "الحساب:" : "Account:"} {displayVersion?.target?.account_code || ""} {displayVersion?.target?.account_name || displayVersion?.target?.account_id || "—"}</div>
                     {displayVersion?.target?.partner_id && <div>{ar ? "الشريك:" : "Partner:"} {displayVersion.target.partner_name || displayVersion.target.partner_id}</div>}
                     {displayVersion?.target?.analytic_account_id && <div>{ar ? "التحليلي:" : "Analytic:"} {displayVersion.target.analytic_account_name || displayVersion.target.analytic_account_id}</div>}
+                    {displayVersion?.target?.tax_id && (
+                      <div className="text-cyan-200">
+                        {ar ? "الضريبة:" : "Tax:"} {displayVersion.target.tax_name || `#${displayVersion.target.tax_id}`}
+                        {displayVersion.target.tax_rate != null ? ` — ${displayVersion.target.tax_rate}%` : ""}
+                      </div>
+                    )}
                   </div>
                   {displayVersion?.fingerprint && (
                     <div className="mt-1 truncate font-mono text-[8px] text-white/25">SHA-256 rule fingerprint: {displayVersion.fingerprint}</div>

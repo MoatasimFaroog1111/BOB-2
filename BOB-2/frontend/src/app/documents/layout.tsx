@@ -5,8 +5,8 @@ import { DailyBankReviewActionBar } from "@/features/documents/components/DailyB
 export default function DocumentsLayout({ children }: { children: ReactNode }) {
   return (
     <>
-      {children}
       <DailyBankReviewActionBar />
+      {children}
     </>
   );
 }

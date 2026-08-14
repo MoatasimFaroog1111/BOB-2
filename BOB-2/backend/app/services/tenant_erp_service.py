@@ -99,12 +99,48 @@ class OdooReferenceValidator:
     def analytic_account(self, erp: Any, analytic_account_id: int) -> dict[str, Any]:
         return self._read_one(erp, "account.analytic.account", analytic_account_id, ["id", "name"])
 
-    def tax(self, erp: Any, tax_id: int, company_id: int | None = None) -> dict[str, Any]:
-        """Resolve one simple percentage tax and its Odoo posting account.
+    def _simple_repartition_account_id(
+        self,
+        erp: Any,
+        repartition_ids: list[int],
+        *,
+        label: str,
+    ) -> int:
+        if not repartition_ids:
+            raise HTTPException(status_code=422, detail=f"Referenced Odoo tax has no {label} repartition lines.")
+        rows = erp.execute_kw(
+            "account.tax.repartition.line",
+            "search_read",
+            [[["id", "in", repartition_ids]]],
+            {"fields": ["id", "repartition_type", "factor_percent", "account_id"], "limit": len(repartition_ids)},
+        )
+        tax_rows: list[tuple[int, float]] = []
+        for row in rows or []:
+            if str(row.get("repartition_type") or "") != "tax":
+                continue
+            account_id = self._m2o_id(row.get("account_id"))
+            try:
+                factor = float(row.get("factor_percent") or 0)
+            except (TypeError, ValueError):
+                factor = 0.0
+            if account_id and factor > 0:
+                tax_rows.append((account_id, factor))
+        account_ids = {account_id for account_id, _factor in tax_rows}
+        total_factor = sum(factor for _account_id, factor in tax_rows)
+        if len(account_ids) != 1 or abs(total_factor - 100.0) > 0.01:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Referenced Odoo tax uses a complex {label} repartition; Bank Rules require one 100% tax posting account.",
+            )
+        return next(iter(account_ids))
 
-        Bank Rules intentionally fail closed for grouped/fixed/custom taxes and for
-        complex tax repartitions. Those cases require the normal accountant review
-        workflow instead of silently producing an incorrect bank journal split.
+    def tax(self, erp: Any, tax_id: int, company_id: int | None = None) -> dict[str, Any]:
+        """Resolve one simple percentage tax and a direction-safe Odoo posting account.
+
+        Bank Rules fail closed for grouped/fixed/custom taxes, cross-company references,
+        complex repartitions, and taxes whose invoice/refund tax accounts differ. This
+        avoids silently using an invoice VAT account for refunds when Odoo is configured
+        with a different refund account.
         """
         tax = self._read_one(
             erp,
@@ -113,6 +149,7 @@ class OdooReferenceValidator:
             [
                 "id", "name", "active", "amount", "amount_type", "type_tax_use",
                 "price_include", "company_id", "invoice_repartition_line_ids",
+                "refund_repartition_line_ids",
             ],
         )
         if not bool(tax.get("active", True)):
@@ -132,38 +169,28 @@ class OdooReferenceValidator:
         if rate <= 0 or rate >= 100:
             raise HTTPException(status_code=422, detail="Referenced Odoo tax percentage must be greater than 0 and less than 100.")
 
-        repartition_ids = [
+        invoice_ids = [
             int(value)
             for value in (tax.get("invoice_repartition_line_ids") or [])
             if isinstance(value, int) and value > 0
         ]
-        if not repartition_ids:
-            raise HTTPException(status_code=422, detail="Referenced Odoo tax has no invoice repartition lines.")
-        repartition_rows = erp.execute_kw(
-            "account.tax.repartition.line",
-            "search_read",
-            [[["id", "in", repartition_ids]]],
-            {"fields": ["id", "repartition_type", "factor_percent", "account_id"], "limit": len(repartition_ids)},
-        )
-        tax_rows = []
-        for row in repartition_rows or []:
-            if str(row.get("repartition_type") or "") != "tax":
-                continue
-            account_id = self._m2o_id(row.get("account_id"))
-            try:
-                factor = float(row.get("factor_percent") or 0)
-            except (TypeError, ValueError):
-                factor = 0.0
-            if account_id and factor > 0:
-                tax_rows.append((account_id, factor))
-        account_ids = {account_id for account_id, _factor in tax_rows}
-        total_factor = sum(factor for _account_id, factor in tax_rows)
-        if len(account_ids) != 1 or abs(total_factor - 100.0) > 0.01:
+        refund_ids = [
+            int(value)
+            for value in (tax.get("refund_repartition_line_ids") or [])
+            if isinstance(value, int) and value > 0
+        ]
+        invoice_account_id = self._simple_repartition_account_id(erp, invoice_ids, label="invoice")
+        refund_account_id = self._simple_repartition_account_id(erp, refund_ids, label="refund")
+        if invoice_account_id != refund_account_id:
             raise HTTPException(
                 status_code=422,
-                detail="Referenced Odoo tax uses a complex repartition; Bank Rules require one 100% tax posting account.",
+                detail=(
+                    "Referenced Odoo tax uses different invoice and refund posting accounts. "
+                    "BOB Bank Rules reject this tax until direction-specific refund posting is configured explicitly."
+                ),
             )
-        tax_account = self.account(erp, next(iter(account_ids)))
+
+        tax_account = self.account(erp, invoice_account_id)
         return {
             "id": int(tax["id"]),
             "name": str(tax.get("name") or ""),
@@ -205,6 +232,7 @@ class OdooReferenceValidator:
             "tax_account_code": "",
             "tax_account_name": "",
             "tax_amount_mode": None,
+            "tax_company_id": None,
         }
         partner_id = int(target.get("partner_id") or 0)
         if partner_id > 0:
@@ -218,7 +246,16 @@ class OdooReferenceValidator:
             snapshot["analytic_account_name"] = str(analytic.get("name") or "")
         tax_id = int(target.get("tax_id") or 0)
         if tax_id > 0:
-            tax = self.tax(erp, tax_id, company_id=company_id)
+            stored_tax_company_id = self._m2o_id(target.get("tax_company_id"))
+            if company_id and stored_tax_company_id and int(company_id) != stored_tax_company_id:
+                raise HTTPException(status_code=422, detail="Stored Bank Rule tax company does not match the selected company.")
+            effective_tax_company_id = int(company_id or stored_tax_company_id or 0) or None
+            if not effective_tax_company_id:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Bank Rule tax company is unresolved; reconfigure the tax from the rule's bank journal company.",
+                )
+            tax = self.tax(erp, tax_id, company_id=effective_tax_company_id)
             snapshot.update({
                 "tax_id": int(tax["id"]),
                 "tax_name": str(tax.get("name") or ""),
@@ -230,6 +267,7 @@ class OdooReferenceValidator:
                 "tax_account_code": str(tax.get("tax_account_code") or ""),
                 "tax_account_name": str(tax.get("tax_account_name") or ""),
                 "tax_amount_mode": "included_in_bank_amount",
+                "tax_company_id": effective_tax_company_id,
             })
         return snapshot
 

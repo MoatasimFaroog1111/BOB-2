@@ -35,13 +35,23 @@ def configure_bank_rule_draft_tax(
     )
     if not rule:
         raise HTTPException(status_code=404, detail="Bank Rule not found.")
+
+    effective_company_id: int | None = None
     if payload.tax_id:
         _connection, erp = tenant_erp_resolver.resolve(db, organization_id)
+        journal = odoo_reference_validator.bank_journal(erp, rule.journal_id, rule.company_id)
+        effective_company_id = int(journal.get("company_id") or rule.company_id or 0) or None
+        if not effective_company_id:
+            raise HTTPException(
+                status_code=422,
+                detail="Selected Odoo bank journal does not expose a company for tax validation.",
+            )
         odoo_reference_validator.tax(
             erp,
             int(payload.tax_id),
-            company_id=rule.company_id,
+            company_id=effective_company_id,
         )
+
     bank_rule_draft_editor.set_tax(
         db,
         organization_id=organization_id,
@@ -49,6 +59,7 @@ def configure_bank_rule_draft_tax(
         rule_id=rule_id,
         version_id=payload.version_id,
         tax_id=payload.tax_id,
+        tax_company_id=effective_company_id,
     )
     rows = bank_rules_service.list_rules(db, organization_id=organization_id, include_disabled=True)
     return next(row for row in rows if int(row["id"]) == int(rule_id))

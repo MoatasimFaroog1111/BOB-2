@@ -24,6 +24,14 @@ from app.services.daily_bank_review_service import DailyBankReviewService
 class BOBTaxAwareDailyBankEntryBuilder(DailyBankEntryBuilder):
     """Decorate strict BOB rule resolutions with explicit tax journal lines."""
 
+    @staticmethod
+    def _mark_tax_failure(lines: list[dict[str, Any]], *, tax_id: int, error: str) -> None:
+        for line in lines:
+            line["needs_review"] = True
+            line["tax_resolution_failed"] = True
+            line["tax_id"] = int(tax_id)
+            line["tax_error"] = error
+
     def _build_transaction_lines(
         self,
         transaction: dict[str, Any],
@@ -58,18 +66,18 @@ class BOBTaxAwareDailyBankEntryBuilder(DailyBankEntryBuilder):
             or str(target.get("tax_amount_type") or "") != "percent"
             or str(target.get("tax_amount_mode") or "") != "included_in_bank_amount"
         ):
-            for line in lines:
-                line["needs_review"] = True
-                line["tax_error"] = "Approved Bank Rule tax metadata is incomplete or no longer resolvable in Odoo."
+            self._mark_tax_failure(
+                lines,
+                tax_id=tax_id,
+                error="Approved Bank Rule tax metadata is incomplete or no longer resolvable in Odoo.",
+            )
             return lines, True, True
 
         amount = parse_money(transaction["amount"], field_name="bank_transaction.amount")
         try:
             split = split_tax_inclusive(amount, target.get("tax_rate"))
         except BankRuleTaxError as exc:
-            for line in lines:
-                line["needs_review"] = True
-                line["tax_error"] = str(exc)
+            self._mark_tax_failure(lines, tax_id=tax_id, error=str(exc))
             return lines, True, True
 
         bank_line = dict(lines[0])

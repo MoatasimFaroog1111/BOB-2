@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.erp.accounting_draft_adapter import AccountingDraftWriteError
+from app.erp.accounting_draft_preflight import AccountingDraftPreflightError
 from app.ml.accounting_intelligence.draft_proposal import AccountingDraftProposalError
 from app.security.dependencies import require_permission
 from app.services.accounting_intelligence import AccountingIntelligenceService
@@ -58,7 +59,7 @@ class AccountingInterpretRequest(BaseModel):
 
 
 class AccountingDraftCreateRequest(BaseModel):
-    """Explicit mutation request; predictions are recomputed server-side."""
+    """Explicit draft/preflight request; predictions are recomputed server-side."""
 
     text: str = Field(..., min_length=4, max_length=100000)
     channel: Literal["document", "ocr"]
@@ -113,12 +114,7 @@ def interpret_accounting_input(
     db: Session = Depends(get_db),
     principal: dict = Depends(require_permission("create_entries")),
 ):
-    """Read-only channel-neutral accounting interpretation.
-
-    Document/OCR inputs use the cryptographically verified persisted V2 bundle in
-    Load -> Predict mode. Other channels retain the historical semantic engine.
-    This endpoint never posts or mutates the connected ERP.
-    """
+    """Read-only channel-neutral accounting interpretation."""
     organization_id = organization_id_from_principal(principal)
     try:
         result = AccountingPersistedInferenceService(db).predict(
@@ -146,13 +142,85 @@ def interpret_accounting_input(
         ) from exc
 
 
+def _draft_service_kwargs(payload: AccountingDraftCreateRequest) -> dict:
+    return {
+        "text": payload.text,
+        "channel": payload.channel,
+        "amount": payload.amount,
+        "company_id": payload.company_id,
+        "source_reference": payload.source_reference,
+        "entry_date": payload.entry_date,
+        "description": payload.description,
+        "documents": [item.model_dump(exclude_none=True) for item in payload.documents],
+        "top_k": payload.top_k,
+    }
+
+
+def _raise_draft_policy_error(exc: Exception) -> None:
+    if isinstance(exc, AccountingDraftProposalError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    if isinstance(exc, AccountingDraftPreflightError):
+        conflict_codes = {
+            "DUPLICATE_IDEMPOTENCY_REFERENCE",
+            "IDEMPOTENCY_REFERENCE_ALREADY_POSTED",
+        }
+        raise HTTPException(
+            status_code=(status.HTTP_409_CONFLICT if exc.code in conflict_codes else status.HTTP_422_UNPROCESSABLE_ENTITY),
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    if isinstance(exc, AccountingDraftWriteError):
+        conflict_codes = {
+            "ODOO_DUPLICATE_IDEMPOTENCY_REF",
+            "ODOO_IDEMPOTENCY_REF_NOT_DRAFT",
+        }
+        raise HTTPException(
+            status_code=(status.HTTP_409_CONFLICT if exc.code in conflict_codes else status.HTTP_400_BAD_REQUEST),
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    if isinstance(exc, ValueError):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "DRAFT_POLICY_REJECTED", "message": str(exc)},
+        ) from exc
+    raise exc
+
+
+@router.post("/draft/preflight")
+def preflight_accounting_ml_odoo_draft(
+    payload: AccountingDraftCreateRequest,
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_permission("create_entries")),
+):
+    """Run the exact ML/gate/proposal path and live Odoo checks without mutation."""
+    organization_id = organization_id_from_principal(principal)
+    try:
+        return AccountingMLDraftService(db).preflight(
+            organization_id=organization_id,
+            **_draft_service_kwargs(payload),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        try:
+            _raise_draft_policy_error(exc)
+        except HTTPException:
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Accounting ML draft preflight failed ({type(exc).__name__}).",
+        ) from exc
+
+
 @router.post("/draft/create")
 def create_accounting_ml_odoo_draft(
     payload: AccountingDraftCreateRequest,
     db: Session = Depends(get_db),
     principal: dict = Depends(require_permission("create_entries")),
 ):
-    """Create one idempotent Odoo *draft* after the locked ML gate passes.
+    """Create one idempotent Odoo *draft* after locked ML and live preflight pass.
 
     The server recomputes inference and the safety gate. The client cannot submit
     account IDs or a prebuilt prediction. This endpoint has no posting operation.
@@ -162,38 +230,15 @@ def create_accounting_ml_odoo_draft(
     try:
         return AccountingMLDraftService(db).create_draft(
             organization_id=organization_id,
-            text=payload.text,
-            channel=payload.channel,
-            amount=payload.amount,
-            company_id=payload.company_id,
-            source_reference=payload.source_reference,
-            entry_date=payload.entry_date,
-            description=payload.description,
-            documents=[item.model_dump(exclude_none=True) for item in payload.documents],
-            top_k=payload.top_k,
+            **_draft_service_kwargs(payload),
         )
-    except AccountingDraftProposalError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": exc.code, "message": str(exc)},
-        ) from exc
-    except AccountingDraftWriteError as exc:
-        conflict_codes = {
-            "ODOO_DUPLICATE_IDEMPOTENCY_REF",
-            "ODOO_IDEMPOTENCY_REF_NOT_DRAFT",
-        }
-        raise HTTPException(
-            status_code=(status.HTTP_409_CONFLICT if exc.code in conflict_codes else status.HTTP_400_BAD_REQUEST),
-            detail={"code": exc.code, "message": str(exc)},
-        ) from exc
     except HTTPException:
         raise
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "DRAFT_POLICY_REJECTED", "message": str(exc)},
-        ) from exc
     except Exception as exc:
+        try:
+            _raise_draft_policy_error(exc)
+        except HTTPException:
+            raise
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Accounting ML draft creation failed ({type(exc).__name__}).",

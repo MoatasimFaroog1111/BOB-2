@@ -12,11 +12,17 @@ class AccountingPredictionGate:
     JOURNAL_MIN = 0.75
     DEBIT_MIN = 0.65
     CREDIT_MIN = 0.70
+    AUTOMATED_MOVE_TYPES = frozenset({"entry"})
+    AUTOMATED_JOURNAL_TYPES = frozenset({"bank", "cash", "general"})
 
     @staticmethod
     def _top(prediction: dict[str, Any], key: str) -> dict[str, Any] | None:
         values = prediction.get(key) or []
         return values[0] if values else None
+
+    @staticmethod
+    def _selected(prediction: dict[str, Any], key: str) -> list[dict[str, Any]]:
+        return [row for row in prediction.get(key, []) if row.get("selected")]
 
     def evaluate(self, prediction: dict[str, Any], *, amount: float | None) -> dict[str, Any]:
         findings: list[dict[str, Any]] = []
@@ -52,8 +58,28 @@ class AccountingPredictionGate:
                     "label": candidate.get("label"),
                 })
 
-        debit_selected = [x for x in prediction.get("debit_accounts", []) if x.get("selected")]
-        credit_selected = [x for x in prediction.get("credit_accounts", []) if x.get("selected")]
+        move = required.get("move_type") or {}
+        move_label = str(move.get("label") or "")
+        if move_label and move_label not in self.AUTOMATED_MOVE_TYPES:
+            findings.append({
+                "code": "MOVE_TYPE_REVIEW_ONLY",
+                "severity": "high",
+                "move_type": move_label,
+                "automated_move_types": sorted(self.AUTOMATED_MOVE_TYPES),
+            })
+
+        journal = required.get("journal") or {}
+        journal_type = str(journal.get("type") or "").lower()
+        if journal and journal_type not in self.AUTOMATED_JOURNAL_TYPES:
+            findings.append({
+                "code": "JOURNAL_TYPE_REVIEW_ONLY",
+                "severity": "high",
+                "journal_type": journal_type,
+                "automated_journal_types": sorted(self.AUTOMATED_JOURNAL_TYPES),
+            })
+
+        debit_selected = self._selected(prediction, "debit_accounts")
+        credit_selected = self._selected(prediction, "credit_accounts")
         if len(debit_selected) != 1 or len(credit_selected) != 1:
             findings.append({
                 "code": "NON_SINGLE_DOUBLE_ENTRY_CLASSIFICATION",
@@ -66,6 +92,14 @@ class AccountingPredictionGate:
                 "code": "CONTRADICTORY_ACCOUNT_SIDES",
                 "severity": "high",
                 "account_id": debit_selected[0].get("id"),
+            })
+
+        selected_taxes = self._selected(prediction, "taxes")
+        if selected_taxes:
+            findings.append({
+                "code": "TAX_AUTOMATION_REVIEW_ONLY",
+                "severity": "high",
+                "selected_tax_labels": [str(row.get("label") or "") for row in selected_taxes],
             })
 
         if amount is None:
@@ -86,5 +120,9 @@ class AccountingPredictionGate:
                 "credit_min": self.CREDIT_MIN,
                 "single_debit_credit_required": True,
                 "explicit_amount_required": True,
+                "automated_move_types": sorted(self.AUTOMATED_MOVE_TYPES),
+                "automated_journal_types": sorted(self.AUTOMATED_JOURNAL_TYPES),
+                "tax_automation_enabled": False,
+                "auto_post_allowed": False,
             },
         }

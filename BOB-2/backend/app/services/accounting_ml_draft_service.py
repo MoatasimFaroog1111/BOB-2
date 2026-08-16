@@ -1,8 +1,8 @@
 """Application service for persisted-ML -> safe Odoo draft creation.
 
 The service always re-runs inference server-side, applies the deterministic gate,
-builds a minimal proposal, and delegates mutation to the narrow Odoo draft adapter.
-It never posts entries and never trusts client-supplied model predictions.
+builds a minimal proposal, and delegates ERP work to narrow adapters.  Preflight is
+read-only; create_draft is the only mutation path and never posts entries.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app.erp.accounting_draft_adapter import OdooAccountingDraftAdapter
+from app.erp.accounting_draft_preflight import OdooAccountingDraftPreflight
 from app.ml.accounting_intelligence.draft_proposal import AccountingDraftProposalBuilder
 from app.models.ai_accounting import AIDecisionAuditLog
 from app.services.accounting_persisted_inference import AccountingPersistedInferenceService
@@ -64,7 +65,7 @@ class AccountingMLDraftService:
             self.db.rollback()
             return False
 
-    def create_draft(
+    def _prepare(
         self,
         *,
         organization_id: int,
@@ -74,10 +75,10 @@ class AccountingMLDraftService:
         company_id: int,
         source_reference: str,
         entry_date: str,
-        description: str | None = None,
-        documents: list[dict[str, Any]] | None = None,
-        top_k: int = 10,
-    ) -> dict[str, Any]:
+        description: str | None,
+        documents: list[dict[str, Any]] | None,
+        top_k: int,
+    ):
         inference = self.inference_service.predict(
             organization_id=organization_id,
             text=text,
@@ -109,7 +110,81 @@ class AccountingMLDraftService:
         provider_name = str(getattr(connection, "provider", "") or "").strip().lower()
         if provider_name != "odoo":
             raise ValueError("Persisted accounting ML draft creation currently supports Odoo only.")
+        return persisted, proposal, erp
 
+    def preflight(
+        self,
+        *,
+        organization_id: int,
+        text: str,
+        channel: str,
+        amount: Any,
+        company_id: int,
+        source_reference: str,
+        entry_date: str,
+        description: str | None = None,
+        documents: list[dict[str, Any]] | None = None,
+        top_k: int = 10,
+    ) -> dict[str, Any]:
+        persisted, proposal, erp = self._prepare(
+            organization_id=organization_id,
+            text=text,
+            channel=channel,
+            amount=amount,
+            company_id=company_id,
+            source_reference=source_reference,
+            entry_date=entry_date,
+            description=description,
+            documents=documents,
+            top_k=top_k,
+        )
+        result = OdooAccountingDraftPreflight(erp).inspect(proposal)
+        return {
+            "status": "success",
+            "primary_engine": "verified_persisted_accounting_ml_v2",
+            "proposal": proposal.to_dict(),
+            "live_odoo_preflight": result,
+            "recommendations_not_auto_applied": proposal.recommendations,
+            "safety": {
+                "read_only": True,
+                "erp_mutation_performed": False,
+                "auto_posted_to_erp": False,
+                "approval_required": True,
+                "idempotency_ref": proposal.idempotency_ref,
+                "confidence_proxy": float(persisted.get("confidence_proxy") or 0.0),
+            },
+        }
+
+    def create_draft(
+        self,
+        *,
+        organization_id: int,
+        text: str,
+        channel: str,
+        amount: Any,
+        company_id: int,
+        source_reference: str,
+        entry_date: str,
+        description: str | None = None,
+        documents: list[dict[str, Any]] | None = None,
+        top_k: int = 10,
+    ) -> dict[str, Any]:
+        persisted, proposal, erp = self._prepare(
+            organization_id=organization_id,
+            text=text,
+            channel=channel,
+            amount=amount,
+            company_id=company_id,
+            source_reference=source_reference,
+            entry_date=entry_date,
+            description=description,
+            documents=documents,
+            top_k=top_k,
+        )
+
+        # Re-run the exact read-only live preflight immediately before mutation so
+        # stale/deprecated/cross-company references fail closed.
+        preflight = OdooAccountingDraftPreflight(erp).inspect(proposal)
         adapter = OdooAccountingDraftAdapter(erp)
         write_result = adapter.create(proposal)
         proposal_payload = proposal.to_dict()
@@ -125,6 +200,7 @@ class AccountingMLDraftService:
             "status": "success",
             "primary_engine": "verified_persisted_accounting_ml_v2",
             "proposal": proposal_payload,
+            "live_odoo_preflight": preflight,
             "odoo_draft": write_result,
             "audit_logged": audit_logged,
             "recommendations_not_auto_applied": proposal.recommendations,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,8 +8,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
+from app.erp.accounting_draft_adapter import AccountingDraftWriteError
+from app.ml.accounting_intelligence.draft_proposal import AccountingDraftProposalError
 from app.security.dependencies import require_permission
 from app.services.accounting_intelligence import AccountingIntelligenceService
+from app.services.accounting_ml_draft_service import AccountingMLDraftService
 from app.services.accounting_persisted_inference import AccountingPersistedInferenceService
 from app.services.tenant_erp import organization_id_from_principal
 
@@ -50,6 +54,20 @@ class AccountingInterpretRequest(BaseModel):
     currency_hint: str | None = Field(default=None, max_length=20)
     company_id: int | None = Field(default=None, ge=1)
     top_k: int = Field(default=12, ge=1, le=50)
+    documents: list[AccountingDocumentFeatureHint] = Field(default_factory=list, max_length=50)
+
+
+class AccountingDraftCreateRequest(BaseModel):
+    """Explicit mutation request; predictions are recomputed server-side."""
+
+    text: str = Field(..., min_length=4, max_length=100000)
+    channel: Literal["document", "ocr"]
+    amount: Decimal = Field(..., gt=0, max_digits=18, decimal_places=2)
+    company_id: int = Field(..., ge=1)
+    source_reference: str = Field(..., min_length=3, max_length=240)
+    entry_date: str = Field(..., pattern=r"^\d{4}-\d{2}-\d{2}$")
+    description: str | None = Field(default=None, max_length=500)
+    top_k: int = Field(default=10, ge=1, le=10)
     documents: list[AccountingDocumentFeatureHint] = Field(default_factory=list, max_length=50)
 
 
@@ -95,7 +113,7 @@ def interpret_accounting_input(
     db: Session = Depends(get_db),
     principal: dict = Depends(require_permission("create_entries")),
 ):
-    """Channel-neutral accounting interpretation for documents, chat, or voice text.
+    """Read-only channel-neutral accounting interpretation.
 
     Document/OCR inputs use the cryptographically verified persisted V2 bundle in
     Load -> Predict mode. Other channels retain the historical semantic engine.
@@ -125,4 +143,58 @@ def interpret_accounting_input(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Accounting intelligence interpretation failed ({type(exc).__name__}).",
+        ) from exc
+
+
+@router.post("/draft/create")
+def create_accounting_ml_odoo_draft(
+    payload: AccountingDraftCreateRequest,
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_permission("create_entries")),
+):
+    """Create one idempotent Odoo *draft* after the locked ML gate passes.
+
+    The server recomputes inference and the safety gate. The client cannot submit
+    account IDs or a prebuilt prediction. This endpoint has no posting operation.
+    Taxes, analytics, and partners remain recommendations only in this first phase.
+    """
+    organization_id = organization_id_from_principal(principal)
+    try:
+        return AccountingMLDraftService(db).create_draft(
+            organization_id=organization_id,
+            text=payload.text,
+            channel=payload.channel,
+            amount=payload.amount,
+            company_id=payload.company_id,
+            source_reference=payload.source_reference,
+            entry_date=payload.entry_date,
+            description=payload.description,
+            documents=[item.model_dump(exclude_none=True) for item in payload.documents],
+            top_k=payload.top_k,
+        )
+    except AccountingDraftProposalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except AccountingDraftWriteError as exc:
+        conflict_codes = {
+            "ODOO_DUPLICATE_IDEMPOTENCY_REF",
+            "ODOO_IDEMPOTENCY_REF_NOT_DRAFT",
+        }
+        raise HTTPException(
+            status_code=(status.HTTP_409_CONFLICT if exc.code in conflict_codes else status.HTTP_400_BAD_REQUEST),
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "DRAFT_POLICY_REJECTED", "message": str(exc)},
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Accounting ML draft creation failed ({type(exc).__name__}).",
         ) from exc

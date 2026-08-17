@@ -1,8 +1,8 @@
 """Narrow Odoo adapter for creating unposted journal-entry drafts only.
 
 The adapter has no posting method.  It enforces idempotency by a deterministic ref,
-creates only account.move records with move_type='entry', and verifies that the
-result remains in Odoo's draft state.
+creates only account.move records with move_type='entry', writes only validated
+proposal fields, and verifies that the result remains in Odoo's draft state.
 """
 
 from __future__ import annotations
@@ -58,19 +58,31 @@ class OdooAccountingDraftAdapter:
             allow_negative=False,
             reject_excess_scale=True,
         )
+
+        def build_line(line, *, debit: Decimal, credit: Decimal) -> dict[str, Any]:
+            vals: dict[str, Any] = {
+                "account_id": line.account_id,
+                "name": line.label,
+                "debit": debit,
+                "credit": credit,
+            }
+            if line.partner_id:
+                vals["partner_id"] = int(line.partner_id)
+            if line.analytic_distribution:
+                vals["analytic_distribution"] = dict(line.analytic_distribution)
+            return vals
+
         source = [
-            {
-                "account_id": proposal.debit_line.account_id,
-                "name": proposal.debit_line.label,
-                "debit": amount,
-                "credit": Decimal("0.00"),
-            },
-            {
-                "account_id": proposal.credit_line.account_id,
-                "name": proposal.credit_line.label,
-                "debit": Decimal("0.00"),
-                "credit": amount,
-            },
+            build_line(
+                proposal.debit_line,
+                debit=amount,
+                credit=Decimal("0.00"),
+            ),
+            build_line(
+                proposal.credit_line,
+                debit=Decimal("0.00"),
+                credit=amount,
+            ),
         ]
         validate_balanced_lines(source)
         return [
@@ -113,6 +125,74 @@ class OdooAccountingDraftAdapter:
             )
         return dict(rows[0])
 
+    @staticmethod
+    def _m2o_id(value: Any) -> int | None:
+        if isinstance(value, (list, tuple)) and value:
+            try:
+                return int(value[0]) if value[0] else None
+            except (TypeError, ValueError):
+                return None
+        try:
+            return int(value) if value else None
+        except (TypeError, ValueError):
+            return None
+
+    def _verify_lines(self, move_id: int, proposal: AccountingDraftProposal) -> dict[str, Any]:
+        try:
+            rows = self.erp.execute_kw(
+                "account.move.line",
+                "search_read",
+                [[["move_id", "=", int(move_id)]]],
+                {
+                    "fields": [
+                        "id",
+                        "account_id",
+                        "partner_id",
+                        "debit",
+                        "credit",
+                        "analytic_distribution",
+                    ],
+                    "order": "id asc",
+                },
+            ) or []
+        except Exception as exc:
+            raise AccountingDraftWriteError(
+                "ODOO_DRAFT_LINE_VERIFY_FAILED",
+                f"Odoo draft lines could not be verified: {type(exc).__name__}.",
+            ) from exc
+
+        by_account = {
+            self._m2o_id(row.get("account_id")): row
+            for row in rows
+            if self._m2o_id(row.get("account_id"))
+        }
+        checks = []
+        for expected in (proposal.debit_line, proposal.credit_line):
+            actual = by_account.get(int(expected.account_id))
+            if not actual:
+                raise AccountingDraftWriteError(
+                    "ODOO_DRAFT_ACCOUNT_LINE_MISSING",
+                    f"Created Odoo draft is missing account {expected.account_code!r}.",
+                )
+            actual_partner = self._m2o_id(actual.get("partner_id"))
+            if actual_partner != expected.partner_id:
+                raise AccountingDraftWriteError(
+                    "ODOO_DRAFT_PARTNER_MISMATCH",
+                    f"Created Odoo draft partner does not match proposal on account {expected.account_code!r}.",
+                )
+            actual_analytic = actual.get("analytic_distribution") or {}
+            if dict(actual_analytic) != dict(expected.analytic_distribution or {}):
+                raise AccountingDraftWriteError(
+                    "ODOO_DRAFT_ANALYTIC_MISMATCH",
+                    f"Created Odoo draft analytic distribution does not match proposal on account {expected.account_code!r}.",
+                )
+            checks.append({
+                "account_id": int(expected.account_id),
+                "partner_id": actual_partner,
+                "analytic_distribution": dict(actual_analytic),
+            })
+        return {"verified": True, "lines": checks}
+
     def create(self, proposal: AccountingDraftProposal) -> dict[str, Any]:
         existing = self._existing(proposal)
         if len(existing) > 1:
@@ -127,6 +207,7 @@ class OdooAccountingDraftAdapter:
                     "ODOO_IDEMPOTENCY_REF_NOT_DRAFT",
                     "The deterministic ML draft reference already belongs to a non-draft Odoo move.",
                 )
+            enrichment_verification = self._verify_lines(int(row["id"]), proposal)
             return {
                 "created": False,
                 "idempotent_reuse": True,
@@ -134,6 +215,7 @@ class OdooAccountingDraftAdapter:
                 "entry_number": row.get("name") or "",
                 "state": "draft",
                 "ref": proposal.idempotency_ref,
+                "enrichment_verification": enrichment_verification,
             }
 
         line_vals = self._line_vals(proposal)
@@ -169,6 +251,7 @@ class OdooAccountingDraftAdapter:
                 "Safety verification failed: Odoo draft reference does not match the idempotency reference.",
             )
 
+        enrichment_verification = self._verify_lines(move_id, proposal)
         return {
             "created": True,
             "idempotent_reuse": False,
@@ -177,4 +260,5 @@ class OdooAccountingDraftAdapter:
             "state": state,
             "ref": proposal.idempotency_ref,
             "line_count": len(row.get("line_ids") or []),
+            "enrichment_verification": enrichment_verification,
         }

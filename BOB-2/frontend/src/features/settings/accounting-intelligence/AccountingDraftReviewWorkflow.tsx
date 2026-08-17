@@ -5,8 +5,10 @@ import { useMemo, useState } from "react";
 import {
   analyzeAccountingDocument,
   createReviewedAccountingDraft,
+  fetchAccountingReviewCatalog,
   type AccountingCandidate,
   type AccountingDocumentReviewResult,
+  type AccountingReviewCatalog,
   type ReviewedDraftResult,
 } from "@/features/settings/accounting-intelligence/api";
 import { useLanguage } from "@/lib/LanguageContext";
@@ -26,8 +28,21 @@ function candidateLabel(candidate: AccountingCandidate) {
   return `${code}${code && name ? " — " : ""}${name}${suffix}` || String(candidate.id || "");
 }
 
-function optionCandidates(rows: AccountingCandidate[]) {
-  return rows.filter((row) => row.id && row.live_reference_resolved !== false);
+function mergeCandidates(primary: AccountingCandidate[], catalog: AccountingCandidate[] = []) {
+  const byId = new Map<number, AccountingCandidate>();
+  for (const row of catalog) {
+    if (row.id) byId.set(Number(row.id), { ...row, live_reference_resolved: true });
+  }
+  for (const row of primary) {
+    if (row.id) byId.set(Number(row.id), { ...byId.get(Number(row.id)), ...row });
+  }
+  return [...byId.values()].sort((left, right) => {
+    if (Boolean(left.selected) !== Boolean(right.selected)) return left.selected ? -1 : 1;
+    const leftScore = left.model_score ?? left.confidence ?? -1;
+    const rightScore = right.model_score ?? right.confidence ?? -1;
+    if (leftScore !== rightScore) return rightScore - leftScore;
+    return candidateLabel(left).localeCompare(candidateLabel(right));
+  });
 }
 
 export function AccountingDraftReviewWorkflow() {
@@ -35,6 +50,8 @@ export function AccountingDraftReviewWorkflow() {
   const ar = language === "ar";
   const [file, setFile] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<AccountingDocumentReviewResult | null>(null);
+  const [catalog, setCatalog] = useState<AccountingReviewCatalog | null>(null);
+  const [catalogError, setCatalogError] = useState("");
   const [result, setResult] = useState<ReviewedDraftResult | null>(null);
   const [amount, setAmount] = useState("");
   const [entryDate, setEntryDate] = useState("");
@@ -54,9 +71,36 @@ export function AccountingDraftReviewWorkflow() {
     () => Boolean(analysis?.prediction.taxes.some((row) => row.selected)),
     [analysis],
   );
+  const moveTypeReviewRequired = useMemo(() => {
+    if (!analysis) return false;
+    const selected = analysis.prediction.move_type.filter((row) => row.selected);
+    return selected.length !== 1 || selected[0]?.label !== "entry";
+  }, [analysis]);
+
+  const journals = useMemo(
+    () => mergeCandidates(analysis?.prediction.journals || [], catalog?.journals),
+    [analysis, catalog],
+  );
+  const accounts = useMemo(
+    () => mergeCandidates(
+      [...(analysis?.prediction.debit_accounts || []), ...(analysis?.prediction.credit_accounts || [])],
+      catalog?.accounts,
+    ),
+    [analysis, catalog],
+  );
+  const partners = useMemo(
+    () => mergeCandidates(analysis?.partner_candidates || [], catalog?.partners),
+    [analysis, catalog],
+  );
+  const analytics = useMemo(
+    () => mergeCandidates(analysis?.prediction.analytic_accounts || [], catalog?.analytics),
+    [analysis, catalog],
+  );
 
   const resetReview = () => {
     setAnalysis(null);
+    setCatalog(null);
+    setCatalogError("");
     setResult(null);
     setAmount("");
     setEntryDate("");
@@ -81,13 +125,14 @@ export function AccountingDraftReviewWorkflow() {
     }
     setLoading("analyze");
     setError("");
+    setCatalogError("");
     setResult(null);
     try {
       const next = await analyzeAccountingDocument(file, companyId, amount || undefined);
       setAnalysis(next);
       setAmount(next.document.detected_amount != null ? String(next.document.detected_amount) : amount);
       setEntryDate(next.document.detected_entry_date || "");
-      setDescription(file.name);
+      setDescription(next.source.filename || file.name);
       setJournalId(next.review_defaults.journal_id);
       setDebitAccountId(next.review_defaults.debit_account_id);
       setCreditAccountId(next.review_defaults.credit_account_id);
@@ -96,6 +141,18 @@ export function AccountingDraftReviewWorkflow() {
       setDebitAnalyticId(next.review_defaults.debit_analytic_id);
       setCreditAnalyticId(next.review_defaults.credit_analytic_id);
       setApproved(false);
+
+      try {
+        setCatalog(await fetchAccountingReviewCatalog(companyId));
+      } catch (catalogErr) {
+        setCatalog(null);
+        setCatalogError(
+          ar
+            ? "تعذر تحميل الكتالوج الكامل من Odoo؛ ما زالت توصيات V2 الحية متاحة للمراجعة."
+            : "The full Odoo catalog could not be loaded; live V2 candidates remain available for review.",
+        );
+        console.warn("Accounting review catalog unavailable", catalogErr);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -136,6 +193,7 @@ export function AccountingDraftReviewWorkflow() {
       file &&
       approved &&
       !taxReviewRequired &&
+      !moveTypeReviewRequired &&
       Number(amount) > 0 &&
       /^\d{4}-\d{2}-\d{2}$/.test(entryDate) &&
       journalId &&
@@ -189,6 +247,7 @@ export function AccountingDraftReviewWorkflow() {
       </div>
 
       {error ? <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{error}</div> : null}
+      {catalogError ? <div className="rounded-xl border border-amber-400/20 bg-amber-400/[0.06] p-3 text-xs text-amber-100/80">{catalogError}</div> : null}
 
       {analysis ? (
         <div className="space-y-5">
@@ -205,8 +264,16 @@ export function AccountingDraftReviewWorkflow() {
           {!analysis.decision_gate.draft_eligible ? (
             <div className="rounded-xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-100">
               {ar
-                ? "البوابة الأصلية ما زالت محجوبة ولم نخفض أي Threshold. هذا المسار يسمح بالإنشاء فقط لأنك ستراجع وتوافق صراحةً على الاختيارات أدناه."
+                ? "البوابة الأصلية ما زالت محجوبة ولم نخفض أي Threshold. هذا المسار يسمح بالإنشاء فقط بعد مراجعتك الصريحة للاختيارات أدناه."
                 : "The original gate remains blocked and no threshold is lowered. Creation is allowed only after your explicit review of the selections below."}
+            </div>
+          ) : null}
+
+          {moveTypeReviewRequired ? (
+            <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">
+              {ar
+                ? "هذا المسار خاص بقيود Journal Entry فقط، بينما V2 لم يصنف المستند كـ entry. لن يتم تغيير نوع العملية قسرًا."
+                : "This workflow is restricted to journal entries, while V2 did not classify the document as an entry. The transaction type will not be forced."}
             </div>
           ) : null}
 
@@ -224,42 +291,46 @@ export function AccountingDraftReviewWorkflow() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-3">
-            <CandidateSelect label={ar ? "الدفتر" : "Journal"} rows={analysis.prediction.journals} value={journalId} onChange={setJournalId} />
-            <CandidateSelect label={ar ? "الحساب المدين" : "Debit account"} rows={analysis.prediction.debit_accounts} value={debitAccountId} onChange={setDebitAccountId} />
-            <CandidateSelect label={ar ? "الحساب الدائن" : "Credit account"} rows={analysis.prediction.credit_accounts} value={creditAccountId} onChange={setCreditAccountId} />
+            <SearchableCandidateSelect label={ar ? "الدفتر" : "Journal"} rows={journals} value={journalId} onChange={setJournalId} ar={ar} />
+            <SearchableCandidateSelect label={ar ? "الحساب المدين" : "Debit account"} rows={accounts} value={debitAccountId} onChange={setDebitAccountId} ar={ar} />
+            <SearchableCandidateSelect label={ar ? "الحساب الدائن" : "Credit account"} rows={accounts} value={creditAccountId} onChange={setCreditAccountId} ar={ar} />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <CandidateSelect
+            <SearchableCandidateSelect
               label={`${ar ? "شريك السطر المدين" : "Debit-line partner"}${analysis.review_defaults.counterpart_side === "debit" ? " ★" : ""}`}
-              rows={analysis.partner_candidates}
+              rows={partners}
               value={debitPartnerId}
               onChange={setDebitPartnerId}
               optional
+              ar={ar}
             />
-            <CandidateSelect
+            <SearchableCandidateSelect
               label={`${ar ? "شريك السطر الدائن" : "Credit-line partner"}${analysis.review_defaults.counterpart_side === "credit" ? " ★" : ""}`}
-              rows={analysis.partner_candidates}
+              rows={partners}
               value={creditPartnerId}
               onChange={setCreditPartnerId}
               optional
+              ar={ar}
             />
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            <CandidateSelect
+            <SearchableCandidateSelect
               label={ar ? "تحليلي السطر المدين (100%)" : "Debit analytic (100%)"}
-              rows={analysis.prediction.analytic_accounts}
+              rows={analytics}
               value={debitAnalyticId}
               onChange={setDebitAnalyticId}
               optional
+              ar={ar}
             />
-            <CandidateSelect
+            <SearchableCandidateSelect
               label={ar ? "تحليلي السطر الدائن (100%)" : "Credit analytic (100%)"}
-              rows={analysis.prediction.analytic_accounts}
+              rows={analytics}
               value={creditAnalyticId}
               onChange={setCreditAnalyticId}
               optional
+              ar={ar}
             />
           </div>
 
@@ -322,15 +393,54 @@ function TextField({ label, value, onChange, type = "text" }: { label: string; v
   return <label className="space-y-2 text-sm text-white/65"><span>{label}</span><input type={type} value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-white outline-none focus:border-amber-400/50" /></label>;
 }
 
-function CandidateSelect({ label, rows, value, onChange, optional = false }: { label: string; rows: AccountingCandidate[]; value: number | null; onChange: (value: number | null) => void; optional?: boolean }) {
-  const candidates = optionCandidates(rows);
+function SearchableCandidateSelect({
+  label,
+  rows,
+  value,
+  onChange,
+  optional = false,
+  ar,
+}: {
+  label: string;
+  rows: AccountingCandidate[];
+  value: number | null;
+  onChange: (value: number | null) => void;
+  optional?: boolean;
+  ar: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  const normalized = query.trim().toLocaleLowerCase();
+  const filtered = rows.filter((row) => {
+    if (!normalized) return true;
+    return candidateLabel(row).toLocaleLowerCase().includes(normalized);
+  });
+  const selected = value ? rows.find((row) => Number(row.id) === value) : null;
+  const visible = filtered.slice(0, 60);
+  if (selected && !visible.some((row) => Number(row.id) === value)) visible.unshift(selected);
+
   return (
     <label className="space-y-2 text-sm text-white/65">
       <span>{label}</span>
-      <select value={value ?? ""} onChange={(event) => onChange(event.target.value ? Number(event.target.value) : null)} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-white outline-none focus:border-amber-400/50">
-        <option value="">{optional ? "—" : "Select…"}</option>
-        {candidates.map((candidate) => <option key={candidate.id} value={candidate.id || ""}>{candidateLabel(candidate)}</option>)}
+      {rows.length > 12 ? (
+        <input
+          type="search"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={ar ? "بحث بالاسم أو الكود..." : "Search name or code..."}
+          className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-xs text-white outline-none focus:border-amber-400/40"
+        />
+      ) : null}
+      <select
+        value={value ?? ""}
+        onChange={(event) => onChange(event.target.value ? Number(event.target.value) : null)}
+        className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-white outline-none focus:border-amber-400/50"
+      >
+        <option value="">{optional ? "—" : ar ? "اختر..." : "Select..."}</option>
+        {visible.map((candidate) => (
+          <option key={candidate.id} value={candidate.id || ""}>{candidateLabel(candidate)}</option>
+        ))}
       </select>
+      {rows.length > visible.length ? <span className="block text-[11px] text-white/35">{ar ? `اعرض نتيجة بحث أدق — ${rows.length} مرجع حي متاح` : `Refine the search — ${rows.length} live references available`}</span> : null}
     </label>
   );
 }

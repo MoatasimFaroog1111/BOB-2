@@ -30,13 +30,19 @@ class _FailIfCalledPredictor:
         raise AssertionError("persisted predictor must not run for non-document channels")
 
 
-def _candidate(label: str, score: float, identifier: int | None = 1):
+def _candidate(
+    label: str,
+    score: float,
+    identifier: int | None = 1,
+    **extra,
+):
     row = {
         "label": label,
         "model_score": score,
         "selected": True,
         "rank": 1,
         "live_reference_resolved": identifier is not None,
+        **extra,
     }
     if identifier is not None:
         row["id"] = identifier
@@ -74,7 +80,7 @@ def test_non_document_channel_never_invokes_persisted_attachment_model():
 def test_prediction_gate_blocks_low_score_and_missing_amount():
     prediction = {
         "move_type": [_candidate("entry", 0.90)],
-        "journals": [_candidate("BNK1", 0.60, 13)],
+        "journals": [_candidate("BNK1", 0.60, 13, type="bank")],
         "debit_accounts": [_candidate("400020", 0.80, 101)],
         "credit_accounts": [_candidate("101001", 0.90, 102)],
     }
@@ -90,7 +96,7 @@ def test_prediction_gate_blocks_low_score_and_missing_amount():
 def test_prediction_gate_allows_high_score_single_sided_draft_proposal_only():
     prediction = {
         "move_type": [_candidate("entry", 0.95)],
-        "journals": [_candidate("BNK1", 0.92, 13)],
+        "journals": [_candidate("BNK1", 0.92, 13, type="bank")],
         "debit_accounts": [_candidate("400020", 0.88, 101)],
         "credit_accounts": [_candidate("101001", 0.93, 102)],
     }

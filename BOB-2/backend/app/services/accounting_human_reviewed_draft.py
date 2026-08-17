@@ -80,6 +80,15 @@ class AccountingHumanReviewedDraftService:
         return any(bool(row.get("selected")) for row in (persisted.get("taxes") or []))
 
     @staticmethod
+    def _selected_move_type(persisted: dict[str, Any]) -> str | None:
+        selected = [
+            str(row.get("label") or "").strip()
+            for row in (persisted.get("move_type") or [])
+            if row.get("selected")
+        ]
+        return selected[0] if len(selected) == 1 and selected[0] else None
+
+    @staticmethod
     def _review_enrichment(
         *,
         debit_partner_id: int | None,
@@ -168,7 +177,13 @@ class AccountingHumanReviewedDraftService:
         )
         persisted = dict(analysis.get("prediction") or {})
         original_gate = dict(analysis.get("decision_gate") or {})
+        safe_filename = str((analysis.get("source") or {}).get("filename") or "source-document")
 
+        if self._selected_move_type(persisted) != "entry":
+            raise AccountingDraftProposalError(
+                "MOVE_TYPE_REVIEW_WORKFLOW_REQUIRED",
+                "This reviewed workflow creates general journal-entry drafts only. The model did not classify this document as an entry.",
+            )
         if self._selected_tax_requires_review(persisted):
             raise AccountingDraftProposalError(
                 "TAX_REVIEW_UI_REQUIRED",
@@ -260,7 +275,7 @@ class AccountingHumanReviewedDraftService:
             company_id=company_id,
             source_reference=str(analysis["source"]["source_reference"]),
             entry_date=entry_date,
-            description=description or filename,
+            description=description or safe_filename,
             partner_candidates=list(analysis.get("partner_candidates") or []),
             enrichment=enrichment,
         )
@@ -273,7 +288,7 @@ class AccountingHumanReviewedDraftService:
         try:
             attachment_result = OdooAccountingDraftAttachmentAdapter(erp).attach(
                 move_id=int(write_result["move_id"]),
-                filename=filename,
+                filename=safe_filename,
                 mimetype=mimetype,
                 content=content,
             )

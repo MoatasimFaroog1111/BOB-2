@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,9 @@ from app.erp.accounting_draft_attachment_adapter import (
 from app.erp.accounting_draft_preflight import AccountingDraftPreflightError
 from app.ml.accounting_intelligence.draft_proposal import AccountingDraftProposalError
 from app.security.dependencies import require_permission
+from app.security.file_validation import validate_upload_file
+from app.services.accounting_document_review import AccountingDocumentReviewService
+from app.services.accounting_human_reviewed_draft import AccountingHumanReviewedDraftService
 from app.services.accounting_intelligence import AccountingIntelligenceService
 from app.services.accounting_ml_draft_service import AccountingMLDraftService
 from app.services.accounting_persisted_inference import AccountingPersistedInferenceService
@@ -199,6 +202,37 @@ def _raise_draft_policy_error(exc: Exception) -> None:
     raise exc
 
 
+async def _validated_review_upload(file: UploadFile) -> bytes:
+    is_valid, validation_error = await validate_upload_file(file)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "DOCUMENT_VALIDATION_FAILED", "message": validation_error or "Document validation failed."},
+        )
+    limit = OdooAccountingDraftAttachmentAdapter.MAX_ATTACHMENT_BYTES
+    content = await file.read(limit + 1)
+    await file.seek(0)
+    if len(content) > limit:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail={"code": "ATTACHMENT_TOO_LARGE", "message": "Source document exceeds the 25 MiB review limit."},
+        )
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "DOCUMENT_EMPTY", "message": "Source document is empty."},
+        )
+    return content
+
+
+def _reviewer_identity(principal: dict) -> dict:
+    return {
+        key: principal.get(key)
+        for key in ("user_id", "sub", "email", "role")
+        if principal.get(key) not in (None, "")
+    }
+
+
 @router.post("/draft/preflight")
 def preflight_accounting_ml_odoo_draft(
     payload: AccountingDraftCreateRequest,
@@ -254,6 +288,112 @@ def create_accounting_ml_odoo_draft(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Accounting ML draft creation failed ({type(exc).__name__}).",
+        ) from exc
+
+
+@router.post("/draft/review/analyze")
+async def analyze_accounting_document_for_review(
+    file: UploadFile = File(...),
+    company_id: int = Form(..., ge=1),
+    amount: Decimal | None = Form(default=None),
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_permission("create_entries")),
+):
+    """Analyze a validated source document and expose V2 recommendations for review.
+
+    This endpoint is strictly read-only with respect to Odoo. The deterministic
+    decision gate is returned unchanged even when it requires human review.
+    """
+    organization_id = organization_id_from_principal(principal)
+    content = await _validated_review_upload(file)
+    try:
+        return AccountingDocumentReviewService(db).analyze(
+            organization_id=organization_id,
+            company_id=company_id,
+            filename=file.filename or "source-document",
+            mimetype=file.content_type or "application/octet-stream",
+            content=content,
+            amount_override=(float(amount) if amount is not None else None),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        try:
+            _raise_draft_policy_error(exc)
+        except HTTPException:
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Accounting document review analysis failed ({type(exc).__name__}).",
+        ) from exc
+
+
+@router.post("/draft/review/create")
+async def create_human_reviewed_accounting_draft(
+    file: UploadFile = File(...),
+    company_id: int = Form(..., ge=1),
+    amount: Decimal = Form(..., gt=0),
+    entry_date: str = Form(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    journal_id: int = Form(..., ge=1),
+    debit_account_id: int = Form(..., ge=1),
+    credit_account_id: int = Form(..., ge=1),
+    debit_partner_id: int | None = Form(default=None, ge=1),
+    credit_partner_id: int | None = Form(default=None, ge=1),
+    debit_analytic_id: int | None = Form(default=None, ge=1),
+    credit_analytic_id: int | None = Form(default=None, ge=1),
+    description: str | None = Form(default=None, max_length=500),
+    reviewer_acknowledged: bool = Form(default=False),
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_permission("create_entries")),
+):
+    """Create/reuse one reviewed Odoo draft and attach the original source document.
+
+    This is the only endpoint that accepts reviewer-selected accounting IDs. It
+    requires an explicit acknowledgement, reruns persisted V2 from the uploaded
+    bytes, preserves the original gate in the audit, resolves every selected ID
+    from the company-scoped live Odoo catalog, executes live preflight, creates only
+    a draft, and has no posting method.
+    """
+    if not reviewer_acknowledged:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "HUMAN_REVIEW_ACKNOWLEDGEMENT_REQUIRED",
+                "message": "The accountant must explicitly acknowledge the reviewed draft before creation.",
+            },
+        )
+
+    organization_id = organization_id_from_principal(principal)
+    content = await _validated_review_upload(file)
+    try:
+        return AccountingHumanReviewedDraftService(db).create(
+            organization_id=organization_id,
+            company_id=company_id,
+            filename=file.filename or "source-document",
+            mimetype=file.content_type or "application/octet-stream",
+            content=content,
+            amount=amount,
+            entry_date=entry_date,
+            description=description,
+            journal_id=journal_id,
+            debit_account_id=debit_account_id,
+            credit_account_id=credit_account_id,
+            debit_partner_id=debit_partner_id,
+            credit_partner_id=credit_partner_id,
+            debit_analytic_id=debit_analytic_id,
+            credit_analytic_id=credit_analytic_id,
+            reviewer=_reviewer_identity(principal),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        try:
+            _raise_draft_policy_error(exc)
+        except HTTPException:
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Human-reviewed accounting draft creation failed ({type(exc).__name__}).",
         ) from exc
 
 

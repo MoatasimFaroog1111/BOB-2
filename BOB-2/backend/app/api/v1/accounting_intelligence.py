@@ -3,12 +3,16 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.erp.accounting_draft_adapter import AccountingDraftWriteError
+from app.erp.accounting_draft_attachment_adapter import (
+    AccountingDraftAttachmentError,
+    OdooAccountingDraftAttachmentAdapter,
+)
 from app.erp.accounting_draft_preflight import AccountingDraftPreflightError
 from app.ml.accounting_intelligence.draft_proposal import AccountingDraftProposalError
 from app.security.dependencies import require_permission
@@ -16,6 +20,7 @@ from app.services.accounting_intelligence import AccountingIntelligenceService
 from app.services.accounting_ml_draft_service import AccountingMLDraftService
 from app.services.accounting_persisted_inference import AccountingPersistedInferenceService
 from app.services.tenant_erp import organization_id_from_principal
+from app.services.tenant_erp_service import tenant_erp_resolver
 
 router = APIRouter()
 
@@ -180,6 +185,12 @@ def _raise_draft_policy_error(exc: Exception) -> None:
             status_code=(status.HTTP_409_CONFLICT if exc.code in conflict_codes else status.HTTP_400_BAD_REQUEST),
             detail={"code": exc.code, "message": str(exc)},
         ) from exc
+    if isinstance(exc, AccountingDraftAttachmentError):
+        conflict_codes = {"ODOO_DUPLICATE_SOURCE_ATTACHMENTS"}
+        raise HTTPException(
+            status_code=(status.HTTP_409_CONFLICT if exc.code in conflict_codes else status.HTTP_422_UNPROCESSABLE_ENTITY),
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
     if isinstance(exc, ValueError):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -220,11 +231,12 @@ def create_accounting_ml_odoo_draft(
     db: Session = Depends(get_db),
     principal: dict = Depends(require_permission("create_entries")),
 ):
-    """Create one idempotent Odoo *draft* after locked ML and live preflight pass.
+    """Create one idempotent Odoo draft after locked ML and live preflight pass.
 
     The server recomputes inference and the safety gate. The client cannot submit
     account IDs or a prebuilt prediction. This endpoint has no posting operation.
-    Taxes, analytics, and partners remain recommendations only in this first phase.
+    Tax remains review-only. Partner and analytic enrichment are applied only when
+    the conservative enrichment policy and live Odoo preflight both approve them.
     """
     organization_id = organization_id_from_principal(principal)
     try:
@@ -242,4 +254,58 @@ def create_accounting_ml_odoo_draft(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Accounting ML draft creation failed ({type(exc).__name__}).",
+        ) from exc
+
+
+@router.post("/draft/{move_id}/attachment")
+def attach_source_document_to_accounting_draft(
+    move_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    principal: dict = Depends(require_permission("create_entries")),
+):
+    """Attach the original source document to an existing unposted Odoo draft.
+
+    This is an idempotent document-link operation only. It cannot post or otherwise
+    confirm the journal entry, and the attachment adapter refuses non-draft moves.
+    """
+    organization_id = organization_id_from_principal(principal)
+    try:
+        connection, erp = tenant_erp_resolver.resolve(db, organization_id)
+        provider_name = str(getattr(connection, "provider", "") or "").strip().lower()
+        if provider_name != "odoo":
+            raise ValueError("Accounting draft source attachments currently support Odoo only.")
+
+        limit = OdooAccountingDraftAttachmentAdapter.MAX_ATTACHMENT_BYTES
+        content = file.file.read(limit + 1)
+        if len(content) > limit:
+            raise AccountingDraftAttachmentError(
+                "ATTACHMENT_TOO_LARGE",
+                "Source document exceeds the 25 MiB draft-attachment limit.",
+            )
+        result = OdooAccountingDraftAttachmentAdapter(erp).attach(
+            move_id=move_id,
+            filename=file.filename or "source-document",
+            mimetype=file.content_type or "application/octet-stream",
+            content=content,
+        )
+        return {
+            "status": "success",
+            "attachment": result,
+            "safety": {
+                "target_state_required": "draft",
+                "posting_method_invoked": False,
+                "auto_posted_to_erp": False,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        try:
+            _raise_draft_policy_error(exc)
+        except HTTPException:
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Accounting draft attachment failed ({type(exc).__name__}).",
         ) from exc

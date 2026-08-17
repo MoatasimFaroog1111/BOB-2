@@ -2,13 +2,14 @@
 
 This module converts an already-gated persisted-model prediction into a minimal
 accounting proposal.  It deliberately does not own ERP credentials or mutation
-methods and never applies tax, analytic, or partner suggestions automatically.
+methods.  Optional partner/analytic enrichment is accepted only from the separate
+conservative enrichment policy and is revalidated against live Odoo before write.
 """
 
 from __future__ import annotations
 
 import hashlib
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -32,6 +33,8 @@ class AccountingDraftLineProposal:
     account_name: str
     amount: str
     label: str
+    partner_id: int | None = None
+    analytic_distribution: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -60,7 +63,7 @@ class AccountingDraftProposal:
 
 
 class AccountingDraftProposalBuilder:
-    """Builds a minimal, deterministic, non-posting proposal from model output."""
+    """Builds a deterministic, non-posting proposal from model output."""
 
     ALLOWED_MOVE_TYPES = frozenset({"entry"})
     ALLOWED_JOURNAL_TYPES = frozenset({"bank", "cash", "general"})
@@ -128,6 +131,63 @@ class AccountingDraftProposalBuilder:
                 f"{code.replace('_', ' ').title()} has no valid live ERP identifier.",
             ) from exc
 
+    @staticmethod
+    def _validated_partner(value: Any) -> int | None:
+        if value in (None, False, ""):
+            return None
+        try:
+            partner_id = int(value)
+        except (TypeError, ValueError) as exc:
+            raise AccountingDraftProposalError(
+                "PARTNER_ID_INVALID",
+                "Partner enrichment must contain a positive live Odoo partner ID.",
+            ) from exc
+        if partner_id <= 0:
+            raise AccountingDraftProposalError(
+                "PARTNER_ID_INVALID",
+                "Partner enrichment must contain a positive live Odoo partner ID.",
+            )
+        return partner_id
+
+    @staticmethod
+    def _validated_analytic_distribution(value: Any) -> dict[str, float]:
+        if value in (None, False, ""):
+            return {}
+        if not isinstance(value, dict):
+            raise AccountingDraftProposalError(
+                "ANALYTIC_DISTRIBUTION_INVALID",
+                "Analytic distribution must be an Odoo-compatible mapping.",
+            )
+        clean: dict[str, float] = {}
+        total = Decimal("0")
+        for raw_key, raw_share in value.items():
+            key = str(raw_key or "").strip()
+            if not key:
+                raise AccountingDraftProposalError(
+                    "ANALYTIC_DISTRIBUTION_INVALID",
+                    "Analytic distribution contains an empty account key.",
+                )
+            try:
+                share = Decimal(str(raw_share))
+            except Exception as exc:
+                raise AccountingDraftProposalError(
+                    "ANALYTIC_DISTRIBUTION_INVALID",
+                    "Analytic distribution contains a non-numeric percentage.",
+                ) from exc
+            if share <= 0 or share > 100:
+                raise AccountingDraftProposalError(
+                    "ANALYTIC_DISTRIBUTION_INVALID",
+                    "Analytic percentages must be greater than zero and at most 100.",
+                )
+            total += share
+            clean[key] = float(share)
+        if clean and abs(total - Decimal("100")) > Decimal("0.01"):
+            raise AccountingDraftProposalError(
+                "ANALYTIC_DISTRIBUTION_NOT_100",
+                "Analytic distribution must total 100 percent.",
+            )
+        return clean
+
     def build(
         self,
         *,
@@ -139,6 +199,7 @@ class AccountingDraftProposalBuilder:
         entry_date: str,
         description: str | None = None,
         partner_candidates: list[dict[str, Any]] | None = None,
+        enrichment: dict[str, Any] | None = None,
     ) -> AccountingDraftProposal:
         if not bool(decision_gate.get("draft_eligible")):
             raise AccountingDraftProposalError(
@@ -190,8 +251,6 @@ class AccountingDraftProposalBuilder:
                 "Debit and credit accounts cannot be identical.",
             )
 
-        # Tax automation remains disabled until a separate tax-aware posting model
-        # and validation contract are approved.  A selected tax therefore forces review.
         if self._selected(prediction, "taxes"):
             raise AccountingDraftProposalError(
                 "TAX_AUTOMATION_NOT_ENABLED",
@@ -209,12 +268,25 @@ class AccountingDraftProposalBuilder:
             source_reference=source_reference,
         )
 
+        enrichment_payload = dict(enrichment or {})
+        debit_partner_id = self._validated_partner(enrichment_payload.get("debit_partner_id"))
+        credit_partner_id = self._validated_partner(enrichment_payload.get("credit_partner_id"))
+        debit_analytic = self._validated_analytic_distribution(
+            enrichment_payload.get("debit_analytic_distribution")
+        )
+        credit_analytic = self._validated_analytic_distribution(
+            enrichment_payload.get("credit_analytic_distribution")
+        )
+
         recommendations = {
             "partner_candidates": list(partner_candidates or [])[:5],
             "analytic_accounts": list(prediction.get("analytic_accounts") or [])[:5],
             "taxes": list(prediction.get("taxes") or [])[:5],
-            "not_auto_applied": ["partner", "analytic_account", "tax"],
+            "enrichment_policy": enrichment_payload,
+            "not_auto_applied": list(enrichment_payload.get("not_auto_applied") or ["partner", "analytic_distribution", "tax"]),
         }
+        if "tax" not in recommendations["not_auto_applied"]:
+            recommendations["not_auto_applied"].append("tax")
 
         return AccountingDraftProposal(
             model_version=str(prediction.get("model_version") or ""),
@@ -237,6 +309,8 @@ class AccountingDraftProposalBuilder:
                 account_name=str(debit.get("name") or ""),
                 amount=money_to_str(parsed_amount),
                 label=text_label,
+                partner_id=debit_partner_id,
+                analytic_distribution=debit_analytic,
             ),
             credit_line=AccountingDraftLineProposal(
                 side="credit",
@@ -245,6 +319,8 @@ class AccountingDraftProposalBuilder:
                 account_name=str(credit.get("name") or ""),
                 amount=money_to_str(parsed_amount),
                 label=text_label,
+                partner_id=credit_partner_id,
+                analytic_distribution=credit_analytic,
             ),
             recommendations=recommendations,
         )

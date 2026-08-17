@@ -144,14 +144,13 @@ export function AccountingDraftReviewWorkflow() {
 
       try {
         setCatalog(await fetchAccountingReviewCatalog(companyId));
-      } catch (catalogErr) {
+      } catch {
         setCatalog(null);
         setCatalogError(
           ar
             ? "تعذر تحميل الكتالوج الكامل من Odoo؛ ما زالت توصيات V2 الحية متاحة للمراجعة."
             : "The full Odoo catalog could not be loaded; live V2 candidates remain available for review.",
         );
-        console.warn("Accounting review catalog unavailable", catalogErr);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -440,7 +439,7 @@ function SearchableCandidateSelect({
           <option key={candidate.id} value={candidate.id || ""}>{candidateLabel(candidate)}</option>
         ))}
       </select>
-      {rows.length > visible.length ? <span className="block text-[11px] text-white/35">{ar ? `اعرض نتيجة بحث أدق — ${rows.length} مرجع حي متاح` : `Refine the search — ${rows.length} live references available`}</span> : null}
+      {rows.length > visible.length ? <span className="block text-[11px] text-white/35">{ar ? `استخدم البحث للوصول إلى ${rows.length} مرجع حي` : `Use search across ${rows.length} live references`}</span> : null}
     </label>
   );
 }

@@ -1,8 +1,9 @@
 """Application service for persisted-ML -> safe Odoo draft creation.
 
 The service always re-runs inference server-side, applies the deterministic gate,
-builds a minimal proposal, and delegates ERP work to narrow adapters.  Preflight is
-read-only; create_draft is the only mutation path and never posts entries.
+builds a proposal, applies only conservative optional enrichment, and delegates ERP
+work to narrow adapters.  Preflight is read-only; create_draft is the only journal
+mutation path and never posts entries.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.erp.accounting_draft_adapter import OdooAccountingDraftAdapter
 from app.erp.accounting_draft_preflight import OdooAccountingDraftPreflight
+from app.ml.accounting_intelligence.draft_enrichment import AccountingDraftEnrichmentPolicy
 from app.ml.accounting_intelligence.draft_proposal import AccountingDraftProposalBuilder
 from app.models.ai_accounting import AIDecisionAuditLog
 from app.services.accounting_persisted_inference import AccountingPersistedInferenceService
@@ -26,10 +28,12 @@ class AccountingMLDraftService:
         *,
         inference_service: AccountingPersistedInferenceService | None = None,
         proposal_builder: AccountingDraftProposalBuilder | None = None,
+        enrichment_policy: AccountingDraftEnrichmentPolicy | None = None,
     ) -> None:
         self.db = db
         self.inference_service = inference_service or AccountingPersistedInferenceService(db)
         self.proposal_builder = proposal_builder or AccountingDraftProposalBuilder()
+        self.enrichment_policy = enrichment_policy or AccountingDraftEnrichmentPolicy()
 
     def _audit(
         self,
@@ -45,11 +49,12 @@ class AccountingMLDraftService:
                     organization_id=organization_id,
                     decision_type="accounting_ml_odoo_draft",
                     entity_type="account.move",
-                    entity_id=None,
+                    entity_id=result.get("move_id"),
                     confidence_score=float(confidence),
                     explanation=(
                         "Verified persisted accounting ML v2 created or reused an Odoo draft only; "
-                        "no posting action was executed."
+                        "no posting action was executed. Optional partner/analytic enrichment was "
+                        "subject to conservative policy and live Odoo preflight validation."
                     ),
                     payload={
                         "proposal": proposal,
@@ -95,6 +100,11 @@ class AccountingMLDraftService:
 
         persisted = dict(inference.get("persisted_model") or {})
         gate = dict(inference.get("decision_gate") or {})
+        partner_candidates = list(inference.get("partner_candidates") or [])
+        enrichment = self.enrichment_policy.resolve(
+            prediction=persisted,
+            partner_candidates=partner_candidates,
+        )
         proposal = self.proposal_builder.build(
             prediction=persisted,
             decision_gate=gate,
@@ -103,7 +113,8 @@ class AccountingMLDraftService:
             source_reference=source_reference,
             entry_date=entry_date,
             description=description,
-            partner_candidates=list(inference.get("partner_candidates") or []),
+            partner_candidates=partner_candidates,
+            enrichment=enrichment,
         )
 
         connection, erp = tenant_erp_resolver.resolve(self.db, organization_id)
@@ -182,8 +193,6 @@ class AccountingMLDraftService:
             top_k=top_k,
         )
 
-        # Re-run the exact read-only live preflight immediately before mutation so
-        # stale/deprecated/cross-company references fail closed.
         preflight = OdooAccountingDraftPreflight(erp).inspect(proposal)
         adapter = OdooAccountingDraftAdapter(erp)
         write_result = adapter.create(proposal)
@@ -196,6 +205,7 @@ class AccountingMLDraftService:
             confidence=confidence,
         )
 
+        enrichment = proposal.recommendations.get("enrichment_policy") or {}
         return {
             "status": "success",
             "primary_engine": "verified_persisted_accounting_ml_v2",
@@ -210,8 +220,8 @@ class AccountingMLDraftService:
                 "posting_method_invoked": False,
                 "approval_required": True,
                 "tax_auto_applied": False,
-                "analytic_auto_applied": False,
-                "partner_auto_applied": False,
+                "analytic_auto_applied": "analytic_distribution" in enrichment.get("auto_applied", []),
+                "partner_auto_applied": "partner" in enrichment.get("auto_applied", []),
                 "idempotency_ref": proposal.idempotency_ref,
             },
         }

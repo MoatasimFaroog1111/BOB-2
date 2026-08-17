@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { API_BASE_URL } from "./api";
 
 interface Company {
@@ -23,7 +23,8 @@ const CompanyContext = createContext<CompanyContextProps | undefined>(undefined)
 function getInitialCompanyId(): number | null {
   if (typeof window === "undefined") return null;
   const saved = localStorage.getItem("selectedCompanyId");
-  return saved ? parseInt(saved, 10) : null;
+  const parsed = saved ? Number.parseInt(saved, 10) : NaN;
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 export function CompanyProvider({ children }: { children: React.ReactNode }) {
@@ -38,34 +39,41 @@ export function CompanyProvider({ children }: { children: React.ReactNode }) {
       if (res.ok) {
         const data: Company[] = await res.json();
         setCompanies(data);
-        setSelectedCompanyIdState((prev) => {
-          if (prev !== null && data.some((c) => c.id === prev)) return prev;
+        setSelectedCompanyIdState((previous) => {
+          if (previous !== null && data.some((company) => company.id === previous)) {
+            return previous;
+          }
           const saved = getInitialCompanyId();
-          const valid = saved && data.some((c) => c.id === saved);
-          return valid ? saved : data.length > 0 ? data[0].id : null;
+          if (saved !== null && data.some((company) => company.id === saved)) {
+            return saved;
+          }
+          return data.length > 0 ? data[0].id : null;
         });
       }
     } catch {
-      // silently fail — no ERP connection yet
+      // Silently fail when no ERP connection is available yet.
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchCompanies();
+    void fetchCompanies();
   }, [fetchCompanies]);
 
-  const setSelectedCompanyId = (id: number | null) => {
-    setSelectedCompanyIdState(id);
-    if (id !== null) {
-      localStorage.setItem("selectedCompanyId", String(id));
+  useEffect(() => {
+    if (selectedCompanyId !== null) {
+      localStorage.setItem("selectedCompanyId", String(selectedCompanyId));
     } else {
       localStorage.removeItem("selectedCompanyId");
     }
+  }, [selectedCompanyId]);
+
+  const setSelectedCompanyId = (id: number | null) => {
+    setSelectedCompanyIdState(id);
   };
 
-  const selectedCompany = companies.find((c) => c.id === selectedCompanyId) || null;
+  const selectedCompany = companies.find((company) => company.id === selectedCompanyId) || null;
 
   return (
     <CompanyContext.Provider

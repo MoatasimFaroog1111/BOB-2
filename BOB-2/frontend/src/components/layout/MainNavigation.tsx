@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { CompanySelector } from "@/components/layout/CompanySelector";
 import { useLanguage } from "@/lib/LanguageContext";
 
 export function MainNavigation() {
@@ -20,10 +21,13 @@ export function MainNavigation() {
 
   return (
     <aside className="min-h-screen w-72 border-r border-l border-white/10 bg-black/40 p-5 flex flex-col">
-      <div className="mb-8">
+      <div className="mb-5">
         <h1 className="text-xl font-bold text-white">{t("sidebar.title")}</h1>
         <p className="mt-2 text-xs text-gray-400 leading-relaxed">{t("sidebar.subtitle")}</p>
       </div>
+
+      <CompanySelector />
+
       <nav className="space-y-1.5 flex-1">
         {items.map(([href, label]) => {
           const active = pathname === href || pathname.startsWith(`${href}/`);

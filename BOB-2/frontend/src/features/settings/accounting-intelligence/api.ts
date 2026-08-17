@@ -106,6 +106,13 @@ export type AccountingDocumentReviewResult = {
   };
 };
 
+export type AccountingReviewCatalog = {
+  accounts: AccountingCandidate[];
+  journals: AccountingCandidate[];
+  partners: AccountingCandidate[];
+  analytics: AccountingCandidate[];
+};
+
 export type ReviewedDraftSelection = {
   file: File;
   companyId: number;
@@ -175,6 +182,17 @@ export function analyzeAccountingDocument(file: File, companyId: number, amount?
     "/api/v1/accounting-intelligence/draft/review/analyze",
     form,
   );
+}
+
+export async function fetchAccountingReviewCatalog(companyId: number): Promise<AccountingReviewCatalog> {
+  const query = `?company_id=${encodeURIComponent(String(companyId))}`;
+  const [accounts, journals, partners, analytics] = await Promise.all([
+    requestJson<AccountingCandidate[]>(`/api/v1/erp/accounts${query}`),
+    requestJson<AccountingCandidate[]>(`/api/v1/erp/journals${query}`),
+    requestJson<AccountingCandidate[]>(`/api/v1/erp/partners${query}`),
+    requestJson<AccountingCandidate[]>(`/api/v1/erp/analytic-accounts${query}`),
+  ]);
+  return { accounts, journals, partners, analytics };
 }
 
 function appendOptionalId(form: FormData, name: string, value?: number | null) {

@@ -1,12 +1,13 @@
 """Read-only Odoo preflight for persisted-ML journal-entry drafts.
 
 This component validates that a gated proposal still resolves against the live Odoo
-company, journal, and accounts immediately before any mutation is allowed.  It never
-calls create/write/unlink/action_post and therefore cannot change ERP state.
+company, journal, accounts, partner, and analytic references immediately before any
+mutation is allowed.  It never calls create/write/unlink/action_post.
 """
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 
 from app.ml.accounting_intelligence.draft_proposal import AccountingDraftProposal
@@ -128,6 +129,78 @@ class OdooAccountingDraftPreflight:
             "company_ids": sorted(company_ids),
         }
 
+    def _partner(self, partner_id: int, *, company_id: int, side: str) -> dict[str, Any]:
+        row = self._read_one(
+            "res.partner",
+            partner_id,
+            fields=["id", "name", "active", "company_id"],
+            code=f"{side.upper()}_PARTNER",
+        )
+        if row.get("active") is False:
+            raise AccountingDraftPreflightError(
+                f"{side.upper()}_PARTNER_INACTIVE",
+                f"The selected {side} partner is inactive in Odoo.",
+            )
+        partner_company = self._m2o_id(row.get("company_id"))
+        if partner_company and partner_company != company_id:
+            raise AccountingDraftPreflightError(
+                f"{side.upper()}_PARTNER_COMPANY_MISMATCH",
+                f"The selected {side} partner is restricted to another company.",
+            )
+        return {
+            "id": int(row["id"]),
+            "name": str(row.get("name") or ""),
+            "company_id": partner_company,
+        }
+
+    def _analytic_distribution(
+        self,
+        distribution: dict[str, float],
+        *,
+        company_id: int,
+        side: str,
+    ) -> list[dict[str, Any]]:
+        if not distribution:
+            return []
+        total = sum(Decimal(str(value)) for value in distribution.values())
+        if abs(total - Decimal("100")) > Decimal("0.01"):
+            raise AccountingDraftPreflightError(
+                f"{side.upper()}_ANALYTIC_NOT_100",
+                "Analytic distribution must total 100 percent before Odoo draft creation.",
+            )
+        resolved: list[dict[str, Any]] = []
+        for key, share in distribution.items():
+            try:
+                analytic_id = int(str(key))
+            except (TypeError, ValueError) as exc:
+                raise AccountingDraftPreflightError(
+                    f"{side.upper()}_ANALYTIC_KEY_INVALID",
+                    "Only single live analytic-account IDs are supported for automated draft enrichment.",
+                ) from exc
+            row = self._read_one(
+                "account.analytic.account",
+                analytic_id,
+                fields=["id", "name", "active", "company_id"],
+                code=f"{side.upper()}_ANALYTIC",
+            )
+            if row.get("active") is False:
+                raise AccountingDraftPreflightError(
+                    f"{side.upper()}_ANALYTIC_INACTIVE",
+                    "The selected analytic account is inactive in Odoo.",
+                )
+            analytic_company = self._m2o_id(row.get("company_id"))
+            if analytic_company and analytic_company != company_id:
+                raise AccountingDraftPreflightError(
+                    f"{side.upper()}_ANALYTIC_COMPANY_MISMATCH",
+                    "The selected analytic account belongs to another company.",
+                )
+            resolved.append({
+                "id": int(row["id"]),
+                "name": str(row.get("name") or ""),
+                "share": float(share),
+            })
+        return resolved
+
     def _existing(self, proposal: AccountingDraftProposal) -> list[dict[str, Any]]:
         try:
             return self.erp.execute_kw(
@@ -162,6 +235,25 @@ class OdooAccountingDraftPreflight:
                     f"The selected {side} account is not available to the requested Odoo company.",
                 )
 
+        debit_partner = (
+            self._partner(proposal.debit_line.partner_id, company_id=proposal.company_id, side="debit")
+            if proposal.debit_line.partner_id else None
+        )
+        credit_partner = (
+            self._partner(proposal.credit_line.partner_id, company_id=proposal.company_id, side="credit")
+            if proposal.credit_line.partner_id else None
+        )
+        debit_analytic = self._analytic_distribution(
+            proposal.debit_line.analytic_distribution,
+            company_id=proposal.company_id,
+            side="debit",
+        )
+        credit_analytic = self._analytic_distribution(
+            proposal.credit_line.analytic_distribution,
+            company_id=proposal.company_id,
+            side="credit",
+        )
+
         existing = self._existing(proposal)
         if len(existing) > 1:
             raise AccountingDraftPreflightError(
@@ -191,6 +283,10 @@ class OdooAccountingDraftPreflight:
             "journal": journal,
             "debit_account": debit,
             "credit_account": credit,
+            "debit_partner": debit_partner,
+            "credit_partner": credit_partner,
+            "debit_analytic_distribution": debit_analytic,
+            "credit_analytic_distribution": credit_analytic,
             "idempotency": {
                 "ref": proposal.idempotency_ref,
                 "existing_draft": existing_summary,

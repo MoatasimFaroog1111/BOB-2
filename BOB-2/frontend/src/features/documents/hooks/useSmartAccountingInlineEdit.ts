@@ -40,7 +40,6 @@ export function useSmartAccountingInlineEdit({
         partners,
         analyticAccounts,
       }));
-      return;
     }
 
     setSheets((current) => current.map((sheet) => {

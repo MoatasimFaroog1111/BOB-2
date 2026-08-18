@@ -32,20 +32,25 @@ export function useSmartAccountingInlineEdit({
   analyticAccounts: OdooAnalyticAccount[];
 }) {
   return useCallback((edit: SmartAccountingInlineEdit) => {
-    if (previewLines.length > 0) {
-      setPreviewLines((current) => applyPreviewInlineEdit({
-        lines: current,
-        edit,
-        accounts,
-        partners,
-        analyticAccounts,
-      }));
-    }
+    const editedPreview = previewLines.length > 0
+      ? applyPreviewInlineEdit({
+          lines: previewLines,
+          edit,
+          accounts,
+          partners,
+          analyticAccounts,
+        })
+      : null;
+
+    if (editedPreview) setPreviewLines(editedPreview);
 
     setSheets((current) => current.map((sheet) => {
       if (sheet.id !== activeSheetId) return sheet;
+      const baseGrid = editedPreview && !hasAccountingRows(sheet.gridData)
+        ? materializePreviewLines(sheet.gridData, editedPreview)
+        : sheet.gridData;
       const nextGrid = applyGridInlineEdit({
-        gridData: sheet.gridData,
+        gridData: baseGrid,
         edit,
         accounts,
         partners,
@@ -60,11 +65,35 @@ export function useSmartAccountingInlineEdit({
     }));
   }, [
     activeSheetId,
-    previewLines.length,
+    previewLines,
     setPreviewLines,
     setSheets,
     accounts,
     partners,
     analyticAccounts,
   ]);
+}
+
+function hasAccountingRows(gridData: string[][]): boolean {
+  return gridData.slice(1).some((row) =>
+    row.slice(0, 6).some((value) => Boolean(String(value || "").trim())),
+  );
+}
+
+function materializePreviewLines(
+  gridData: string[][],
+  lines: PreviewJournalLine[],
+): string[][] {
+  const next = gridData.map((row) => [...row]);
+  lines.forEach((line, index) => {
+    const rowIndex = index + 1;
+    if (!next[rowIndex]) return;
+    next[rowIndex][0] = line.account_code || "";
+    next[rowIndex][1] = line.name || "";
+    next[rowIndex][2] = line.debit > 0 ? String(line.debit) : "";
+    next[rowIndex][3] = line.credit > 0 ? String(line.credit) : "";
+    next[rowIndex][4] = line.partner_name || "";
+    next[rowIndex][5] = line.analytic_account_name || "";
+  });
+  return next;
 }

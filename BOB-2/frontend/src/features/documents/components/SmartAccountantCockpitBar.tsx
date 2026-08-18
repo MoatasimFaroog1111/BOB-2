@@ -2,7 +2,11 @@
 
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 
-import { emitSmartAccountantUiAction } from "@/features/documents/model/smartAccountantUiEvents";
+import {
+  emitSmartAccountantUiAction,
+  SMART_ACCOUNTANT_UI_ACTION_EVENT,
+  type SmartAccountantUiAction,
+} from "@/features/documents/model/smartAccountantUiEvents";
 import type { OdooJournal } from "@/features/documents/model/types";
 
 export type SmartAccountantWorkspaceMode = "assistant" | "sheet";
@@ -81,6 +85,16 @@ export function SmartAccountantCockpitBar({
       setPinned(false);
     }
   }, []);
+
+  useEffect(() => {
+    const handleWorkspaceAction = (event: Event) => {
+      const detail = (event as CustomEvent<SmartAccountantUiAction>).detail;
+      if (detail?.type === "review-entry") onReview();
+    };
+
+    window.addEventListener(SMART_ACCOUNTANT_UI_ACTION_EVENT, handleWorkspaceAction);
+    return () => window.removeEventListener(SMART_ACCOUNTANT_UI_ACTION_EVENT, handleWorkspaceAction);
+  }, [onReview]);
 
   const selectedJournal = useMemo(
     () => journals.find((journal) => journal.id === selectedJournalId) || null,

@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: read
 
 concurrency:
   group: one-time-branch-cleanup
@@ -21,7 +22,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Delete branches already merged into main
+      - name: Delete heads of merged pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=closed&per_page=100" \
+            --jq '.[] | select(.merged_at != null) | [.head.repo.full_name, .head.ref] | @tsv' |
+          while IFS=$'\t' read -r head_repo branch; do
+            if [[ "$head_repo" == "$GITHUB_REPOSITORY" && -n "$branch" && "$branch" != "main" ]]; then
+              echo "Deleting merged PR branch: $branch"
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" || true
+            fi
+          done
+
+      - name: Delete branches already contained in main
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -36,7 +52,7 @@ jobs:
             esac
 
             if git merge-base --is-ancestor "$remote_ref" origin/main; then
-              echo "Deleting merged branch: $branch"
+              echo "Deleting branch already contained in main: $branch"
               gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" || true
             fi
           done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin)

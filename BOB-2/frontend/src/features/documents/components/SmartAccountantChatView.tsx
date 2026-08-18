@@ -2,7 +2,12 @@
 
 import React from "react";
 
-import { formatAccountingMoney } from "@/features/documents/model/smartAccountantWorkspace";
+import { SmartAccountingProposalCard } from "@/features/documents/components/SmartAccountingProposalCard";
+import {
+  formatAccountingMoney,
+  type SmartAccountantProposalSummary,
+  type SmartAccountantVerification,
+} from "@/features/documents/model/smartAccountantWorkspace";
 
 type ChatMessage = { role: "user" | "assistant"; text: string };
 
@@ -13,6 +18,8 @@ export function SmartAccountantChatView({
   debitTotal,
   creditTotal,
   balanced,
+  proposal,
+  verification,
   chatMessages,
   chatInput,
   setChatInput,
@@ -23,6 +30,8 @@ export function SmartAccountantChatView({
   handleSendChatMessage,
   handleChatFileChange,
   inputRef,
+  onEditProposal,
+  onApproveProposal,
 }: Readonly<{
   language: string;
   currency: string;
@@ -30,6 +39,8 @@ export function SmartAccountantChatView({
   debitTotal: number;
   creditTotal: number;
   balanced: boolean;
+  proposal: SmartAccountantProposalSummary;
+  verification: SmartAccountantVerification;
   chatMessages: ChatMessage[];
   chatInput: string;
   setChatInput: (value: string) => void;
@@ -40,6 +51,8 @@ export function SmartAccountantChatView({
   handleSendChatMessage: (event: React.FormEvent) => void;
   handleChatFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
+  onEditProposal: () => void;
+  onApproveProposal: () => void;
 }>) {
   const ar = language === "ar";
 
@@ -67,6 +80,16 @@ export function SmartAccountantChatView({
             <SummaryCell label={ar ? "دائن" : "Credit"} value={formatAccountingMoney(creditTotal, currency)} />
           </div>
         </div>
+
+        <SmartAccountingProposalCard
+          language={language}
+          currency={currency}
+          proposal={proposal}
+          verification={verification}
+          lineCount={lineCount}
+          onEdit={onEditProposal}
+          onApprove={onApproveProposal}
+        />
 
         <div className="flex flex-col gap-3">
           {chatMessages.map((msg, idx) => (

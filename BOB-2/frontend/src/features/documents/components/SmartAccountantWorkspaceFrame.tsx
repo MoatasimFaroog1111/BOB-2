@@ -1,11 +1,13 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Link from "next/link";
 
 import { useLanguage } from "@/lib/LanguageContext";
 
 type SmartAccountantWorkspaceFrameProps = Readonly<{
-  children: React.ReactNode;
+  children: ReactNode;
+  statusBar?: ReactNode;
 }>;
 
 const workspaceLinks = [
@@ -18,6 +20,7 @@ const workspaceLinks = [
 
 export function SmartAccountantWorkspaceFrame({
   children,
+  statusBar,
 }: SmartAccountantWorkspaceFrameProps) {
   const { language } = useLanguage();
   const isArabic = language === "ar";
@@ -49,7 +52,10 @@ export function SmartAccountantWorkspaceFrame({
 
           <div className="h-8 w-px shrink-0 bg-white/10" />
 
-          <nav className="flex min-w-max items-center gap-1.5" aria-label={isArabic ? "أوضاع المحاسب الذكي" : "Smart accountant modes"}>
+          <nav
+            className="flex min-w-max items-center gap-1.5"
+            aria-label={isArabic ? "أوضاع المحاسب الذكي" : "Smart accountant modes"}
+          >
             {workspaceLinks.map((item) => {
               const active = item.href === "/documents";
               return (
@@ -76,11 +82,13 @@ export function SmartAccountantWorkspaceFrame({
               {isArabic ? "مراجعة بشرية قبل الترحيل" : "Human review before posting"}
             </span>
             <span className="rounded-full border border-emerald-400/15 bg-emerald-400/[0.06] px-2.5 py-1 text-emerald-300/80">
-              {isArabic ? "Audit-safe" : "Audit-safe"}
+              Audit-safe
             </span>
           </div>
         </div>
       </header>
+
+      {statusBar ? <div className="shrink-0">{statusBar}</div> : null}
 
       <div className="min-h-0 flex-1 overflow-hidden [&>.wood-shell]:!h-full">
         {children}

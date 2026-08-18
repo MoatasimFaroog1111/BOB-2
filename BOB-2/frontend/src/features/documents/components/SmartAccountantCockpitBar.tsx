@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { emitSmartAccountantUiAction } from "@/features/documents/model/smartAccountantUiEvents";
 import type { OdooJournal } from "@/features/documents/model/types";
@@ -112,9 +112,13 @@ export function SmartAccountantCockpitBar({
     onJournalChange(firstJournal?.id ?? null);
   };
 
-  const chooseAssistantPrompt = (prompt: string) => {
+  const emitAfterAssistantMount = (action: Parameters<typeof emitSmartAccountantUiAction>[0]) => {
     onModeChange("assistant");
-    emitSmartAccountantUiAction({ type: "prompt", prompt });
+    window.setTimeout(() => emitSmartAccountantUiAction(action), 0);
+  };
+
+  const chooseAssistantPrompt = (prompt: string) => {
+    emitAfterAssistantMount({ type: "prompt", prompt });
     if (!pinned) setTouchOpen(false);
   };
 
@@ -246,10 +250,7 @@ export function SmartAccountantCockpitBar({
                 <SidebarButton
                   icon="⌁"
                   label={ar ? "تحليل مستند" : "Analyze document"}
-                  onClick={() => {
-                    onModeChange("assistant");
-                    emitSmartAccountantUiAction({ type: "analyze-document" });
-                  }}
+                  onClick={() => emitAfterAssistantMount({ type: "analyze-document" })}
                 />
                 <SidebarButton
                   icon="✎"
@@ -289,7 +290,7 @@ export function SmartAccountantCockpitBar({
   );
 }
 
-function SidebarSection({ title, children }: { title: string; children: React.ReactNode }) {
+function SidebarSection({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mb-4">
       <div className="mb-1.5 px-1 text-[8px] font-black uppercase tracking-[0.16em] text-white/25">

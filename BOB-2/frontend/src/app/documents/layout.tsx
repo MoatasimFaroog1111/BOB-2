@@ -5,8 +5,7 @@ import { SmartAccountantWorkspaceFrame } from "@/features/documents/components/S
 
 export default function DocumentsLayout({ children }: { children: ReactNode }) {
   return (
-    <SmartAccountantWorkspaceFrame>
-      <DailyBankReviewActionBar />
+    <SmartAccountantWorkspaceFrame statusBar={<DailyBankReviewActionBar />}>
       {children}
     </SmartAccountantWorkspaceFrame>
   );

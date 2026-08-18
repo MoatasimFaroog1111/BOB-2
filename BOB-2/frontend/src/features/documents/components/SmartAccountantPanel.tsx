@@ -5,6 +5,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { SmartAccountantChatView } from "@/features/documents/components/SmartAccountantChatView";
 import { SmartAccountantContextView } from "@/features/documents/components/SmartAccountantContextView";
 import { SmartAccountantQuickActions } from "@/features/documents/components/SmartAccountantQuickActions";
+import type { SmartAccountingInlineEdit } from "@/features/documents/model/smartAccountingInlineEdit";
 import {
   buildSmartAccountantCandidateLines,
   buildSmartAccountantProposalSummary,
@@ -40,6 +41,7 @@ type SmartAccountantPanelProps = Readonly<{
   chatFileInputRef: React.RefObject<HTMLInputElement | null>;
   handleSendChatMessage: (event: React.FormEvent) => void;
   handleChatFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+  onInlineEdit: (edit: SmartAccountingInlineEdit) => void;
   onManualEntry: () => void;
   onPrepareEntry: () => void;
 }>;
@@ -63,6 +65,7 @@ export function SmartAccountantPanel({
   chatFileInputRef,
   handleSendChatMessage,
   handleChatFileChange,
+  onInlineEdit,
   onManualEntry,
   onPrepareEntry,
 }: SmartAccountantPanelProps) {
@@ -163,6 +166,9 @@ export function SmartAccountantPanel({
           balanced={verification.balanced}
           proposal={proposal}
           verification={verification}
+          accounts={accounts}
+          partners={partners}
+          analyticAccounts={analyticAccounts}
           chatMessages={chatMessages}
           chatInput={chatInput}
           setChatInput={setChatInput}
@@ -173,6 +179,7 @@ export function SmartAccountantPanel({
           handleSendChatMessage={handleSendChatMessage}
           handleChatFileChange={handleChatFileChange}
           inputRef={inputRef}
+          onInlineEdit={onInlineEdit}
           onEditProposal={onPrepareEntry}
           onApproveProposal={onPrepareEntry}
         />

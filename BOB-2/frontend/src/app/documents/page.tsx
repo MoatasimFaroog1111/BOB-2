@@ -6,6 +6,7 @@ import { useLanguage } from "@/lib/LanguageContext";
 import { useCompany } from "@/lib/CompanyContext";
 import { documentsGateway } from "@/features/documents/api/documentsGateway";
 import { useDocumentDiscovery } from "@/features/documents/hooks/useDocumentDiscovery";
+import { useSmartAccountingInlineEdit } from "@/features/documents/hooks/useSmartAccountingInlineEdit";
 import { useSpreadsheetChat } from "@/features/documents/hooks/useSpreadsheetChat";
 import { useSpreadsheetGridInteraction } from "@/features/documents/hooks/useSpreadsheetGridInteraction";
 import {
@@ -161,6 +162,16 @@ export default function DocumentIntelligencePage() {
     setActiveSheetId,
     journals,
     selectedJournalId,
+  });
+
+  const handleInlineAccountingEdit = useSmartAccountingInlineEdit({
+    activeSheetId,
+    previewLines,
+    setPreviewLines,
+    setSheets,
+    accounts,
+    partners,
+    analyticAccounts,
   });
 
   const resolveAccountFromValue = (rawValue: string): OdooAccount | null => {
@@ -689,6 +700,7 @@ export default function DocumentIntelligencePage() {
         chatFileInputRef={chatFileInputRef}
         handleSendChatMessage={handleSendChatMessage}
         handleChatFileChange={handleChatFileChange}
+        onInlineEdit={handleInlineAccountingEdit}
         onManualEntry={() => {
           setManualInputText("");
           setShowManualInputModal(true);

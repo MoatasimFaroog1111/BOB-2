@@ -1,0 +1,52 @@
+name: One-time final branch prune
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/one-time-final-branch-prune.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 1
+
+      - name: Delete reviewed obsolete branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branches=(
+            "agent/fix-production-readme-boundaries"
+            "agent/fix-utc-migration-gate"
+            "agent/railway-production-verification"
+            "agent/run-account-recovery-production"
+            "agent/verify-odoo-outbound-policy"
+            "copilot/fix-frontend-lint-build"
+          )
+          for branch in "${branches[@]}"; do
+            echo "Deleting reviewed obsolete branch: $branch"
+            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" || true
+          done
+
+      - name: Remove one-time cleanup workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout main
+          git reset --hard origin/main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm -f .github/workflows/one-time-final-branch-prune.yml .github/workflows/one-time-branch-cleanup.yml
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(repo): remove one-time cleanup workflows"
+            git push origin HEAD:main
+          fi

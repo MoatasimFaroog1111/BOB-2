@@ -16,6 +16,7 @@ import {
 } from "@/features/documents/hooks/useWorksheets";
 import { ManualEntryModal } from "@/features/documents/components/ManualEntryModal";
 import { OdooEntryReviewModal } from "@/features/documents/components/OdooEntryReviewModal";
+import { SmartAccountantPanel } from "@/features/documents/components/SmartAccountantPanel";
 import { SpreadsheetGrid } from "@/features/documents/components/SpreadsheetGrid";
 import {
   normalizeLookupValue,
@@ -38,7 +39,7 @@ const getColLetter = (index: number): string => {
 
 export default function DocumentIntelligencePage() {
   const { t, language } = useLanguage();
-  const { selectedCompanyId } = useCompany();
+  const { selectedCompanyId, selectedCompany } = useCompany();
   
   const {
     sheets, setSheets, activeSheet, activeSheetId, setActiveSheetId,
@@ -669,82 +670,31 @@ export default function DocumentIntelligencePage() {
         </div>
       </div>
 
-      {/* Right Column: AI Chat Panel */}
-      <div className="w-80 md:w-96 bg-black/35 border border-white/10 rounded-2xl p-4 flex flex-col h-full overflow-hidden text-right shadow-2xl backdrop-blur-md" dir="rtl">
-        <div className="border-b border-white/10 pb-3 mb-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-2.5 h-2.5 rounded-full bg-[#107c41] shadow-[0_0_8px_#107c41]" />
-            <h2 className="text-sm font-bold text-white tracking-wide">
-              {language === "ar" ? "مساعد التنسيق الذكي" : "Smart Layout Assistant"}
-            </h2>
-          </div>
-          <span className="text-[9px] font-bold bg-[#107c41]/10 text-[#2ecc71] border border-[#107c41]/30 px-2 py-0.5 rounded-full">AI AGENT</span>
-        </div>
-
-        {/* Messages feed */}
-        <div className="flex-1 overflow-y-auto mb-3 flex flex-col gap-3.5 pr-1">
-          {chatMessages.map((msg, idx) => (
-            <div
-              key={idx}
-              className={`max-w-[85%] p-3 rounded-2xl text-[11.5px] leading-relaxed shadow-sm transition-all ${
-                msg.role === "user"
-                  ? "bg-[#107c41]/10 border border-[#107c41]/25 text-white self-end rounded-br-none"
-                  : "bg-white/10 border border-white/5 text-white/90 self-start rounded-bl-none"
-              }`}
-            >
-              <div className="whitespace-pre-line">{msg.text}</div>
-            </div>
-          ))}
-          {chatLoading && (
-            <div className="bg-white/5 border border-white/5 text-white/70 self-start p-3 rounded-2xl rounded-bl-none max-w-[85%] flex items-center gap-2 text-[11px] animate-pulse">
-              <svg className="animate-spin h-4 w-4 text-[#107c41]" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-              </svg>
-              <span>{language === "ar" ? "جاري التنسيق..." : "Formatting..."}</span>
-            </div>
-          )}
-          <div ref={chatMessagesEndRef} />
-        </div>
-
-        {/* Chat input form */}
-        <form onSubmit={handleSendChatMessage} className="flex gap-2 bg-black/40 border border-white/10 rounded-xl p-1.5 focus-within:border-[#107c41]/50 focus-within:shadow-[0_0_8px_rgba(16,124,65,0.15)] transition-all">
-          <button
-            type="button"
-            onClick={() => chatFileInputRef.current?.click()}
-            disabled={chatLoading || isUploading}
-            className="h-7 w-7 rounded-lg border border-[#d9a441]/30 hover:border-[#d9a441] text-[#d9a441] hover:bg-[#d9a441]/10 flex items-center justify-center cursor-pointer transition-all disabled:opacity-40 disabled:cursor-not-allowed text-[14px]"
-            title={language === "ar" ? "إرفاق مستند وتحليله" : "Attach & analyze document"}
-          >
-            📎
-          </button>
-          
-          <input
-            type="file"
-            ref={chatFileInputRef}
-            onChange={handleChatFileChange}
-            accept=".pdf,.png,.jpg,.jpeg,.xlsx,.xls,.csv"
-            className="hidden"
-          />
-
-          <input
-            type="text"
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            placeholder={language === "ar" ? "اكتب توجيهات التنسيق..." : "Write layout instructions..."}
-            disabled={chatLoading || isUploading}
-            className="flex-1 bg-transparent border-none outline-none text-white text-xs px-2 focus:ring-0 placeholder-white/30 text-right font-sans"
-            dir="rtl"
-          />
-          <button
-            type="submit"
-            disabled={chatLoading || isUploading || !chatInput.trim()}
-            className="h-7 px-3.5 bg-gradient-to-r from-[#107c41] to-[#1ebd60] hover:from-[#1ebd60] hover:to-[#107c41] text-white rounded-lg font-bold text-[10.5px] transition-all flex items-center justify-center cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed shadow-md"
-          >
-            {language === "ar" ? "أرسل" : "Send"}
-          </button>
-        </form>
-      </div>
+      <SmartAccountantPanel
+        language={language}
+        company={selectedCompany}
+        accounts={accounts}
+        partners={partners}
+        analyticAccounts={analyticAccounts}
+        journals={journals}
+        selectedJournalId={selectedJournalId}
+        previewLines={previewLines}
+        gridData={gridData}
+        chatMessages={chatMessages}
+        chatInput={chatInput}
+        setChatInput={setChatInput}
+        chatLoading={chatLoading}
+        isUploading={isUploading}
+        chatMessagesEndRef={chatMessagesEndRef}
+        chatFileInputRef={chatFileInputRef}
+        handleSendChatMessage={handleSendChatMessage}
+        handleChatFileChange={handleChatFileChange}
+        onManualEntry={() => {
+          setManualInputText("");
+          setShowManualInputModal(true);
+        }}
+        onPrepareEntry={handlePrepareOdooSubmission}
+      />
 
       {/* Odoo Journal Entry Proposal Modal */}
       {showOdooModal && (

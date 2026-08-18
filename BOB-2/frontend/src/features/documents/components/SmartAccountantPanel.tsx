@@ -7,6 +7,7 @@ import { SmartAccountantContextView } from "@/features/documents/components/Smar
 import { SmartAccountantQuickActions } from "@/features/documents/components/SmartAccountantQuickActions";
 import {
   buildSmartAccountantCandidateLines,
+  buildSmartAccountantProposalSummary,
   mapPreviewLines,
   verifySmartAccountantContext,
 } from "@/features/documents/model/smartAccountantWorkspace";
@@ -83,6 +84,10 @@ export function SmartAccountantPanel({
     }),
     [company, selectedJournal, lines, accounts, partners, analyticAccounts],
   );
+  const proposal = useMemo(
+    () => buildSmartAccountantProposalSummary({ lines, accounts }),
+    [lines, accounts],
+  );
   const currency = company?.currency || "SAR";
 
   const chooseQuickAction = (prompt: string) => {
@@ -156,6 +161,8 @@ export function SmartAccountantPanel({
           debitTotal={verification.debitTotal}
           creditTotal={verification.creditTotal}
           balanced={verification.balanced}
+          proposal={proposal}
+          verification={verification}
           chatMessages={chatMessages}
           chatInput={chatInput}
           setChatInput={setChatInput}
@@ -166,6 +173,8 @@ export function SmartAccountantPanel({
           handleSendChatMessage={handleSendChatMessage}
           handleChatFileChange={handleChatFileChange}
           inputRef={inputRef}
+          onEditProposal={onPrepareEntry}
+          onApproveProposal={onPrepareEntry}
         />
       ) : (
         <SmartAccountantContextView

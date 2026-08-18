@@ -1,0 +1,31 @@
+name: One-time delete verification branch
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/one-time-delete-verification-branch.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Delete temporary verification branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/release/verify-clean-main-20260818" || true
+      - name: Remove this workflow
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout main
+          git reset --hard origin/main
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/one-time-delete-verification-branch.yml
+          git commit -m "chore(repo): remove temporary verification cleanup workflow"
+          git push origin HEAD:main

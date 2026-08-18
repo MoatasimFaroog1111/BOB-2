@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import type { OdooJournal } from "@/features/documents/model/types";
 
 export type SmartAccountantWorkspaceMode = "assistant" | "sheet";
@@ -8,14 +10,10 @@ export function SmartAccountantCockpitBar({
   language,
   mode,
   onModeChange,
-  companyName,
-  currency,
   journals,
   selectedJournalId,
   onJournalChange,
   journalsLoading,
-  onManualEntry,
-  onReview,
 }: Readonly<{
   language: string;
   mode: SmartAccountantWorkspaceMode;
@@ -30,101 +28,63 @@ export function SmartAccountantCockpitBar({
   onReview: () => void;
 }>) {
   const ar = language === "ar";
+  const [open, setOpen] = useState(false);
 
   return (
-    <section className="shrink-0 rounded-2xl border border-white/10 bg-black/35 p-2.5 shadow-xl backdrop-blur-xl">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex rounded-xl border border-white/10 bg-black/30 p-1">
-          <ModeButton
-            active={mode === "assistant"}
-            onClick={() => onModeChange("assistant")}
-            icon="✦"
-            label={ar ? "مكتب AI" : "AI Desk"}
-          />
-          <ModeButton
-            active={mode === "sheet"}
-            onClick={() => onModeChange("sheet")}
-            icon="▦"
-            label={ar ? "الجدول" : "Spreadsheet"}
-          />
-        </div>
+    <div className="pointer-events-none fixed bottom-5 left-5 z-40" dir={ar ? "rtl" : "ltr"}>
+      <div className="pointer-events-auto flex flex-col items-start gap-2">
+        {open ? (
+          <div className="w-64 rounded-2xl border border-white/10 bg-[#120a05]/95 p-3 shadow-2xl backdrop-blur-xl">
+            <div className="text-[9px] font-bold text-white/45">
+              {ar ? "أدوات متقدمة" : "Advanced tools"}
+            </div>
 
-        <div className="hidden h-7 w-px bg-white/10 md:block" />
+            <label className="mt-3 block text-[9px] font-semibold text-white/45">
+              {ar ? "اليومية" : "Journal"}
+            </label>
+            {journalsLoading ? (
+              <div className="mt-1 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-[10px] text-white/35">
+                ...
+              </div>
+            ) : (
+              <select
+                value={selectedJournalId || ""}
+                onChange={(event) => onJournalChange(event.target.value ? Number(event.target.value) : null)}
+                className="mt-1 w-full rounded-lg border border-white/10 bg-black/30 px-2.5 py-2 text-[10px] font-semibold text-white/80 outline-none"
+                aria-label={ar ? "اختيار اليومية" : "Select journal"}
+              >
+                {journals.map((journal) => (
+                  <option key={journal.id} value={journal.id} className="bg-[#170b04] text-white">
+                    {journal.name} ({journal.code})
+                  </option>
+                ))}
+              </select>
+            )}
 
-        <div className="min-w-[10rem] flex-1 md:flex-none">
-          <div className="text-[8px] font-semibold uppercase tracking-[0.16em] text-white/30">
-            {ar ? "السياق الحالي" : "Current context"}
-          </div>
-          <div className="mt-0.5 truncate text-[10px] font-bold text-white/75">
-            {companyName || (ar ? "لم يتم اختيار شركة" : "No company selected")}
-            {currency ? ` · ${currency}` : ""}
-          </div>
-        </div>
-
-        <div className="flex min-w-[12rem] items-center gap-2 rounded-xl border border-white/10 bg-white/[0.035] px-2.5 py-1.5">
-          <span className="shrink-0 text-[9px] text-white/40">{ar ? "اليومية" : "Journal"}</span>
-          {journalsLoading ? (
-            <span className="text-[10px] text-white/40">...</span>
-          ) : (
-            <select
-              value={selectedJournalId || ""}
-              onChange={(event) => onJournalChange(event.target.value ? Number(event.target.value) : null)}
-              className="min-w-0 flex-1 bg-transparent text-[10px] font-semibold text-white/80 outline-none"
-              aria-label={ar ? "اختيار اليومية" : "Select journal"}
+            <button
+              type="button"
+              onClick={() => {
+                onModeChange(mode === "assistant" ? "sheet" : "assistant");
+                setOpen(false);
+              }}
+              className="mt-3 w-full rounded-lg border border-amber-400/20 bg-amber-400/[0.06] px-3 py-2 text-[10px] font-bold text-amber-200 transition hover:bg-amber-400/10"
             >
-              {journals.map((journal) => (
-                <option key={journal.id} value={journal.id} className="bg-[#170b04] text-white">
-                  {journal.name} ({journal.code})
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
+              {mode === "assistant"
+                ? (ar ? "فتح الجدول المتقدم" : "Open advanced spreadsheet")
+                : (ar ? "العودة للمحاسب الذكي" : "Back to Smart Accountant")}
+            </button>
+          </div>
+        ) : null}
 
-        <div className="flex flex-wrap items-center gap-1.5 md:ms-auto">
-          <button
-            type="button"
-            onClick={onManualEntry}
-            className="rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-[9.5px] font-bold text-white/70 transition hover:bg-white/[0.08] hover:text-white"
-          >
-            {ar ? "✎ إدخال يدوي" : "✎ Manual entry"}
-          </button>
-          <button
-            type="button"
-            onClick={onReview}
-            className="rounded-xl bg-gradient-to-r from-amber-400 to-yellow-500 px-3.5 py-2 text-[9.5px] font-black text-black shadow-lg transition hover:brightness-110"
-          >
-            {ar ? "مراجعة القيد" : "Review entry"}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="rounded-full border border-white/10 bg-black/55 px-3 py-1.5 text-[9px] font-bold text-white/45 shadow-lg backdrop-blur-md transition hover:border-white/20 hover:bg-black/70 hover:text-white/75"
+          aria-expanded={open}
+        >
+          {open ? (ar ? "إغلاق" : "Close") : (ar ? "أدوات" : "Tools")}
+        </button>
       </div>
-    </section>
-  );
-}
-
-function ModeButton({
-  active,
-  onClick,
-  icon,
-  label,
-}: {
-  active: boolean;
-  onClick: () => void;
-  icon: string;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[9.5px] font-bold transition ${
-        active
-          ? "bg-amber-400/15 text-amber-200 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.25)]"
-          : "text-white/45 hover:bg-white/[0.05] hover:text-white/75"
-      }`}
-    >
-      <span>{icon}</span>
-      <span>{label}</span>
-    </button>
+    </div>
   );
 }

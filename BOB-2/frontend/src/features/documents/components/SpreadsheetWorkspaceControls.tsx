@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { useSmartAccountantReviewSubmission } from "@/features/documents/hooks/useSmartAccountantReviewSubmission";
 import { emitSmartAccountantUiAction } from "@/features/documents/model/smartAccountantUiEvents";
 
 export function SpreadsheetWorkspaceControls({
@@ -24,6 +25,11 @@ export function SpreadsheetWorkspaceControls({
   const ar = language === "ar";
   const [open, setOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const bankReview = useSmartAccountantReviewSubmission();
+  const isBankReviewWorkspace = Boolean(bankReview.draft);
+  const bankReviewBusy = bankReview.state === "submitting";
+  const bankReviewSubmitted = bankReview.state === "submitted" || Boolean(bankReview.draft?.submitted);
+  const bankReviewUnavailable = isBankReviewWorkspace && !bankReview.canSubmit && !bankReviewBusy && !bankReviewSubmitted;
 
   useEffect(() => {
     if (!open) return;
@@ -39,14 +45,35 @@ export function SpreadsheetWorkspaceControls({
     setOpen(false);
   };
 
+  const handlePrimaryAction = () => {
+    if (!isBankReviewWorkspace) {
+      emitSmartAccountantUiAction({ type: "review-entry" });
+      return;
+    }
+
+    if (!bankReview.canSubmit || bankReviewBusy || bankReviewSubmitted) return;
+    void bankReview.submit().catch(() => {
+      // The hook exposes the failure inline below the toolbar; avoid a blocking browser alert.
+    });
+  };
+
+  const primaryLabel = isBankReviewWorkspace
+    ? bankReviewBusy
+      ? (ar ? "جاري الإرسال للمراجعة..." : "Sending for review...")
+      : bankReviewSubmitted
+        ? (ar ? "✓ تم الإرسال للمراجعة" : "✓ Sent for review")
+        : (ar ? "↗ إرسال للمراجعة" : "↗ Send for review")
+    : (ar ? "✓ تسجيل القيد" : "✓ Register entry");
+
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-black/20 p-2.5">
       <button
         type="button"
-        onClick={() => emitSmartAccountantUiAction({ type: "review-entry" })}
-        className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[9.5px] font-black text-amber-200 shadow-sm transition hover:bg-amber-400/15 hover:text-amber-100"
+        onClick={handlePrimaryAction}
+        disabled={bankReviewBusy || bankReviewSubmitted || bankReviewUnavailable}
+        className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[9.5px] font-black text-amber-200 shadow-sm transition hover:bg-amber-400/15 hover:text-amber-100 disabled:cursor-not-allowed disabled:opacity-55"
       >
-        {ar ? "✓ تسجيل القيد" : "✓ Register entry"}
+        {primaryLabel}
       </button>
 
       <div className="relative" ref={menuRef}>
@@ -77,8 +104,16 @@ export function SpreadsheetWorkspaceControls({
         {ar ? "تصدير CSV" : "Export CSV"}
       </button>
 
+      {bankReview.error ? (
+        <span className="max-w-md truncate text-[8.5px] font-semibold text-red-300" title={bankReview.error}>
+          {ar ? "تعذر إرسال مراجعة البنك — راجع الاتصال ثم أعد المحاولة" : "Bank review submission failed — check the connection and retry"}
+        </span>
+      ) : null}
+
       <span className="ms-auto text-[8.5px] text-white/35">
-        {ar ? "الجدول أداة مساعدة — مكتب AI هو مساحة العمل الأساسية" : "Spreadsheet is a tool — AI Desk is the primary workspace"}
+        {isBankReviewWorkspace
+          ? (ar ? "كشف البنك يمر عبر المدقق الذكي قبل أي ترحيل إلى Odoo" : "Bank review goes through Smart Auditor before any Odoo posting")
+          : (ar ? "الجدول أداة مساعدة — مكتب AI هو مساحة العمل الأساسية" : "Spreadsheet is a tool — AI Desk is the primary workspace")}
       </span>
     </div>
   );

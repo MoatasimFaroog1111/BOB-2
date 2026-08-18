@@ -37,7 +37,7 @@ jobs:
             fi
           done
 
-      - name: Delete branches already contained in main
+      - name: Delete branches identical to or contained in main
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -50,6 +50,12 @@ jobs:
             case "$branch" in
               HEAD|main) continue ;;
             esac
+
+            if git diff --quiet origin/main "$remote_ref"; then
+              echo "Deleting branch with tree identical to main: $branch"
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" || true
+              continue
+            fi
 
             if git merge-base --is-ancestor "$remote_ref" origin/main; then
               echo "Deleting branch already contained in main: $branch"
@@ -79,9 +85,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          rm -f .github/workflows/one-time-branch-cleanup.yml
-          git add .github/workflows/one-time-branch-cleanup.yml
-          git commit -m "chore(repo): remove one-time branch cleanup workflow"
-          git push origin HEAD:main
+          git fetch origin main
+          git checkout main
+          git reset --hard origin/main
+          if [[ -f .github/workflows/one-time-branch-cleanup.yml ]]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git rm .github/workflows/one-time-branch-cleanup.yml
+            git commit -m "chore(repo): remove one-time branch cleanup workflow"
+            git push origin HEAD:main
+          fi

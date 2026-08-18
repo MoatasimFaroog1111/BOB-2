@@ -1,0 +1,71 @@
+name: One-time branch cleanup
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/one-time-branch-cleanup.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-time-branch-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Delete branches already merged into main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --prune origin '+refs/heads/*:refs/remotes/origin/*'
+
+          while IFS= read -r remote_ref; do
+            branch="${remote_ref#origin/}"
+            case "$branch" in
+              HEAD|main) continue ;;
+            esac
+
+            if git merge-base --is-ancestor "$remote_ref" origin/main; then
+              echo "Deleting merged branch: $branch"
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" || true
+            fi
+          done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin)
+
+      - name: Delete explicitly rejected PR branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for pr in 124 125 127 128 129 130 160 161 182; do
+            state="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq '.state')"
+            merged="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq '.merged_at // ""')"
+            head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq '.head.repo.full_name // ""')"
+            branch="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq '.head.ref')"
+
+            if [[ "$state" == "closed" && -z "$merged" && "$head_repo" == "$GITHUB_REPOSITORY" && "$branch" != "main" ]]; then
+              echo "Deleting rejected PR #${pr} branch: $branch"
+              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/git/refs/heads/${branch}" || true
+            fi
+          done
+
+      - name: Remove this one-time workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/one-time-branch-cleanup.yml
+          git add .github/workflows/one-time-branch-cleanup.yml
+          git commit -m "chore(repo): remove one-time branch cleanup workflow"
+          git push origin HEAD:main

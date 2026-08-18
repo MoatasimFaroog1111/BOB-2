@@ -3,11 +3,17 @@
 import React from "react";
 
 import { SmartAccountingProposalCard } from "@/features/documents/components/SmartAccountingProposalCard";
+import type { SmartAccountingInlineEdit } from "@/features/documents/model/smartAccountingInlineEdit";
 import {
   formatAccountingMoney,
   type SmartAccountantProposalSummary,
   type SmartAccountantVerification,
 } from "@/features/documents/model/smartAccountantWorkspace";
+import type {
+  OdooAccount,
+  OdooAnalyticAccount,
+  OdooPartner,
+} from "@/features/documents/model/types";
 
 type ChatMessage = { role: "user" | "assistant"; text: string };
 
@@ -20,6 +26,9 @@ export function SmartAccountantChatView({
   balanced,
   proposal,
   verification,
+  accounts,
+  partners,
+  analyticAccounts,
   chatMessages,
   chatInput,
   setChatInput,
@@ -30,6 +39,7 @@ export function SmartAccountantChatView({
   handleSendChatMessage,
   handleChatFileChange,
   inputRef,
+  onInlineEdit,
   onEditProposal,
   onApproveProposal,
 }: Readonly<{
@@ -41,6 +51,9 @@ export function SmartAccountantChatView({
   balanced: boolean;
   proposal: SmartAccountantProposalSummary;
   verification: SmartAccountantVerification;
+  accounts: OdooAccount[];
+  partners: OdooPartner[];
+  analyticAccounts: OdooAnalyticAccount[];
   chatMessages: ChatMessage[];
   chatInput: string;
   setChatInput: (value: string) => void;
@@ -51,6 +64,7 @@ export function SmartAccountantChatView({
   handleSendChatMessage: (event: React.FormEvent) => void;
   handleChatFileChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
   inputRef: React.RefObject<HTMLInputElement | null>;
+  onInlineEdit: (edit: SmartAccountingInlineEdit) => void;
   onEditProposal: () => void;
   onApproveProposal: () => void;
 }>) {
@@ -87,6 +101,10 @@ export function SmartAccountantChatView({
           proposal={proposal}
           verification={verification}
           lineCount={lineCount}
+          accounts={accounts}
+          partners={partners}
+          analyticAccounts={analyticAccounts}
+          onInlineEdit={onInlineEdit}
           onEdit={onEditProposal}
           onApprove={onApproveProposal}
         />

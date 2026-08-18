@@ -10,6 +10,8 @@ export function MainNavigation() {
   const { t, language } = useLanguage();
   const pathname = usePathname();
 
+  if (pathname?.startsWith("/documents")) return null;
+
   const items = [
     ["/bank-reconciliation", t("bankRecon.pageTitle")],
     ["/documents", language === "ar" ? "المحاسب الذكي" : t("sidebar.documents")],

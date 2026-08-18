@@ -28,6 +28,16 @@ export type SmartAccountantVerification = {
   analyticCount: number;
 };
 
+export type SmartAccountantProposalSummary = {
+  partnerName: string;
+  primaryAccountCode: string;
+  primaryAccountName: string;
+  analyticName: string;
+  taxAmount: number;
+  taxAccountCode: string;
+  taxAccountName: string;
+};
+
 export function buildSmartAccountantCandidateLines(
   gridData: string[][],
 ): SmartAccountantCandidateLine[] {
@@ -64,6 +74,33 @@ export function mapPreviewLines(
     partnerName: line.partner_name,
     analyticName: line.analytic_account_name,
   }));
+}
+
+export function buildSmartAccountantProposalSummary({
+  lines,
+  accounts,
+}: {
+  lines: SmartAccountantCandidateLine[];
+  accounts: OdooAccount[];
+}): SmartAccountantProposalSummary {
+  const accountByCode = new Map(accounts.map((account) => [account.code, account]));
+  const taxLine = lines.find((line) => {
+    const account = accountByCode.get(line.accountCode);
+    return Boolean(account && isVatAccount(account.name));
+  });
+  const primaryLine = lines.find((line) => line !== taxLine && Boolean(line.accountCode)) || lines[0];
+  const primaryAccount = primaryLine ? accountByCode.get(primaryLine.accountCode) : undefined;
+  const taxAccount = taxLine ? accountByCode.get(taxLine.accountCode) : undefined;
+
+  return {
+    partnerName: lines.find((line) => line.partnerName)?.partnerName || "",
+    primaryAccountCode: primaryLine?.accountCode || "",
+    primaryAccountName: primaryAccount?.name || "",
+    analyticName: lines.find((line) => line.analyticName)?.analyticName || "",
+    taxAmount: taxLine ? Math.max(taxLine.debit, taxLine.credit) : 0,
+    taxAccountCode: taxLine?.accountCode || "",
+    taxAccountName: taxAccount?.name || "",
+  };
 }
 
 export function verifySmartAccountantContext({
@@ -134,4 +171,13 @@ function parseAmount(value: string | undefined): number {
   if (!value) return 0;
   const parsed = Number(value.replace(/,/g, "").trim());
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function isVatAccount(accountName: string): boolean {
+  const normalized = accountName.trim().toLocaleLowerCase();
+  return (
+    normalized.includes("vat") ||
+    normalized.includes("value added tax") ||
+    normalized.includes("ضريبة القيمة المضافة")
+  );
 }

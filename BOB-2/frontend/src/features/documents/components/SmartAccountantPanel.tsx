@@ -44,6 +44,7 @@ type SmartAccountantPanelProps = Readonly<{
   onInlineEdit: (edit: SmartAccountingInlineEdit) => void;
   onManualEntry: () => void;
   onPrepareEntry: () => void;
+  variant?: "rail" | "focus";
 }>;
 
 export function SmartAccountantPanel({
@@ -68,6 +69,7 @@ export function SmartAccountantPanel({
   onInlineEdit,
   onManualEntry,
   onPrepareEntry,
+  variant = "rail",
 }: SmartAccountantPanelProps) {
   const ar = language === "ar";
   const inputRef = useRef<HTMLInputElement>(null);
@@ -99,13 +101,17 @@ export function SmartAccountantPanel({
     window.requestAnimationFrame(() => inputRef.current?.focus());
   };
 
+  const widthClass = variant === "focus"
+    ? "w-full min-w-0"
+    : "w-[22rem] shrink-0 xl:w-[25rem]";
+
   return (
     <aside
-      className="flex h-full w-[22rem] shrink-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/35 text-right shadow-2xl backdrop-blur-md xl:w-[25rem]"
+      className={`flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/35 text-right shadow-2xl backdrop-blur-md ${widthClass}`}
       dir={ar ? "rtl" : "ltr"}
     >
-      <header className="border-b border-white/10 px-4 pb-3 pt-4">
-        <div className="flex items-center justify-between gap-3">
+      <header className="shrink-0 border-b border-white/10 px-4 pb-3 pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_9px_rgba(52,211,153,0.9)]" />
@@ -137,7 +143,7 @@ export function SmartAccountantPanel({
         </div>
       </header>
 
-      <div className="flex border-b border-white/10 bg-black/20 px-3 pt-2">
+      <div className="flex shrink-0 border-b border-white/10 bg-black/20 px-3 pt-2">
         {(["chat", "context"] as const).map((view) => (
           <button
             key={view}

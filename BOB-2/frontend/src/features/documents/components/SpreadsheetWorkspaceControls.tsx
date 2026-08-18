@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { emitSmartAccountantUiAction } from "@/features/documents/model/smartAccountantUiEvents";
+
 export function SpreadsheetWorkspaceControls({
   language,
   onAddRow,
@@ -39,6 +41,14 @@ export function SpreadsheetWorkspaceControls({
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-black/20 p-2.5">
+      <button
+        type="button"
+        onClick={() => emitSmartAccountantUiAction({ type: "review-entry" })}
+        className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[9.5px] font-black text-amber-200 shadow-sm transition hover:bg-amber-400/15 hover:text-amber-100"
+      >
+        {ar ? "✓ تسجيل القيد" : "✓ Register entry"}
+      </button>
+
       <div className="relative" ref={menuRef}>
         <button
           type="button"

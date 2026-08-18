@@ -2,7 +2,8 @@ export const SMART_ACCOUNTANT_UI_ACTION_EVENT = "guardian:smart-accountant-ui-ac
 
 export type SmartAccountantUiAction =
   | { type: "prompt"; prompt: string }
-  | { type: "analyze-document" };
+  | { type: "analyze-document" }
+  | { type: "review-entry" };
 
 export function emitSmartAccountantUiAction(action: SmartAccountantUiAction) {
   if (typeof window === "undefined") return;

@@ -20,7 +20,35 @@ def _kb_file_path() -> Path:
     return STORAGE_DIR / f"organization_{organization_id}.json"
 
 
+_DISCOVERY_METHODS = (
+    "get_company_info",
+    "discover_accounts",
+    "discover_journals",
+    "discover_taxes",
+    "discover_partners",
+    "discover_analytic_accounts",
+    "discover_products",
+    "discover_employees",
+)
+
+
+def _supports_discovery(provider: Any) -> bool:
+    # Checked by method presence rather than `isinstance(provider,
+    # ERPDiscoveryProvider)`: the Protocol also declares provider_name/url/db,
+    # which older structural test doubles predate. Method presence is the
+    # actual discovery capability that matters here.
+    return all(callable(getattr(provider, name, None)) for name in _DISCOVERY_METHODS)
+
+
 def run_discovery_orchestrator(provider: ERPDiscoveryProvider) -> dict[str, Any]:
+    if not _supports_discovery(provider):
+        provider_name = getattr(provider, "provider_name", type(provider).__name__)
+        raise ValueError(
+            f"ERP provider '{provider_name}' does not support structure discovery "
+            "(chart of accounts, journals, taxes, partners, cost centers, products, "
+            "employees). Discovery is currently only available for the 'odoo' provider."
+        )
+
     organization_id = current_organization_id(required=True)
     assert organization_id is not None
     logger.info("Starting tenant-scoped ERP Discovery Engine orchestrator.")

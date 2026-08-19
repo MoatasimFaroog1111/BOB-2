@@ -10,7 +10,7 @@ Enterprise-grade AI accounting, auditing, tax compliance, and ERP execution plat
 
 ## Prerequisites
 
-- **Python** 3.11+
+- **Python** 3.12+ (`requirements.txt` pins `numpy==2.5.2`, which requires Python >=3.12; the production `Dockerfile` builds on `python:3.12-slim`)
 - **Node.js** 20+
 - **PostgreSQL** 15+
 - **Tesseract OCR** (for document scanning)

@@ -1,5 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
 import type {
   OdooAccount,
   OdooAnalyticAccount,
@@ -66,24 +68,22 @@ export function OdooEntryReviewModal(props: OdooEntryReviewModalProps) {
   } = props;
 
   return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-6 select-none">
-          <div className="wood-panel rounded-[24px] border border-yellow-500/20 shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
+    <Modal onClose={onClose} panelClassName="wood-panel rounded-[24px] border border-yellow-500/20 shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden">
+      {(titleId) => (
+        <>
             {/* Header */}
             <div className="flex justify-between items-center px-6 py-4 border-b border-white/10 bg-black/40">
               <div className="flex flex-col">
-                <h2 className="text-sm font-bold bg-gradient-to-r from-amber-300 to-yellow-500 bg-clip-text text-transparent">
+                <h2 id={titleId} className="text-sm font-bold bg-gradient-to-r from-amber-300 to-yellow-500 bg-clip-text text-transparent">
                   {t("excel.odooJournalTitle")}
                 </h2>
                 <p className="text-[10px] text-white/50 mt-0.5">
                   {t("excel.odooJournalDesc")}
                 </p>
               </div>
-              <button
-                onClick={() => onClose()}
-                className="h-6 px-2.5 rounded-full border border-white/15 hover:border-white/30 text-white/60 hover:text-white text-[10px] font-bold cursor-pointer"
-              >
+              <Button variant="ghost" onClick={() => onClose()}>
                 {t("team.close")}
-              </button>
+              </Button>
             </div>
 
             {/* Scrollable Form Body */}
@@ -345,16 +345,14 @@ export function OdooEntryReviewModal(props: OdooEntryReviewModalProps) {
 
             {/* Footer Buttons */}
             <div className="px-6 py-4 bg-black/40 border-t border-white/10 flex justify-end gap-3">
-              <button
-                onClick={() => onClose()}
-                className="h-9 px-4 rounded-xl border border-white/15 hover:border-white/30 text-white/70 hover:text-white font-bold text-xs cursor-pointer transition-all"
-              >
+              <Button variant="secondary" onClick={() => onClose()}>
                 {language === "ar" ? "إلغاء" : "Cancel"}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="primary"
                 onClick={executeOdooRegistration}
                 disabled={isRegistering || !isBalanced || previewLines.some((l) => l.account_id === 0)}
-                className="h-9 px-5 rounded-xl bg-gradient-to-br from-[#221205] to-[#0f0701] border border-green-500 text-green-400 font-bold text-xs shadow-[0_0_12px_rgba(16,185,129,0.2)] hover:shadow-[0_0_20px_rgba(16,185,129,0.5)] transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                className="flex items-center gap-1.5"
               >
                 {isRegistering ? (
                   <>
@@ -370,10 +368,10 @@ export function OdooEntryReviewModal(props: OdooEntryReviewModalProps) {
                     <span>{language === "ar" ? "تأكيد وتسجيل القيد في أودو" : "Confirm & Register in Odoo"}</span>
                   </>
                 )}
-              </button>
+              </Button>
             </div>
-          </div>
-        </div>
-
+        </>
+      )}
+    </Modal>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
-import { useLanguage } from "@/lib/LanguageContext";
+import React, { useCallback, useState, useEffect, useRef } from "react";
 import { useCompany } from "@/lib/CompanyContext";
 import { API_BASE_URL } from "@/lib/api";
 
@@ -32,7 +31,6 @@ interface MoveTransaction {
 }
 
 export default function AuditPage() {
-  const { t, language } = useLanguage();
   const { selectedCompanyId } = useCompany();
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
 
@@ -53,7 +51,7 @@ export default function AuditPage() {
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [searched, setSearched] = useState(false);
 
-  const fetchAccounts = async () => {
+  const fetchAccounts = useCallback(async () => {
     try {
       const companyParam = selectedCompanyId ? `?company_id=${selectedCompanyId}` : "";
       const response = await fetch(`${API_BASE_URL}/api/v1/erp/accounts${companyParam}`);
@@ -64,11 +62,11 @@ export default function AuditPage() {
     } catch (err) {
       console.error("Failed to fetch accounts:", err);
     }
-  };
+  }, [selectedCompanyId]);
 
   useEffect(() => {
-    fetchAccounts();
-  }, [selectedCompanyId]);
+    void fetchAccounts();
+  }, [fetchAccounts]);
 
   const handleDetectAttachments = async () => {
     setLoading(true);

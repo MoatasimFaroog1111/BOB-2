@@ -386,24 +386,28 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
       setError("");
       setNotice("");
 
+      let accountOptions: LookupOption[] = [];
+      let partnerOptions: LookupOption[] = [];
+      let analyticOptions: LookupOption[] = [];
+
       try {
         const qs = effectiveCompanyId ? `?company_id=${effectiveCompanyId}` : "";
 
         const accountsResponse = await fetch(`${API_BASE_URL}/api/v1/erp/accounts${qs}`);
         const accountsData = await jsonOrNull(accountsResponse);
-        const accountOptions = accountsResponse.ok ? asOptions(accountsData) : [];
+        accountOptions = accountsResponse.ok ? asOptions(accountsData) : [];
         if (alive) setAccounts(accountOptions);
         await delay(250);
 
         const partnersResponse = await fetch(`${API_BASE_URL}/api/v1/erp/partners${qs}`);
         const partnersData = await jsonOrNull(partnersResponse);
-        const partnerOptions = partnersResponse.ok ? asOptions(partnersData) : [];
+        partnerOptions = partnersResponse.ok ? asOptions(partnersData) : [];
         if (alive) setPartners(partnerOptions);
         await delay(250);
 
         const analyticsResponse = await fetch(`${API_BASE_URL}/api/v1/erp/analytic-accounts${qs}`);
         const analyticsData = await jsonOrNull(analyticsResponse);
-        const analyticOptions = analyticsResponse.ok ? asOptions(analyticsData) : [];
+        analyticOptions = analyticsResponse.ok ? asOptions(analyticsData) : [];
         if (alive) setAnalytics(analyticOptions);
         await delay(300);
 
@@ -445,7 +449,7 @@ export default function HistoricalJournalEntrySuggestionsEditor({ rows, isAr, co
         if (historyWarning) setError(historyWarning);
       } catch (err: any) {
         if (!alive) return;
-        const fallbackRows = rows.map(row => applySuggestion(row, null, accounts, partners, analytics));
+        const fallbackRows = rows.map(row => applySuggestion(row, null, accountOptions, partnerOptions, analyticOptions));
         setSuggestedRows(fallbackRows);
         setError((isAr ? "تعذر تحميل بيانات أودو بالكامل، وتم استخدام المتاح فقط: " : "Could not fully load Odoo data; using available data only: ") + (err?.message || err));
       } finally {

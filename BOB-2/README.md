@@ -8,6 +8,9 @@ Enterprise-grade AI accounting, auditing, tax compliance, and ERP execution plat
 - `frontend/` Next.js frontend (TypeScript)
 - `storage/`  Local development storage
 
+For a complete local setup, validation, and pull-request checklist, see
+[`docs/DEVELOPER_ONBOARDING.md`](docs/DEVELOPER_ONBOARDING.md).
+
 ## Prerequisites
 
 - **Python** 3.12+ (`requirements.txt` pins `numpy==2.5.2`, which requires Python >=3.12; the production `Dockerfile` builds on `python:3.12-slim`)

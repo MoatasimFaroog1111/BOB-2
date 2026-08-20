@@ -66,11 +66,6 @@ const headerMatches = (header: string, aliases: string[]): boolean => {
 
 const findColumn = (headers: string[], aliases: string[]): number => headers.findIndex((header) => headerMatches(header, aliases));
 
-const findByAliases = (headers: string[], row: SheetRow, aliases: string[]): string => {
-  const idx = findColumn(headers, aliases);
-  return idx >= 0 ? String(row.cells[idx] || "").trim() : "";
-};
-
 const extractOdooMoveIdFromValue = (value: string): number | null => {
   const raw = String(value || "").replace(/&amp;/g, "&").trim();
   if (!raw) return null;

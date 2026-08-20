@@ -4,6 +4,24 @@ export type AccountingIntelligenceStatus = {
   status: string;
   learning_examples: number;
   latest_learning_example_at: string | null;
+  latest_learning_update_at: string | null;
+  last_sync: null | {
+    at: string | null;
+    summary: {
+      examples_read: number;
+      created: number;
+      updated: number;
+      unchanged: number;
+      vector_indexed: number;
+    };
+    company_id?: number | null;
+    date_from?: string | null;
+    date_to?: string | null;
+  };
+  company_scope: {
+    company_id: number | null;
+    applied: boolean;
+  };
   mode: string;
   auto_posting: boolean;
 };
@@ -162,8 +180,9 @@ export type ReviewedDraftResult = {
   };
 };
 
-export function fetchAccountingIntelligenceStatus() {
-  return requestJson<AccountingIntelligenceStatus>("/api/v1/accounting-intelligence/status");
+export function fetchAccountingIntelligenceStatus(companyId?: number | null) {
+  const query = companyId ? `?company_id=${encodeURIComponent(String(companyId))}` : "";
+  return requestJson<AccountingIntelligenceStatus>(`/api/v1/accounting-intelligence/status${query}`);
 }
 
 export function syncAccountingLearning(payload: AccountingLearningSyncRequest) {

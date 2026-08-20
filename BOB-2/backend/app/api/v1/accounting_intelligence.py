@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -84,9 +84,13 @@ class AccountingDraftCreateRequest(BaseModel):
 def accounting_intelligence_status(
     db: Session = Depends(get_db),
     principal: dict = Depends(require_permission("view_financials")),
+    company_id: int | None = Query(default=None, ge=1),
 ):
     organization_id = organization_id_from_principal(principal)
-    return AccountingPersistedInferenceService(db).status(organization_id=organization_id)
+    return AccountingPersistedInferenceService(db).status(
+        organization_id=organization_id,
+        company_id=company_id,
+    )
 
 
 @router.post("/learn/sync")

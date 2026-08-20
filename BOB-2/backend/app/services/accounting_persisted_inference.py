@@ -50,8 +50,13 @@ class AccountingPersistedInferenceService:
         except Exception as exc:
             return AccountingReferenceCatalog(), False, type(exc).__name__
 
-    def status(self, *, organization_id: int) -> dict[str, Any]:
-        base = self.legacy_service.status(organization_id=organization_id)
+    def status(
+        self,
+        *,
+        organization_id: int,
+        company_id: int | None = None,
+    ) -> dict[str, Any]:
+        base = self.legacy_service.status(organization_id=organization_id, company_id=company_id)
         bundle_status = self.persisted_predictor.loader.status()
         return {
             **base,

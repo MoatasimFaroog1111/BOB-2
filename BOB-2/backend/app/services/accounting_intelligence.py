@@ -226,6 +226,16 @@ class AccountingIntelligenceService:
             "products": len(catalog.products),
         }
 
+    @staticmethod
+    def _learned_company_id(classification: dict | None) -> int:
+        classification = classification or {}
+        source = classification.get("source") or {}
+        feature_metadata = source.get("feature_metadata") or {}
+        try:
+            return int(feature_metadata.get("company_id") or 0)
+        except (TypeError, ValueError):
+            return 0
+
     def _learning_examples(
         self,
         organization_id: int,
@@ -246,15 +256,9 @@ class AccountingIntelligenceService:
         for row in rows:
             classification = row.classification or {}
             if company_id:
-                source = classification.get("source") or {}
-                feature_metadata = source.get("feature_metadata") or {}
-                try:
-                    learned_company_id = int(feature_metadata.get("company_id") or 0)
-                except (TypeError, ValueError):
-                    learned_company_id = 0
                 # Unknown/legacy company ownership is excluded from a company-scoped
                 # prediction rather than risking cross-company accounting evidence.
-                if learned_company_id != int(company_id):
+                if self._learned_company_id(classification) != int(company_id):
                     continue
             outputs = classification.get("outputs") or {}
             features = classification.get("learning_features") or {}
@@ -325,28 +329,84 @@ class AccountingIntelligenceService:
             prediction.setdefault("warnings", []).append(finding["message"])
         return prediction
 
-    def status(self, *, organization_id: int) -> dict[str, Any]:
-        learned = (
-            self.db.query(AIDocumentEmbedding)
+    def status(
+        self,
+        *,
+        organization_id: int,
+        company_id: int | None = None,
+    ) -> dict[str, Any]:
+        # Column-only projection keeps the status call light even for large orgs:
+        # embedding vectors are never loaded just to count examples.
+        learned_rows = (
+            self.db.query(
+                AIDocumentEmbedding.classification,
+                AIDocumentEmbedding.created_at,
+                AIDocumentEmbedding.updated_at,
+            )
             .filter(
                 AIDocumentEmbedding.organization_id == organization_id,
                 AIDocumentEmbedding.source_type == LEARNING_SOURCE_TYPE,
             )
-            .count()
+            .order_by(AIDocumentEmbedding.updated_at.desc(), AIDocumentEmbedding.created_at.desc())
+            .all()
         )
-        latest = (
-            self.db.query(AIDocumentEmbedding)
+        if company_id:
+            learned_rows = [
+                row for row in learned_rows if self._learned_company_id(row[0]) == int(company_id)
+            ]
+
+        latest_created_at = None
+        latest_update_at = None
+        for _classification, created_at, updated_at in learned_rows:
+            if created_at and (latest_created_at is None or created_at > latest_created_at):
+                latest_created_at = created_at
+            stamp = updated_at or created_at
+            if stamp and (latest_update_at is None or stamp > latest_update_at):
+                latest_update_at = stamp
+
+        # Sync audit rows are the durable record of real sync runs. A run that finds
+        # nothing new still lands here, so "last sync" reflects actual sync activity
+        # and not just embedding writes.
+        sync_rows = (
+            self.db.query(AIDecisionAuditLog)
             .filter(
-                AIDocumentEmbedding.organization_id == organization_id,
-                AIDocumentEmbedding.source_type == LEARNING_SOURCE_TYPE,
+                AIDecisionAuditLog.organization_id == organization_id,
+                AIDecisionAuditLog.decision_type == "erp_learning_sync",
             )
-            .order_by(AIDocumentEmbedding.created_at.desc())
-            .first()
+            .order_by(AIDecisionAuditLog.created_at.desc())
+            .limit(200)
+            .all()
         )
+        if company_id:
+            sync_rows = [
+                row
+                for row in sync_rows
+                if int((row.payload or {}).get("company_id") or 0) == int(company_id)
+            ]
+        latest_sync = sync_rows[0] if sync_rows else None
+        last_sync: dict[str, Any] | None = None
+        if latest_sync:
+            payload = latest_sync.payload or {}
+            last_sync = {
+                "at": latest_sync.created_at.isoformat() if latest_sync.created_at else None,
+                "summary": {
+                    "examples_read": payload.get("examples_read", 0),
+                    "created": payload.get("created", 0),
+                    "updated": payload.get("updated", 0),
+                    "unchanged": payload.get("unchanged", 0),
+                    "vector_indexed": payload.get("vector_indexed", 0),
+                },
+                "company_id": payload.get("company_id"),
+                "date_from": payload.get("date_from"),
+                "date_to": payload.get("date_to"),
+            }
         return {
             "status": "success",
-            "learning_examples": learned,
-            "latest_learning_example_at": latest.created_at.isoformat() if latest else None,
+            "learning_examples": len(learned_rows),
+            "latest_learning_example_at": latest_created_at.isoformat() if latest_created_at else None,
+            "latest_learning_update_at": latest_update_at.isoformat() if latest_update_at else None,
+            "last_sync": last_sync,
+            "company_scope": {"company_id": company_id, "applied": bool(company_id)},
             "mode": "hybrid_deep_semantic_structured_learning",
             "auto_posting": False,
         }

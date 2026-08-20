@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta
+
 from app.ml.accounting_intelligence.contracts import AccountingReferenceCatalog
 from app.ml.accounting_intelligence.feature_engineering import (
     amount_bucket,
@@ -8,6 +10,8 @@ from app.ml.accounting_intelligence.hybrid_learner import (
     RetrievedLearningExample,
 )
 from app.ml.accounting_intelligence.odoo_learning_source import OdooAccountingLearningSource
+from app.models.ai_accounting import AIDecisionAuditLog, AIDocumentEmbedding
+from app.services.accounting_intelligence import LEARNING_SOURCE_TYPE, AccountingIntelligenceService
 
 
 def test_feature_text_does_not_accept_target_account_fields():
@@ -161,3 +165,168 @@ def test_low_evidence_never_enables_auto_posting():
     assert result["confidence"] == 0.0
     assert result["warnings"]
     assert result["audit_safe"]["auto_posted_to_erp"] is False
+
+
+# ---------------------------------------------------------------------------
+# Learning-memory status: company scoping, real last-update, and last-sync.
+# ---------------------------------------------------------------------------
+
+
+def _seed_learning_row(db, *, organization_id, company_id, source_reference, created_at, updated_at):
+    row = AIDocumentEmbedding(
+        organization_id=organization_id,
+        source_type=LEARNING_SOURCE_TYPE,
+        source_reference=source_reference,
+        text_hash=f"hash:{source_reference}",
+        text_preview="historical entry preview",
+        embedding_model="test-local",
+        embedding_dimension=2,
+        embedding_vector=[0.25, 0.75],
+        classification={
+            "document_type": "erp_historical_entry",
+            "outputs": {"debit_account_ids": [10], "credit_account_ids": [30]},
+            "source": {"feature_metadata": {"company_id": company_id}},
+        },
+        confidence_score=1.0,
+        created_at=created_at,
+        updated_at=updated_at,
+    )
+    db.add(row)
+    return row
+
+
+def _seed_sync_log(db, *, organization_id, company_id, created_at, overrides=None):
+    row = AIDecisionAuditLog(
+        organization_id=organization_id,
+        decision_type="erp_learning_sync",
+        entity_type="accounting_intelligence",
+        confidence_score=1.0,
+        explanation="test learning sync",
+        payload={
+            "examples_read": 5,
+            "created": 1,
+            "updated": 2,
+            "unchanged": 2,
+            "vector_indexed": 3,
+            "company_id": company_id,
+            **(overrides or {}),
+        },
+        created_at=created_at,
+        updated_at=created_at,
+    )
+    db.add(row)
+    return row
+
+
+def test_status_scopes_learning_examples_to_selected_company(db):
+    base = datetime(2026, 8, 1, 10, 0, 0)
+    for company_id, ref in ((7, "account.move:7"), (8, "account.move:8"), (0, "account.move:legacy")):
+        _seed_learning_row(
+            db,
+            organization_id=1,
+            company_id=company_id,
+            source_reference=ref,
+            created_at=base,
+            updated_at=base,
+        )
+    db.commit()
+
+    service = AccountingIntelligenceService(db)
+    org_wide = service.status(organization_id=1)
+    assert org_wide["learning_examples"] == 3
+    assert org_wide["company_scope"] == {"company_id": None, "applied": False}
+
+    scoped = service.status(organization_id=1, company_id=7)
+    assert scoped["learning_examples"] == 1
+    assert scoped["company_scope"] == {"company_id": 7, "applied": True}
+    assert service.status(organization_id=1, company_id=8)["learning_examples"] == 1
+    # The legacy/unknown-company row (company_id=0) is excluded from every
+    # scoped count, matching the prediction-time cross-company safety rule.
+
+
+def test_status_latest_memory_update_uses_updated_at_not_created_at(db):
+    base = datetime(2026, 8, 1, 10, 0, 0)
+    _seed_learning_row(
+        db,
+        organization_id=1,
+        company_id=7,
+        source_reference="account.move:refreshed",
+        created_at=base,
+        updated_at=base + timedelta(hours=2),
+    )
+    _seed_learning_row(
+        db,
+        organization_id=1,
+        company_id=7,
+        source_reference="account.move:newer-created",
+        created_at=base + timedelta(hours=1),
+        updated_at=base + timedelta(hours=1),
+    )
+    db.commit()
+
+    status = AccountingIntelligenceService(db).status(organization_id=1, company_id=7)
+    assert status["latest_learning_example_at"] == (base + timedelta(hours=1)).isoformat()
+    assert status["latest_learning_update_at"] == (base + timedelta(hours=2)).isoformat()
+
+
+def test_status_reports_last_sync_scoped_to_company(db):
+    base = datetime(2026, 8, 1, 10, 0, 0)
+    _seed_sync_log(db, organization_id=1, company_id=7, created_at=base)
+    _seed_sync_log(db, organization_id=1, company_id=8, created_at=base + timedelta(hours=1))
+    _seed_sync_log(
+        db,
+        organization_id=1,
+        company_id=7,
+        created_at=base + timedelta(hours=2),
+        overrides={"examples_read": 9, "created": 4, "updated": 3, "unchanged": 2},
+    )
+    db.commit()
+
+    service = AccountingIntelligenceService(db)
+    scoped = service.status(organization_id=1, company_id=7)
+    assert scoped["last_sync"] is not None
+    assert scoped["last_sync"]["at"] == (base + timedelta(hours=2)).isoformat()
+    assert scoped["last_sync"]["summary"]["created"] == 4
+    assert scoped["last_sync"]["summary"]["updated"] == 3
+    assert scoped["last_sync"]["summary"]["unchanged"] == 2
+
+    # The company-8 sync is newer than the first company-7 sync but must never
+    # leak into the company-7 scoped view.
+    assert scoped["last_sync"]["company_id"] == 7
+    org_wide = service.status(organization_id=1)
+    assert org_wide["last_sync"]["at"] == (base + timedelta(hours=2)).isoformat()
+
+
+def test_status_endpoint_scopes_by_company_query_param(client, auth_headers, db):
+    base = datetime(2026, 8, 1, 10, 0, 0)
+    _seed_learning_row(
+        db,
+        organization_id=1,
+        company_id=7,
+        source_reference="account.move:7",
+        created_at=base,
+        updated_at=base,
+    )
+    _seed_learning_row(
+        db,
+        organization_id=1,
+        company_id=8,
+        source_reference="account.move:8",
+        created_at=base,
+        updated_at=base,
+    )
+    db.commit()
+
+    scoped = client.get("/api/v1/accounting-intelligence/status?company_id=7", headers=auth_headers)
+    assert scoped.status_code == 200, scoped.text
+    assert scoped.json()["learning_examples"] == 1
+    assert scoped.json()["company_scope"] == {"company_id": 7, "applied": True}
+    assert scoped.json()["latest_learning_update_at"] == base.isoformat()
+
+    org_wide = client.get("/api/v1/accounting-intelligence/status", headers=auth_headers)
+    assert org_wide.status_code == 200, org_wide.text
+    assert org_wide.json()["learning_examples"] == 2
+    assert org_wide.json()["company_scope"] == {"company_id": None, "applied": False}
+
+    invalid = client.get("/api/v1/accounting-intelligence/status?company_id=0", headers=auth_headers)
+    assert invalid.status_code == 422

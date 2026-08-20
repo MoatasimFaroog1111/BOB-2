@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import {
   fetchAccountingIntelligenceStatus,
@@ -8,18 +8,13 @@ import {
   type AccountingIntelligenceStatus,
   type AccountingLearningSyncResult,
 } from "@/features/settings/accounting-intelligence/api";
+import { useCompany } from "@/lib/CompanyContext";
 import { useLanguage } from "@/lib/LanguageContext";
-
-function selectedCompanyId(): number | null {
-  if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem("selectedCompanyId");
-  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
-  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-}
 
 export function AccountingIntelligencePanel() {
   const { language } = useLanguage();
   const ar = language === "ar";
+  const { selectedCompanyId, selectedCompany } = useCompany();
   const [status, setStatus] = useState<AccountingIntelligenceStatus | null>(null);
   const [lastSync, setLastSync] = useState<AccountingLearningSyncResult | null>(null);
   const [limit, setLimit] = useState(1000);
@@ -30,17 +25,17 @@ export function AccountingIntelligencePanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const loadStatus = async () => {
+  const loadStatus = useCallback(async () => {
     try {
-      setStatus(await fetchAccountingIntelligenceStatus());
+      setStatus(await fetchAccountingIntelligenceStatus(selectedCompanyId));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  };
+  }, [selectedCompanyId]);
 
   useEffect(() => {
     void loadStatus();
-  }, []);
+  }, [loadStatus]);
 
   const runSync = async () => {
     setLoading(true);
@@ -50,7 +45,7 @@ export function AccountingIntelligencePanel() {
         date_from: dateFrom || null,
         date_to: dateTo || null,
         limit,
-        company_id: selectedCompanyId(),
+        company_id: selectedCompanyId,
         include_attachment_content: includeAttachmentContent,
         attachment_content_limit: attachmentContentLimit,
       });
@@ -86,20 +81,42 @@ export function AccountingIntelligencePanel() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <Metric
           label={ar ? "أمثلة التعلّم" : "Learning examples"}
           value={status ? status.learning_examples.toLocaleString() : "—"}
         />
         <Metric
-          label={ar ? "آخر تعلّم" : "Last learned"}
-          value={status?.latest_learning_example_at ? new Date(status.latest_learning_example_at).toLocaleString() : "—"}
+          label={ar ? "آخر تحديث للذاكرة" : "Last memory update"}
+          value={
+            status?.latest_learning_update_at || status?.latest_learning_example_at
+              ? new Date(status.latest_learning_update_at ?? status.latest_learning_example_at ?? "").toLocaleString()
+              : "—"
+          }
         />
         <Metric
-          label={ar ? "الترحيل التلقائي" : "Auto posting"}
-          value={status?.auto_posting ? (ar ? "مفعل" : "Enabled") : ar ? "مغلق" : "Disabled"}
+          label={ar ? "آخر مزامنة" : "Last sync"}
+          value={status?.last_sync?.at ? new Date(status.last_sync.at).toLocaleString() : "—"}
+        />
+        <Metric
+          label={ar ? "نطاق الذاكرة" : "Memory scope"}
+          value={
+            status?.company_scope.applied
+              ? selectedCompany?.name ?? String(status.company_scope.company_id ?? "")
+              : ar
+                ? "كل المؤسسة"
+                : "Whole organization"
+          }
         />
       </div>
+
+      {status?.last_sync ? (
+        <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-xs leading-6 text-white/55">
+          {ar
+            ? `ملخص آخر مزامنة محفوظة: تمت قراءة ${status.last_sync.summary.examples_read.toLocaleString()} • جديدة ${status.last_sync.summary.created.toLocaleString()} • محدثة ${status.last_sync.summary.updated.toLocaleString()} • بدون تغيير ${status.last_sync.summary.unchanged.toLocaleString()}`
+            : `Saved last-sync summary: read ${status.last_sync.summary.examples_read.toLocaleString()} • created ${status.last_sync.summary.created.toLocaleString()} • updated ${status.last_sync.summary.updated.toLocaleString()} • unchanged ${status.last_sync.summary.unchanged.toLocaleString()}`}
+        </div>
+      ) : null}
 
       <div className="rounded-2xl border border-white/10 bg-black/20 p-6">
         <h2 className="mb-4 text-lg font-semibold text-white">
@@ -217,6 +234,11 @@ export function AccountingIntelligencePanel() {
             {ar
               ? `الحسابات: ${lastSync.reference_catalog.accounts ?? 0} • الدفاتر: ${lastSync.reference_catalog.journals ?? 0} • الشركاء: ${lastSync.reference_catalog.partners ?? 0} • الضرائب: ${lastSync.reference_catalog.taxes ?? 0} • التحليلي: ${lastSync.reference_catalog.analytic_accounts ?? 0}`
               : `Accounts: ${lastSync.reference_catalog.accounts ?? 0} • Journals: ${lastSync.reference_catalog.journals ?? 0} • Partners: ${lastSync.reference_catalog.partners ?? 0} • Taxes: ${lastSync.reference_catalog.taxes ?? 0} • Analytics: ${lastSync.reference_catalog.analytic_accounts ?? 0}`}
+          </div>
+          <div className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/5 p-4 text-xs leading-6 text-amber-100/80">
+            {ar
+              ? "ملاحظة: ظهور «بدون تغيير» لا يعني فشل التعلّم — النظام قرأ القيود نفسها الموجود مسبقًا في الذاكرة ولم يجد بيانات جديدة أو معدّلة."
+              : "Note: “Unchanged” does not mean learning failed — the same entries were read and no new or modified data was found in memory."}
           </div>
         </div>
       ) : null}

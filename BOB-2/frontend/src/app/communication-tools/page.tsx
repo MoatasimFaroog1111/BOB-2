@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { API_BASE_URL } from "@/lib/api";
 import { useLanguage } from "@/lib/LanguageContext";
 
@@ -55,7 +55,7 @@ export default function CommunicationToolsPage() {
     [isArabic]
   );
 
-  async function loadStatus() {
+  const loadStatus = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/v1/communication-tools/telegram-token/status`, {
         cache: "no-store",
@@ -67,7 +67,7 @@ export default function CommunicationToolsPage() {
     } catch {
       setError(labels.loadError);
     }
-  }
+  }, [labels.loadError]);
 
   async function saveToken() {
     setLoading(true);
@@ -114,8 +114,8 @@ export default function CommunicationToolsPage() {
   }
 
   useEffect(() => {
-    loadStatus();
-  }, []);
+    void loadStatus();
+  }, [loadStatus]);
 
   const actionButtons: { key: ActionKey; label: string; description: string }[] = [
     {

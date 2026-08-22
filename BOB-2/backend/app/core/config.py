@@ -81,7 +81,10 @@ class Settings(BaseSettings):
     ERP_OUTBOUND_ALLOW_HTTP: bool = False
     ERP_OUTBOUND_CONNECT_TIMEOUT_SECONDS: int = 10
     ERP_OUTBOUND_READ_TIMEOUT_SECONDS: int = 30
-    ERP_OUTBOUND_MAX_RESPONSE_BYTES: int = 10_485_760
+    # Learning sync reads large whole batches (moves, lines, attachments) from
+    # the ERP. 50 MiB keeps those reads intact instead of failing mid-stream on
+    # big accounting histories; operators can still lower it per-deployment.
+    ERP_OUTBOUND_MAX_RESPONSE_BYTES: int = 52_428_800
 
     MAX_UPLOAD_SIZE_MB: int = 10
     MAX_REQUEST_SIZE_MB: int = 50

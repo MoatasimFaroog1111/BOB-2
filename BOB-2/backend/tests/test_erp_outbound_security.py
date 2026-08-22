@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.config import settings
+from app.core.config import Settings, settings
 from app.erp.odoo_transport import PinnedSafeTransport, PinnedTransport
 from app.security.outbound_network import (
     OutboundPolicyError,
@@ -263,6 +263,15 @@ def test_production_erp_policy_configuration_is_fail_closed(monkeypatch):
     assert "ERP_OUTBOUND_REQUIRE_ALLOWLIST must be true" in errors
     assert "ERP_OUTBOUND_ALLOWED_HOSTS is required" in errors
     assert "ERP_OUTBOUND_ALLOW_HTTP must be false in production" in errors
+
+
+def test_default_erp_response_budget_allows_large_learning_sync_reads():
+    # The accounting learning sync reads whole batches (moves, lines, and
+    # attachment metadata) from the ERP. The default response budget must stay
+    # large enough (50 MiB) to keep those reads intact instead of failing with
+    # "erp_response_too_large" on big accounting histories.
+    default_settings = Settings(_env_file=None)
+    assert default_settings.ERP_OUTBOUND_MAX_RESPONSE_BYTES == 52_428_800
 
 
 def test_odoo_provider_cannot_return_to_default_unpinned_serverproxy():

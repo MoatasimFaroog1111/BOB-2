@@ -14,7 +14,7 @@ ERP_OUTBOUND_ALLOWED_PORTS=443
 ERP_OUTBOUND_ALLOW_HTTP=false
 ERP_OUTBOUND_CONNECT_TIMEOUT_SECONDS=10
 ERP_OUTBOUND_READ_TIMEOUT_SECONDS=30
-ERP_OUTBOUND_MAX_RESPONSE_BYTES=10485760
+ERP_OUTBOUND_MAX_RESPONSE_BYTES=52428800
 ```
 
 `ERP_OUTBOUND_ALLOWED_HOSTS` accepts exact hostnames and controlled subdomain patterns such as `*.odoo.company.example`. A global `*` is forbidden. The apex domain is not matched by a subdomain wildcard.

@@ -42,12 +42,13 @@ class SemanticMemoryAdvisor:
         text = transaction_text(transaction)
         if len(text.strip()) < 4:
             return None
+        currency = str(transaction.get("currency") or "SAR").strip().upper()[:3] or "SAR"
         prediction = self._service.predict(
             organization_id=self._organization_id,
             text=text,
             amount=float(decimal_amount(transaction.get("amount"))),
             move_type_hint="entry",
-            currency_hint="SAR",
+            currency_hint=currency,
             top_k=12,
             company_id=company_id,
         )

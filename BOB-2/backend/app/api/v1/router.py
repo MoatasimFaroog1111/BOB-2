@@ -9,6 +9,7 @@ from app.api.v1.auth import router as auth_router
 from app.api.v1.bank_posting_v2 import router as bank_posting_v2_router
 from app.api.v1.bank_reconciliation_compat import router as bank_reconciliation_compat_router
 from app.api.v1.bank_reconciliation_entry_suggestions import router as bank_reconciliation_entry_suggestions_router
+from app.api.v1.bank_reconciliation_evaluation import router as bank_reconciliation_evaluation_router
 from app.api.v1.bank_reconciliation_hardening import router as bank_reconciliation_hardening_router
 from app.api.v1.bank_rule_entry_suggestions import router as bank_rule_entry_suggestions_router
 from app.api.v1.bank_rule_tax import router as bank_rule_tax_router
@@ -79,6 +80,7 @@ api_router.include_router(bank_reconciliation_compat_router, prefix="/erp", tags
 api_router.include_router(bank_reconciliation_hardening_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
 api_router.include_router(bank_rule_entry_suggestions_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
 api_router.include_router(bank_reconciliation_entry_suggestions_router, prefix="/erp", tags=["ERP Bank Reconciliation"], dependencies=financial_access)
+api_router.include_router(bank_reconciliation_evaluation_router, prefix="/erp", tags=["ERP Bank Reconciliation Evaluation"], dependencies=financial_access)
 api_router.include_router(bank_rules_router, prefix="/erp", tags=["BOB Bank Rules"], dependencies=financial_access)
 api_router.include_router(bank_rule_tax_router, prefix="/erp", tags=["BOB Bank Rule Taxes"], dependencies=financial_access)
 api_router.include_router(daily_bank_review_router, prefix="/erp", tags=["ERP Daily Bank Audit Workflow"], dependencies=financial_access)

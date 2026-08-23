@@ -8,10 +8,8 @@ from sqlalchemy.orm import Session
 
 from app.db.database import get_db
 from app.security.tenant_scope import current_organization_id
-from app.services.bank_reconciliation_suggestions import (
-    BankReconciliationSuggestionService,
-    SuggestionBatchContext,
-)
+from app.services.bank_reconciliation_contracts import SuggestionBatchContext
+from app.services.bank_reconciliation_suggestions import BankReconciliationSuggestionService
 
 router = APIRouter()
 
@@ -25,6 +23,7 @@ class BankTxnForSuggestion(BaseModel):
     payment_ref: Optional[str] = None
     note: Optional[str] = None
     memo: Optional[str] = None
+    currency: Optional[str] = None
     amount: float = 0.0
     debit: Optional[float] = None
     credit: Optional[float] = None
@@ -41,7 +40,7 @@ class HistoricalEntrySuggestionRequest(BaseModel):
     bank_journal_id: Optional[int] = None
     bank_account_id: Optional[int] = None
     history_limit: int = Field(default=600, ge=50, le=1500)
-    semantic_limit: int = Field(default=40, ge=0, le=100)
+    semantic_limit: int = Field(default=8, ge=0, le=100)
 
 
 @router.post("/bank-reconciliation/entry-suggestions")

@@ -29,7 +29,6 @@ from app.services.bank_reconciliation_features import (
     is_tax_account_label,
     normalize_text,
     text_similarity,
-    text_tokens,
     transaction_category,
     transaction_text,
 )
@@ -777,7 +776,8 @@ class HistoricalSuggestionMatcher:
             "predicted_vat_present": bool(vat_inference["present"]),
             "vat_inference": vat_inference,
             "confidence": round(confidence, 4),
-            "source": "odoo_historical_consensus_v3",
+            "source": "odoo_historical_consensus",
+            "engine_version": "v3_partner_vat_reranker",
             "resolution_mode": "partner_aware_top_k_reranker",
             "reason": (
                 f"Partner-aware posted Odoo history selected account {winning_account_id}; "

@@ -1,8 +1,6 @@
-from app.services.bank_reconciliation_suggestions import (
-    HistoricalSuggestionMatcher,
-    combine_advisors,
-    detect_monetary_components,
-)
+from app.services.bank_reconciliation_features import detect_monetary_components
+from app.services.bank_reconciliation_historical import HistoricalSuggestionMatcher
+from app.services.bank_reconciliation_semantic import combine_advisors
 
 
 def _counter(account_id, label, balance, *, partner_id=None, partner_name=""):
@@ -20,7 +18,10 @@ def _counter(account_id, label, balance, *, partner_id=None, partner_name=""):
 
 def test_fee_vat_components_parse_explicit_bank_fee_split():
     transaction = {
-        "description": "INSTANT PAYMENT FEE 00000000000001.00 SAR VAT AMOUNT 00000000000000.15 SAR VAT% 15%",
+        "description": (
+            "INSTANT PAYMENT FEE 00000000000001.00 SAR "
+            "VAT AMOUNT 00000000000000.15 SAR VAT% 15%"
+        ),
         "amount": -1.15,
     }
 
@@ -59,7 +60,15 @@ def test_historical_matcher_uses_consensus_instead_of_one_nearest_row():
             "date": "2026-08-01",
             "bank_text": "MOATASIM FAROOG MOHAMMED NOOR personal transfer",
             "bank_amount": -20000.0,
-            "counterparts": [_counter(102014, "102014 Petty Cash", 20000.0, partner_id=7, partner_name="Petty Cash-Moatasim")],
+            "counterparts": [
+                _counter(
+                    102014,
+                    "102014 Petty Cash",
+                    20000.0,
+                    partner_id=7,
+                    partner_name="Petty Cash-Moatasim",
+                )
+            ],
         },
         {
             "move_id": 2,
@@ -67,7 +76,15 @@ def test_historical_matcher_uses_consensus_instead_of_one_nearest_row():
             "date": "2026-08-02",
             "bank_text": "MOATASIM FAROOG MOHAMMED NOOR personal transfer",
             "bank_amount": -20000.0,
-            "counterparts": [_counter(102014, "102014 Petty Cash", 20000.0, partner_id=7, partner_name="Petty Cash-Moatasim")],
+            "counterparts": [
+                _counter(
+                    102014,
+                    "102014 Petty Cash",
+                    20000.0,
+                    partner_id=7,
+                    partner_name="Petty Cash-Moatasim",
+                )
+            ],
         },
         {
             "move_id": 3,
@@ -75,7 +92,9 @@ def test_historical_matcher_uses_consensus_instead_of_one_nearest_row():
             "date": "2026-08-03",
             "bank_text": "advertising prepayment campaign",
             "bank_amount": -20000.0,
-            "counterparts": [_counter(104033, "104033 PrePaid Advertisement Expenses", 20000.0)],
+            "counterparts": [
+                _counter(104033, "104033 PrePaid Advertisement Expenses", 20000.0)
+            ],
         },
     ]
 
@@ -112,10 +131,11 @@ def test_historical_matcher_prefers_primary_bank_fee_account_over_vat_split_line
 
     assert result is not None
     assert result["suggested_account_id"] == 400051
-    assert result["detected_components"] if "detected_components" in result else True
+    assert result["alternatives"][0]["account_id"] == 400051
+    assert result["confidence_breakdown"]["historical_consensus"] > 0.8
 
 
-def test_ensemble_agreement_boosts_confidence_without_auto_posting():
+def test_ensemble_agreement_boosts_confidence_and_fills_partner():
     historical = {
         "suggested_account_id": 400020,
         "suggested_account_label": "400020 Telephone And Internet",

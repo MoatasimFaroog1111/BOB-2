@@ -29,7 +29,6 @@ from app.services.bank_reconciliation_features import (
     decimal_amount,
     detect_monetary_components,
     is_tax_account_label,
-    transaction_category,
 )
 from app.services.bank_reconciliation_historical import (
     HistoricalSuggestionMatcher,
@@ -65,13 +64,18 @@ class TimeSeriesSplit:
 
 
 def _m2o(value: Any) -> tuple[int | None, str]:
+    # Odoo serializes an empty many2one as ``False``. Because bool is a subclass
+    # of int in Python, handle it before the integer branch so an empty relation
+    # never becomes a synthetic label with ID False/0 during evaluation.
+    if value is None or value is False or value == "":
+        return None, ""
     if isinstance(value, (list, tuple)) and value:
         try:
             identifier = int(value[0]) if value[0] else None
         except (TypeError, ValueError):
             identifier = None
         return identifier, str(value[1] if len(value) > 1 else "")
-    if isinstance(value, int):
+    if isinstance(value, int) and not isinstance(value, bool):
         return value, ""
     return None, ""
 
@@ -106,7 +110,7 @@ def _clean_bank_text(entry: dict[str, Any]) -> str:
     return " ".join(text.split()).strip()
 
 
-def _primary_counterpart(entry: dict[str, Any], transaction: dict[str, Any]) -> dict[str, Any] | None:
+def _primary_counterpart(entry: dict[str, Any]) -> dict[str, Any] | None:
     candidates: list[tuple[float, bool, dict[str, Any]]] = []
     for line in entry.get("counterparts") or []:
         account_id, account_label = _m2o(line.get("account_id"))
@@ -153,7 +157,7 @@ def build_labeled_cases(historical: list[dict[str, Any]]) -> list[LabeledBankCas
             "amount": amount,
             "row_number": move_id,
         }
-        primary = _primary_counterpart(entry, transaction)
+        primary = _primary_counterpart(entry)
         if primary is None:
             continue
         account_id, _account_label = _m2o(primary.get("account_id"))

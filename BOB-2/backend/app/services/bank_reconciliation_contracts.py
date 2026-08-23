@@ -12,4 +12,4 @@ class SuggestionBatchContext:
     bank_journal_id: int | None = None
     bank_account_id: int | None = None
     history_limit: int = 600
-    semantic_limit: int = 40
+    semantic_limit: int = 8

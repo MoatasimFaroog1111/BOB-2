@@ -27,14 +27,12 @@ from app.services.bank_reconciliation_features import (
     decimal_amount,
     direction_similarity,
     is_tax_account_label,
-    normalize_text,
     text_similarity,
     transaction_category,
     transaction_text,
 )
 from app.services.bank_reconciliation_historical import (
     HistoricalSuggestionMatcher,
-    counterparty_fingerprint,
     fingerprint_similarity,
 )
 
@@ -121,12 +119,7 @@ def _primary_counterpart(entry: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _accounting_partner(entry: dict[str, Any]) -> tuple[int | None, str, str]:
-    """Return the partner label used by accounting, then bank-line partner as fallback.
-
-    This order intentionally differs from V3.  The production untouched benchmark labels
-    the posted counterpart partner first; the bank-line partner is valuable identity
-    evidence but must not silently override the accounting counterpart.
-    """
+    """Return the accounting counterpart partner, then bank-line partner as fallback."""
     primary = _primary_counterpart(entry)
     if primary is not None:
         partner_id, partner_label = _m2o(primary.get("partner_id"))
@@ -160,18 +153,31 @@ def _canonical_alnum(value: Any) -> str:
 
 
 def identity_keys(text: Any) -> tuple[str, ...]:
-    """Extract stable beneficiary identifiers without treating one-off references as truth.
+    """Extract stable beneficiary identifiers with strict boundaries.
 
-    Keys are only useful when they repeat in historical evidence.  IBANs receive a
-    dedicated prefix; long numeric account-like values receive another prefix.  Short
-    transaction references and generated Odoo move numbers are intentionally ignored.
+    Saudi IBANs are recognized with optional spaces/hyphens but exactly 22 digits after
+    ``SA``.  Generic compact IBANs are also accepted.  This prevents a following word
+    such as ``ACCOUNT`` from being swallowed into the identity key, which would destroy
+    exact matching.  Long contiguous account numbers are additive identity evidence;
+    short transaction references and generated move numbers are ignored.
     """
     raw = str(text or "").upper()
     keys: list[str] = []
-    for match in re.finditer(r"(?<![A-Z0-9])([A-Z]{2}\s*\d{2}(?:\s*[A-Z0-9]){10,30})(?![A-Z0-9])", raw):
+
+    occupied: list[tuple[int, int]] = []
+    for match in re.finditer(r"(?<![A-Z0-9])(SA(?:[\s-]*\d){22})(?!\d)", raw):
+        compact = _canonical_alnum(match.group(1))
+        if len(compact) == 24:
+            keys.append(f"iban:{compact}")
+            occupied.append(match.span())
+
+    for match in re.finditer(r"(?<![A-Z0-9])([A-Z]{2}\d{2}[A-Z0-9]{10,30})(?![A-Z0-9])", raw):
+        if any(start <= match.start() < end for start, end in occupied):
+            continue
         compact = _canonical_alnum(match.group(1))
         if 14 <= len(compact) <= 34:
             keys.append(f"iban:{compact}")
+
     for match in re.finditer(r"(?<!\d)(\d{8,24})(?!\d)", raw):
         digits = match.group(1)
         if len(set(digits)) == 1:
@@ -191,7 +197,6 @@ def _amount_band(value: Any) -> int:
     amount = abs(float(decimal_amount(value)))
     if amount <= 0:
         return 0
-    # Half-decade logarithmic bands keep SAR 5k near SAR 6k without merging SAR 500.
     return int(math.floor(math.log10(max(amount, 0.01)) * 2.0))
 
 
@@ -285,7 +290,12 @@ class PartnerIdentityResolverV4:
             strongest[partner_id] = max(strongest[partner_id], score)
             support[partner_id] += 1
             exact_support[partner_id] += exact
-            if entry.get("bank_partner_id") and int(entry.get("bank_partner_id")) == partner_id:
+            raw_bank_partner = entry.get("bank_partner_id")
+            try:
+                bank_partner_id = int(raw_bank_partner) if raw_bank_partner else None
+            except (TypeError, ValueError):
+                bank_partner_id = None
+            if bank_partner_id == partner_id:
                 bank_alias_support[partner_id] += 1
 
         if not votes:
@@ -377,7 +387,6 @@ class AccountCandidateGeneratorV4:
         account_partner_support: dict[int, int] = defaultdict(int)
         account_band_support: dict[int, int] = defaultdict(int)
 
-        # First pass builds conditional priors from the whole eligible corpus.
         for entry in historical:
             primary = _primary_counterpart(entry)
             if primary is None:
@@ -419,9 +428,6 @@ class AccountCandidateGeneratorV4:
             partner_match = bool(resolved_partner and entry_partner == resolved_partner)
             band_match = abs(_amount_band(entry.get("bank_amount")) - query_band) <= 1
 
-            # Candidate recall gate: identity, partner, semantic narration, category+direction,
-            # or very close amount may all introduce a candidate.  This deliberately avoids
-            # limiting generation to the nearest Top-K rows.
             if not (
                 exact_identity
                 or partner_match
@@ -456,16 +462,15 @@ class AccountCandidateGeneratorV4:
                 account_band_support[account_id] += 1
             account_labels[account_id] = account_label
 
-        # Preserve V3 candidates in the union even when V4 evidence is sparse.
         if baseline:
             baseline_ids: list[int] = []
             try:
-                primary = int(baseline.get("suggested_account_id") or 0)
+                primary_id = int(baseline.get("suggested_account_id") or 0)
             except (TypeError, ValueError):
-                primary = 0
-            if primary:
-                baseline_ids.append(primary)
-                account_labels.setdefault(primary, str(baseline.get("suggested_account_label") or ""))
+                primary_id = 0
+            if primary_id:
+                baseline_ids.append(primary_id)
+                account_labels.setdefault(primary_id, str(baseline.get("suggested_account_label") or ""))
             for item in baseline.get("alternatives") or []:
                 try:
                     identifier = int(item.get("account_id") or 0)
@@ -485,15 +490,9 @@ class AccountCandidateGeneratorV4:
         candidates: list[dict[str, Any]] = []
         for account_id, raw_vote in account_votes.items():
             vote_strength = raw_vote / max_vote
-            partner_probability = (
-                partner_account_counts[account_id] / partner_total if partner_total else 0.0
-            )
-            category_probability = (
-                category_account_counts[account_id] / category_total if category_total else 0.0
-            )
-            direction_probability = (
-                direction_account_counts[account_id] / direction_total if direction_total else 0.0
-            )
+            partner_probability = partner_account_counts[account_id] / partner_total if partner_total else 0.0
+            category_probability = category_account_counts[account_id] / category_total if category_total else 0.0
+            direction_probability = direction_account_counts[account_id] / direction_total if direction_total else 0.0
             support_bonus = min(1.0, account_support[account_id] / 5.0)
             exact_bonus = min(1.0, account_exact_support[account_id] / 2.0)
             partner_support = min(1.0, account_partner_support[account_id] / 3.0)
@@ -560,12 +559,7 @@ class HistoricalSuggestionMatcherV4:
             return None
 
         partner = self.partner_resolver.resolve(transaction, eligible)
-        candidates = self.candidate_generator.rank(
-            transaction,
-            eligible,
-            partner,
-            baseline=baseline,
-        )
+        candidates = self.candidate_generator.rank(transaction, eligible, partner, baseline=baseline)
         if not candidates:
             result = dict(baseline)
             result["engine_version"] = _ENGINE_VERSION
@@ -592,12 +586,15 @@ class HistoricalSuggestionMatcherV4:
             + exact_support * 0.08
             + aligned_support * 0.06,
         )
-        # Do not inflate confidence merely because V4 changed the rank; retain the
-        # proven baseline confidence when it is lower than the V4 evidence envelope.
         baseline_confidence = float(baseline.get("confidence") or 0.0)
         if int(baseline.get("suggested_account_id") or 0) == int(winner["account_id"]):
             confidence = min(0.995, max(confidence, baseline_confidence * 0.98))
 
+        partner_ambiguity_requires_review = bool(
+            partner.get("candidate_partner_id")
+            and partner.get("ambiguous")
+            and float(partner.get("confidence") or 0.0) >= 0.55
+        )
         result = dict(baseline)
         result.update(
             {
@@ -606,11 +603,10 @@ class HistoricalSuggestionMatcherV4:
                 "suggested_partner_id": partner.get("partner_id"),
                 "suggested_partner_label": str(partner.get("partner_label") or ""),
                 "confidence": round(confidence, 4),
-                # Backward-compatible public source; engine_version is additive.
                 "source": "odoo_historical_consensus",
                 "engine_version": _ENGINE_VERSION,
                 "resolution_mode": "identity_conditioned_candidate_generator_v4",
-                "needs_review": confidence < _REVIEW_THRESHOLD or bool(partner.get("ambiguous")),
+                "needs_review": confidence < _REVIEW_THRESHOLD or partner_ambiguity_requires_review,
                 "safe_to_post": False,
                 "partner_resolution": partner,
                 "candidate_generator": {

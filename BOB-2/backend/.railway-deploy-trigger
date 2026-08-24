@@ -1,3 +1,5 @@
 Railway backend deployment trigger.
 
 This file intentionally lives under backend/ so services using backend-scoped watch paths redeploy when container or Railway configuration changes outside that path.
+
+Redeploy target: bank-reconciliation V3 merge c9c3f5b931ceeb93300b079683cf657e884e3cad.

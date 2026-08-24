@@ -61,9 +61,9 @@ def _history_entry(
 
 
 def test_v4_identity_keys_extract_iban_and_long_account_without_short_references():
-    keys = identity_keys("IPS REF 12345 beneficiary SA43 2000 0000 3302 1222 9994 0 account 4485099000004460")
+    keys = identity_keys("IPS REF 12345 beneficiary SA43 2000 0003 3021 2229 9940 account 4485099000004460")
 
-    assert "iban:SA43200000003302122299940" in keys
+    assert "iban:SA4320000003302122299940" in keys
     assert "acct:4485099000004460" in keys
     assert all("12345" not in key for key in keys)
 

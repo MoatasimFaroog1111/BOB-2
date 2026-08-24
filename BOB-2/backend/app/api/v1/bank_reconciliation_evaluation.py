@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.db.database import get_db
 from app.security.tenant_scope import current_organization_id
 from app.services.bank_reconciliation_contracts import SuggestionBatchContext
-from app.services.bank_reconciliation_evaluation_v2 import BankReconciliationEvaluationService
+from app.services.bank_reconciliation_evaluation_v3 import BankReconciliationEvaluationService
 
 router = APIRouter()
 
@@ -22,8 +22,9 @@ def evaluate_bank_reconciliation_predictions(
     """Run the accountant-grade leakage-safe evaluation against posted Odoo history.
 
     This endpoint is read-only. It does not create, edit, reconcile, draft, post,
-    or otherwise mutate ERP records. Validation-only calibration targets 98% accepted
-    account precision before the untouched Test partition is scored.
+    or otherwise mutate ERP records. Validation-only calibration targets 99% accepted
+    account precision before the untouched Test partition is scored. Partner identity
+    receives an independently calibrated validation-only precision gate.
     """
     organization_id = current_organization_id(required=True)
     context = SuggestionBatchContext(

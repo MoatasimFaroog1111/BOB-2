@@ -2,7 +2,7 @@
 
 Precedence is strict and explainable:
 1. Approved BOB Bank Rules.
-2. Posted Odoo historical consensus.
+2. Posted Odoo historical intelligence (V4 identity + candidate strategy).
 3. Existing semantic accounting-learning memory.
 
 This service is read-only and exposes no ERP posting capability.
@@ -14,12 +14,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.services.bank_reconciliation_accuracy_v4 import HistoricalSuggestionMatcherV4
 from app.services.bank_reconciliation_contracts import SuggestionBatchContext
 from app.services.bank_reconciliation_features import decimal_amount, detect_monetary_components
-from app.services.bank_reconciliation_historical import (
-    HistoricalSuggestionMatcher,
-    OdooHistoricalBankEntryRepository,
-)
+from app.services.bank_reconciliation_historical import OdooHistoricalBankEntryRepository
 from app.services.bank_reconciliation_semantic import SemanticMemoryAdvisor, combine_advisors
 from app.services.bank_rules_engine import bank_rules_engine
 from app.services.bank_rules_service import bank_rules_service
@@ -37,12 +35,12 @@ class BankReconciliationSuggestionService:
         context: SuggestionBatchContext,
         *,
         history_repository: OdooHistoricalBankEntryRepository | None = None,
-        matcher: HistoricalSuggestionMatcher | None = None,
+        matcher: HistoricalSuggestionMatcherV4 | None = None,
     ):
         self.db = db
         self.context = context
         self.history_repository = history_repository or OdooHistoricalBankEntryRepository()
-        self.matcher = matcher or HistoricalSuggestionMatcher()
+        self.matcher = matcher or HistoricalSuggestionMatcherV4()
 
     @staticmethod
     def _base(transaction: dict[str, Any]) -> dict[str, Any]:
@@ -120,11 +118,14 @@ class BankReconciliationSuggestionService:
             "semantic_attempted_count": semantic_budget,
             "semantic_error_count": semantic_errors,
             "confident_count": confident,
+            # Keep the existing public method identifier for backward compatibility.
             "method": "bob_rule_then_historical_then_semantic_v2",
+            "engine_version": "v4_identity_candidate_calibration",
             "safe_to_post": False,
             "note": (
-                "Approved BOB Bank Rules have deterministic priority. Remaining rows use top-k posted Odoo history "
-                "and a bounded semantic-memory pass. Advisor conflicts always require accountant review."
+                "Approved BOB Bank Rules have deterministic priority. Remaining rows use V4 partner identity "
+                "resolution plus full-corpus account candidate generation, while V3 VAT/analytic inference remains protected. "
+                "A bounded semantic-memory pass handles low-confidence rows; conflicts require accountant review."
             ),
         }
 
@@ -185,6 +186,7 @@ class BankReconciliationSuggestionService:
             "semantic_error_count": 0,
             "confident_count": 0,
             "method": "bob_rule_then_historical_then_semantic_v2",
+            "engine_version": "v4_identity_candidate_calibration",
             "safe_to_post": False,
         }
 

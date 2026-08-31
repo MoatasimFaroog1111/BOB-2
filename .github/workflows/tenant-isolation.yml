@@ -30,7 +30,7 @@ jobs:
       EXTERNAL_LLM_ENABLED: "false"
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
           cache: pip
@@ -58,7 +58,7 @@ jobs:
           exit "$status"
       - name: Upload source-guard failure report
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tenant-isolation-source-failure-${{ github.run_id }}
           path: BOB-2/backend/tenant-isolation-source.log

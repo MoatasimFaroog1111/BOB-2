@@ -62,9 +62,9 @@ odoo_db = os.environ.get("ODOO_UAT_DB", "bob_uat_117").strip() or "bob_uat_117"
 odoo_login = required("ODOO_UAT_ADMIN_LOGIN")
 odoo_password = required("ODOO_UAT_ADMIN_PASSWORD")
 seed_email = required("GUARDIAN_SEED_EMAIL").lower()
+company_name = "BOB UAT 117 SAR"
 only_isolated_odoo(odoo_url, odoo_db)
 
-# Keep BOB's schema and development-only UAT owner bootstrap repeatable.
 predeploy_main()
 
 erp = get_erp_provider(
@@ -76,12 +76,16 @@ erp = get_erp_provider(
 )
 
 companies = erp.execute_kw(
-    "res.company", "search_read", [[['name', '=', 'BOB UAT 117']]],
+    "res.company", "search_read", [[['name', '=', company_name]]],
     {"fields": ["id", "name", "currency_id"], "limit": 1},
 )
 if not companies:
-    raise RuntimeError("Isolated Odoo fixture company BOB UAT 117 was not found")
+    raise RuntimeError(f"Isolated Odoo fixture company {company_name} was not found")
 company_id = int(companies[0]["id"])
+currency_value = companies[0].get("currency_id")
+currency_name = currency_value[1] if isinstance(currency_value, list) and len(currency_value) > 1 else ""
+if currency_name != "SAR":
+    raise RuntimeError(f"UAT company currency is {currency_name!r}, expected SAR")
 
 journals = erp.execute_kw(
     "account.journal", "search_read",
@@ -92,9 +96,17 @@ if not journals:
     raise RuntimeError("UAT Bank Journal was not found")
 journal_id = int(journals[0]["id"])
 
+account_fields = erp.execute_kw(
+    "account.account", "fields_get", [], {"attributes": ["type"]}
+)
+account_domain = [['code', 'in', ['101117', '601117']]]
+if "company_id" in account_fields:
+    account_domain.append(['company_id', '=', company_id])
+elif "company_ids" in account_fields:
+    account_domain.append(['company_ids', 'in', [company_id]])
 accounts = erp.execute_kw(
     "account.account", "search_read",
-    [[['code', 'in', ['101117', '601117']]]],
+    [account_domain],
     {"fields": ["id", "code", "name"], "limit": 10},
 )
 by_code = {str(row.get("code")): row for row in accounts}
@@ -243,7 +255,9 @@ try:
             "railway_environment": os.environ.get("RAILWAY_ENVIRONMENT_NAME", ""),
             "tested_commit": os.environ.get("RAILWAY_GIT_COMMIT_SHA", ""),
             "odoo_database": odoo_db,
+            "company_name": company_name,
             "company_id": company_id,
+            "currency": "SAR",
             "journal_id": journal_id,
             "bank_account_id": bank_account_id,
             "bank_charges_account_id": bank_charges_account_id,

@@ -33,12 +33,10 @@ def call(model: str, method: str, args=None, kwargs=None):
     return models.execute_kw(db, uid, password, model, method, args or [], kwargs or {})
 
 
-account_fields = call("account.account", "fields_get", [], {"attributes": ["type"]})
 currency_ids = call("res.currency", "search", [[("name", "=", "SAR")]], {"limit": 1})
 if not currency_ids:
     raise RuntimeError("SAR currency is not available in isolated Odoo-UAT")
 sar_id = int(currency_ids[0])
-
 company_ids = call("res.company", "search", [[("name", "=", company_name)]], {"limit": 1})
 if company_ids:
     company_id = int(company_ids[0])
@@ -49,6 +47,20 @@ company_currency = company.get("currency_id")
 company_currency_id = int(company_currency[0] if isinstance(company_currency, list) else company_currency)
 if company_currency_id != sar_id:
     raise RuntimeError("UAT company is not SAR; refusing to continue")
+
+# Force this dedicated UAT login into the isolated company context. This makes
+# partially-created multi-company accounting records visible on safe retries.
+user_fields = call("res.users", "fields_get", [], {"attributes": ["type"]})
+user_vals = {"company_id": company_id}
+if "company_ids" in user_fields:
+    user_vals["company_ids"] = [(4, company_id)]
+call("res.users", "write", [[int(uid)], user_vals])
+uid = common.authenticate(db, login, password, {})
+if not uid:
+    raise RuntimeError("Unable to re-authenticate after selecting UAT company")
+models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object", allow_none=True)
+
+account_fields = call("account.account", "fields_get", [], {"attributes": ["type"]})
 
 
 def attach_account_to_company(account_id: int) -> None:
@@ -66,9 +78,9 @@ def attach_account_to_company(account_id: int) -> None:
 
 
 def find_or_create_account(code: str, name: str, account_type: str) -> int:
-    global_ids = call("account.account", "search", [[("code", "=", code)]], {"limit": 1})
-    if global_ids:
-        account_id = int(global_ids[0])
+    ids = call("account.account", "search", [[("code", "=", code)]], {"limit": 1})
+    if ids:
+        account_id = int(ids[0])
         attach_account_to_company(account_id)
         call("account.account", "write", [[account_id], {"name": name, "account_type": account_type}])
         return account_id

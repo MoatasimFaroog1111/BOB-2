@@ -116,8 +116,8 @@ def find_or_create_account(code: str, name: str, account_type: str) -> int:
     return int(call("account.account", "create", [vals]))
 
 
-bank_account_id = find_or_create_account("101117", "UAT Bank", "asset_cash")
-bank_charges_account_id = find_or_create_account("601117", "UAT Bank Charges", "expense")
+bank_account_id = find_or_create_account("101118", "UAT Bank", "asset_cash")
+bank_charges_account_id = find_or_create_account("601118", "UAT Bank Charges", "expense")
 
 journal_fields = fields("account.journal")
 journal_domain = [("name", "=", "UAT Bank Journal")]
@@ -144,7 +144,9 @@ result = {
     "company_id": company_id,
     "currency": "SAR",
     "journal_id": journal_id,
+    "bank_account_code": "101118",
     "bank_account_id": bank_account_id,
+    "bank_charges_account_code": "601118",
     "bank_charges_account_id": bank_charges_account_id,
     "odoo_uid": int(uid),
     "data_class": "synthetic-non-production",

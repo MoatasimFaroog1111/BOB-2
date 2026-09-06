@@ -4,7 +4,9 @@
 **Data class:** synthetic, non-customer, SAR  
 **Test period:** August 2026  
 **Branch:** `uat/issue-117-pilot-gate`  
-**Status:** AUTOMATED EVIDENCE READY; LIVE ODOO SIGN-OFF REQUIRED
+**Tested commit:** `076f2c7a0d0433c9c4e8d451334f63a1aa559693`  
+**GitHub Actions run:** `34021020518` — `Issue 117 UAT gate`  
+**Status:** AUTOMATED EVIDENCE PASSED; LIVE ODOO SIGN-OFF REQUIRED
 
 ## 1. Scenario
 
@@ -34,9 +36,17 @@ The dedicated test `backend/tests/test_issue_117_uat_gate.py` verifies:
 6. Duplicate lookup and `duplicate_prevented` return occur before Odoo move creation.
 7. The bank-posting boundary does not call `action_post`; creation remains safer than automatic financial posting.
 
-The existing regression `backend/tests/test_bank_posting_idempotency.py` remains part of the dedicated CI gate.
+The existing regression `backend/tests/test_bank_posting_idempotency.py` is part of the same dedicated CI gate.
 
 Dedicated workflow: `.github/workflows/issue-117-uat-gate.yml`.
+
+Automated result for commit `076f2c7a0d0433c9c4e8d451334f63a1aa559693`:
+
+- Dependency installation: **PASS**
+- `tests/test_issue_117_uat_gate.py`: **PASS**
+- `tests/test_bank_posting_idempotency.py`: **PASS**
+- Workflow step `Run Issue 117 reconciliation and retry evidence`: **PASS**
+- Run ID: `34021020518`
 
 ## 3. Required live non-production Odoo evidence
 
@@ -62,10 +72,10 @@ This is a **blocking evidence gap**, not a product-code failure. Do not mark UAT
 
 ## 5. Sign-off decision
 
-- Synthetic reconciliation gate: **PENDING CI**
-- Human-approval contract: **PENDING CI**
-- Idempotency contract: **PENDING CI** (existing regression already present on `main`; rerun required for this release branch)
+- Synthetic reconciliation gate: **PASS**
+- Human-approval contract: **PASS**
+- Idempotency contract: **PASS**
 - Live non-production Odoo run: **BLOCKED — environment/connection not configured**
 - Issue #117 UAT checkbox: **DO NOT CLOSE YET**
 
-When the live run is completed, replace the pending/blocking statuses with immutable evidence identifiers and obtain the finance-owner sign-off required by `release/ACCOUNTING_UAT_SIGNOFF.md`.
+The live run must populate immutable Odoo/Railway evidence and receive the finance-owner sign-off required by `release/ACCOUNTING_UAT_SIGNOFF.md` before the UAT checkbox is closed.

@@ -23,6 +23,7 @@ url = required("ODOO_UAT_URL").rstrip("/")
 db = os.environ.get("ODOO_UAT_DB", "bob_uat_117").strip() or "bob_uat_117"
 login = os.environ.get("ODOO_UAT_ADMIN_LOGIN", "admin").strip() or "admin"
 password = required("ODOO_UAT_ADMIN_PASSWORD")
+company_name = "BOB UAT 117 SAR"
 
 common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common", allow_none=True)
 uid = common.authenticate(db, login, password, {})
@@ -62,39 +63,48 @@ if modules[0].get("state") != "installed":
     else:
         raise RuntimeError("Accounting module installation did not expose account.account")
 
-named_company_ids = call(
+currency_ids = call("res.currency", "search", [[("name", "=", "SAR")]], {"limit": 1})
+if not currency_ids:
+    raise RuntimeError("SAR currency is not available in isolated Odoo-UAT")
+sar_currency_id = int(currency_ids[0])
+
+company_ids = call(
     "res.company",
     "search",
-    [[("name", "=", "BOB UAT 117")]],
+    [[("name", "=", company_name)]],
     {"limit": 1},
 )
-company_already_named = bool(named_company_ids)
-if named_company_ids:
-    company_id = int(named_company_ids[0])
-else:
-    company_ids = call("res.company", "search", [[]], {"limit": 1})
-    if not company_ids:
-        raise RuntimeError("Odoo-UAT has no company after account module initialization")
+if company_ids:
     company_id = int(company_ids[0])
-
-currency_ids = call("res.currency", "search", [[("name", "=", "SAR")]], {"limit": 1})
-company_vals = {}
-if not company_already_named:
-    company_vals["name"] = "BOB UAT 117"
-if currency_ids:
-    company_vals["currency_id"] = int(currency_ids[0])
-if company_vals:
-    call("res.company", "write", [[company_id], company_vals])
+    company = call(
+        "res.company", "read", [[company_id]], {"fields": ["id", "name", "currency_id"]}
+    )[0]
+    currency_value = company.get("currency_id")
+    current_currency_id = int(currency_value[0] if isinstance(currency_value, list) else currency_value)
+    if current_currency_id != sar_currency_id:
+        raise RuntimeError("Existing clean UAT company is not SAR; refusing to mutate its currency")
+else:
+    company_id = int(
+        call(
+            "res.company",
+            "create",
+            [{"name": company_name, "currency_id": sar_currency_id}],
+        )
+    )
 
 account_fields = fields("account.account")
 
 
-def find_or_create_account(code: str, name: str, account_type: str) -> int:
-    domain = [("code", "=", code)]
+def company_domain() -> list:
     if "company_id" in account_fields:
-        domain.append(("company_id", "=", company_id))
-    elif "company_ids" in account_fields:
-        domain.append(("company_ids", "in", [company_id]))
+        return [("company_id", "=", company_id)]
+    if "company_ids" in account_fields:
+        return [("company_ids", "in", [company_id])]
+    return []
+
+
+def find_or_create_account(code: str, name: str, account_type: str) -> int:
+    domain = [("code", "=", code), *company_domain()]
     ids = call("account.account", "search", [domain], {"limit": 1})
     if ids:
         return int(ids[0])
@@ -130,7 +140,9 @@ else:
 
 result = {
     "database": db,
+    "company_name": company_name,
     "company_id": company_id,
+    "currency": "SAR",
     "journal_id": journal_id,
     "bank_account_id": bank_account_id,
     "bank_charges_account_id": bank_charges_account_id,

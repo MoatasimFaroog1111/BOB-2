@@ -1,14 +1,9 @@
-"""Initialize the isolated Odoo fixture used by Issue #117 live UAT.
-
-This script is intentionally staging-only. It uses XML-RPC against the isolated
-Odoo-UAT service and never contains credentials or customer data.
-"""
+"""Create/reuse the isolated SAR accounting fixture for Issue #117 live UAT."""
 from __future__ import annotations
 
 import json
 import os
 import sys
-import time
 import xmlrpc.client
 
 
@@ -24,6 +19,8 @@ db = os.environ.get("ODOO_UAT_DB", "bob_uat_117").strip() or "bob_uat_117"
 login = os.environ.get("ODOO_UAT_ADMIN_LOGIN", "admin").strip() or "admin"
 password = required("ODOO_UAT_ADMIN_PASSWORD")
 company_name = "BOB UAT 117 SAR"
+bank_code = "101118"
+charges_code = "601118"
 
 common = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/common", allow_none=True)
 uid = common.authenticate(db, login, password, {})
@@ -36,104 +33,67 @@ def call(model: str, method: str, args=None, kwargs=None):
     return models.execute_kw(db, uid, password, model, method, args or [], kwargs or {})
 
 
-def fields(model: str) -> dict:
-    return call(model, "fields_get", [], {"attributes": ["type", "required", "relation"]})
-
-
-modules = call(
-    "ir.module.module",
-    "search_read",
-    [[("name", "=", "account")]],
-    {"fields": ["id", "name", "state"], "limit": 1},
-)
-if not modules:
-    raise RuntimeError("Odoo-UAT image does not expose the account module")
-if modules[0].get("state") != "installed":
-    call("ir.module.module", "button_immediate_install", [[int(modules[0]["id"])]] )
-    for _ in range(30):
-        time.sleep(1)
-        try:
-            uid = common.authenticate(db, login, password, {})
-            if uid:
-                models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object", allow_none=True)
-                fields("account.account")
-                break
-        except Exception:
-            continue
-    else:
-        raise RuntimeError("Accounting module installation did not expose account.account")
-
+account_fields = call("account.account", "fields_get", [], {"attributes": ["type"]})
 currency_ids = call("res.currency", "search", [[("name", "=", "SAR")]], {"limit": 1})
 if not currency_ids:
     raise RuntimeError("SAR currency is not available in isolated Odoo-UAT")
-sar_currency_id = int(currency_ids[0])
+sar_id = int(currency_ids[0])
 
-company_ids = call(
-    "res.company",
-    "search",
-    [[("name", "=", company_name)]],
-    {"limit": 1},
-)
+company_ids = call("res.company", "search", [[("name", "=", company_name)]], {"limit": 1})
 if company_ids:
     company_id = int(company_ids[0])
-    company = call(
-        "res.company", "read", [[company_id]], {"fields": ["id", "name", "currency_id"]}
-    )[0]
-    currency_value = company.get("currency_id")
-    current_currency_id = int(currency_value[0] if isinstance(currency_value, list) else currency_value)
-    if current_currency_id != sar_currency_id:
-        raise RuntimeError("Existing clean UAT company is not SAR; refusing to mutate its currency")
 else:
-    company_id = int(
-        call(
-            "res.company",
-            "create",
-            [{"name": company_name, "currency_id": sar_currency_id}],
-        )
-    )
-
-account_fields = fields("account.account")
+    company_id = int(call("res.company", "create", [{"name": company_name, "currency_id": sar_id}]))
+company = call("res.company", "read", [[company_id]], {"fields": ["currency_id"]})[0]
+company_currency = company.get("currency_id")
+company_currency_id = int(company_currency[0] if isinstance(company_currency, list) else company_currency)
+if company_currency_id != sar_id:
+    raise RuntimeError("UAT company is not SAR; refusing to continue")
 
 
-def company_domain() -> list:
-    if "company_id" in account_fields:
-        return [("company_id", "=", company_id)]
+def attach_account_to_company(account_id: int) -> None:
     if "company_ids" in account_fields:
-        return [("company_ids", "in", [company_id])]
-    return []
+        row = call("account.account", "read", [[account_id]], {"fields": ["company_ids"]})[0]
+        existing = {int(x) for x in row.get("company_ids") or []}
+        if company_id not in existing:
+            call("account.account", "write", [[account_id], {"company_ids": [(4, company_id)]}])
+    elif "company_id" in account_fields:
+        row = call("account.account", "read", [[account_id]], {"fields": ["company_id"]})[0]
+        current = row.get("company_id")
+        current_id = int(current[0] if isinstance(current, list) else current) if current else None
+        if current_id != company_id:
+            call("account.account", "write", [[account_id], {"company_id": company_id}])
 
 
 def find_or_create_account(code: str, name: str, account_type: str) -> int:
-    domain = [("code", "=", code), *company_domain()]
-    ids = call("account.account", "search", [domain], {"limit": 1})
-    if ids:
-        return int(ids[0])
+    global_ids = call("account.account", "search", [[("code", "=", code)]], {"limit": 1})
+    if global_ids:
+        account_id = int(global_ids[0])
+        attach_account_to_company(account_id)
+        call("account.account", "write", [[account_id], {"name": name, "account_type": account_type}])
+        return account_id
     vals = {"code": code, "name": name, "account_type": account_type}
-    if "company_id" in account_fields:
-        vals["company_id"] = company_id
-    elif "company_ids" in account_fields:
+    if "company_ids" in account_fields:
         vals["company_ids"] = [(6, 0, [company_id])]
+    elif "company_id" in account_fields:
+        vals["company_id"] = company_id
     return int(call("account.account", "create", [vals]))
 
 
-bank_account_id = find_or_create_account("101118", "UAT Bank", "asset_cash")
-bank_charges_account_id = find_or_create_account("601118", "UAT Bank Charges", "expense")
+bank_account_id = find_or_create_account(bank_code, "UAT Bank", "asset_cash")
+bank_charges_account_id = find_or_create_account(charges_code, "UAT Bank Charges", "expense")
 
-journal_fields = fields("account.journal")
-journal_domain = [("name", "=", "UAT Bank Journal")]
-if "company_id" in journal_fields:
-    journal_domain.append(("company_id", "=", company_id))
-journal_ids = call("account.journal", "search", [journal_domain], {"limit": 1})
+journal_fields = call("account.journal", "fields_get", [], {"attributes": ["type"]})
+journal_ids = call(
+    "account.journal",
+    "search",
+    [[("name", "=", "UAT Bank Journal"), ("company_id", "=", company_id)]],
+    {"limit": 1},
+)
 if journal_ids:
     journal_id = int(journal_ids[0])
-    vals = {"type": "bank"}
-    if "default_account_id" in journal_fields:
-        vals["default_account_id"] = bank_account_id
-    call("account.journal", "write", [[journal_id], vals])
 else:
-    vals = {"name": "UAT Bank Journal", "code": "UATB", "type": "bank"}
-    if "company_id" in journal_fields:
-        vals["company_id"] = company_id
+    vals = {"name": "UAT Bank Journal", "code": "U118", "type": "bank", "company_id": company_id}
     if "default_account_id" in journal_fields:
         vals["default_account_id"] = bank_account_id
     journal_id = int(call("account.journal", "create", [vals]))
@@ -144,9 +104,9 @@ result = {
     "company_id": company_id,
     "currency": "SAR",
     "journal_id": journal_id,
-    "bank_account_code": "101118",
+    "bank_account_code": bank_code,
     "bank_account_id": bank_account_id,
-    "bank_charges_account_code": "601118",
+    "bank_charges_account_code": charges_code,
     "bank_charges_account_id": bank_charges_account_id,
     "odoo_uid": int(uid),
     "data_class": "synthetic-non-production",

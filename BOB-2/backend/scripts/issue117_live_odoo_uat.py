@@ -63,6 +63,8 @@ odoo_login = required("ODOO_UAT_ADMIN_LOGIN")
 odoo_password = required("ODOO_UAT_ADMIN_PASSWORD")
 seed_email = required("GUARDIAN_SEED_EMAIL").lower()
 company_name = "BOB UAT 117 SAR"
+bank_code = "101118"
+charges_code = "601118"
 only_isolated_odoo(odoo_url, odoo_db)
 
 predeploy_main()
@@ -99,7 +101,7 @@ journal_id = int(journals[0]["id"])
 account_fields = erp.execute_kw(
     "account.account", "fields_get", [], {"attributes": ["type"]}
 )
-account_domain = [['code', 'in', ['101117', '601117']]]
+account_domain = [['code', 'in', [bank_code, charges_code]]]
 if "company_id" in account_fields:
     account_domain.append(['company_id', '=', company_id])
 elif "company_ids" in account_fields:
@@ -110,10 +112,10 @@ accounts = erp.execute_kw(
     {"fields": ["id", "code", "name"], "limit": 10},
 )
 by_code = {str(row.get("code")): row for row in accounts}
-if set(by_code) != {"101117", "601117"}:
+if set(by_code) != {bank_code, charges_code}:
     raise RuntimeError(f"UAT account fixture is incomplete: {sorted(by_code)}")
-bank_account_id = int(by_code["101117"]["id"])
-bank_charges_account_id = int(by_code["601117"]["id"])
+bank_account_id = int(by_code[bank_code]["id"])
+bank_charges_account_id = int(by_code[charges_code]["id"])
 
 session = SessionLocal()
 try:
@@ -123,14 +125,8 @@ try:
     organization_id = int(user.organization_id)
 
     with tenant_scope(organization_id):
-        secret_ref = encrypt_value(
-            json.dumps({"username": odoo_login, "password": odoo_password})
-        )
-        connection = (
-            session.query(ERPConnection)
-            .filter(ERPConnection.organization_id == organization_id)
-            .first()
-        )
+        secret_ref = encrypt_value(json.dumps({"username": odoo_login, "password": odoo_password}))
+        connection = session.query(ERPConnection).filter(ERPConnection.organization_id == organization_id).first()
         if connection is None:
             connection = ERPConnection(
                 organization_id=organization_id,
@@ -165,7 +161,7 @@ try:
             lines=[
                 BankPostingLineV2(
                     account_id=bank_charges_account_id,
-                    account_code="601117",
+                    account_code=charges_code,
                     account_name="UAT Bank Charges",
                     debit=Decimal("57.50"),
                     credit=Decimal("0.00"),
@@ -173,7 +169,7 @@ try:
                 ),
                 BankPostingLineV2(
                     account_id=bank_account_id,
-                    account_code="101117",
+                    account_code=bank_code,
                     account_name="UAT Bank",
                     debit=Decimal("0.00"),
                     credit=Decimal("57.50"),
@@ -183,12 +179,8 @@ try:
         )
 
         token = {"sub": user.email}
-        first = register_bank_reconciliation_entry_v2(
-            payload, simple_request(), db_session=session, token_payload=token
-        )
-        retry = register_bank_reconciliation_entry_v2(
-            payload, simple_request(), db_session=session, token_payload=token
-        )
+        first = register_bank_reconciliation_entry_v2(payload, simple_request(), db_session=session, token_payload=token)
+        retry = register_bank_reconciliation_entry_v2(payload, simple_request(), db_session=session, token_payload=token)
 
         if first.get("status") != "success":
             raise RuntimeError(f"First Write did not succeed: {first.get('status')}")
@@ -231,10 +223,7 @@ try:
                 AuditLog.organization_id == organization_id,
                 AuditLog.entity_type == "bank_reconciliation_posting",
                 AuditLog.entity_id == str(move_id),
-                AuditLog.action.in_([
-                    "odoo_bank_reconciliation_entry_created",
-                    "odoo_duplicate_prevented",
-                ]),
+                AuditLog.action.in_(["odoo_bank_reconciliation_entry_created", "odoo_duplicate_prevented"]),
             )
             .order_by(AuditLog.sequence_number.asc())
             .all()
@@ -244,9 +233,7 @@ try:
             raise RuntimeError("Missing First Write audit event")
         if "odoo_duplicate_prevented" not in actions:
             raise RuntimeError("Missing Retry duplicate-prevented audit event")
-        create_index = actions.index("odoo_bank_reconciliation_entry_created")
-        retry_index = actions.index("odoo_duplicate_prevented")
-        if create_index >= retry_index:
+        if actions.index("odoo_bank_reconciliation_entry_created") >= actions.index("odoo_duplicate_prevented"):
             raise RuntimeError("Audit event ordering is invalid")
 
         result = {
@@ -259,7 +246,9 @@ try:
             "company_id": company_id,
             "currency": "SAR",
             "journal_id": journal_id,
+            "bank_account_code": bank_code,
             "bank_account_id": bank_account_id,
+            "bank_charges_account_code": charges_code,
             "bank_charges_account_id": bank_charges_account_id,
             "first_write_status": first.get("status"),
             "retry_status": retry.get("status"),
@@ -270,12 +259,7 @@ try:
             "total_debit": str(total_debit),
             "total_credit": str(total_credit),
             "audit": [
-                {
-                    "sequence": int(row.sequence_number),
-                    "action": row.action,
-                    "event_hash": row.event_hash,
-                    "previous_hash": row.previous_hash,
-                }
+                {"sequence": int(row.sequence_number), "action": row.action, "event_hash": row.event_hash, "previous_hash": row.previous_hash}
                 for row in audits
             ],
         }

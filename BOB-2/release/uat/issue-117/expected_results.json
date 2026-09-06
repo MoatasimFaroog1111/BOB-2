@@ -1,0 +1,40 @@
+{
+  "scenario": "ISSUE-117-UAT-BANK-RECONCILIATION",
+  "currency": "SAR",
+  "period": "2026-08-01/2026-08-31",
+  "statement_count": 6,
+  "ledger_count": 6,
+  "matched_count": 5,
+  "statement_only_count": 1,
+  "ledger_only_count": 1,
+  "expected_statement_only": [
+    {
+      "reference": "STMT-003",
+      "description": "Bank service fee",
+      "amount": "-57.50",
+      "required_action": "human_review",
+      "proposed_account": "Bank Charges",
+      "proposed_entry": [
+        {"side": "debit", "account": "Bank Charges", "amount": "57.50"},
+        {"side": "credit", "account": "Bank", "amount": "57.50"}
+      ]
+    }
+  ],
+  "expected_ledger_only": [
+    {
+      "reference": "ODOO-006",
+      "description": "Unpresented cheque",
+      "amount": "-1250.00",
+      "required_action": "human_review_no_post"
+    }
+  ],
+  "approval_policy": {
+    "automatic_posting": false,
+    "posting_requires": "approval_status=approved and post_odoo_entries permission"
+  },
+  "retry_policy": {
+    "same_source_same_key": true,
+    "duplicate_result": "duplicate_prevented",
+    "expected_odoo_move_creations": 1
+  }
+}

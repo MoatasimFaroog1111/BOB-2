@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import xmlrpc.client
 
 
@@ -37,6 +38,32 @@ def call(model: str, method: str, args=None, kwargs=None):
 def fields(model: str) -> dict:
     return call(model, "fields_get", [], {"attributes": ["type", "required", "relation"]})
 
+
+# Install Accounting through Odoo's own module registry. This is more reliable
+# for the container image than relying on an entrypoint CLI install attempt.
+modules = call(
+    "ir.module.module",
+    "search_read",
+    [[("name", "=", "account")]],
+    {"fields": ["id", "name", "state"], "limit": 1},
+)
+if not modules:
+    raise RuntimeError("Odoo-UAT image does not expose the account module")
+if modules[0].get("state") != "installed":
+    call("ir.module.module", "button_immediate_install", [[int(modules[0]["id"])]] )
+    # Re-authenticate after registry reload and prove the model exists.
+    for _ in range(30):
+        time.sleep(1)
+        try:
+            uid = common.authenticate(db, login, password, {})
+            if uid:
+                models = xmlrpc.client.ServerProxy(f"{url}/xmlrpc/2/object", allow_none=True)
+                fields("account.account")
+                break
+        except Exception:
+            continue
+    else:
+        raise RuntimeError("Accounting module installation did not expose account.account")
 
 company_ids = call("res.company", "search", [[]], {"limit": 1})
 if not company_ids:

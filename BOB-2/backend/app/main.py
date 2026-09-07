@@ -53,17 +53,32 @@ def _is_railway_runtime() -> bool:
     return any(os.getenv(name, "").strip() for name in _RAILWAY_ENVIRONMENT_VARIABLES)
 
 
-def _validate_startup_security() -> None:
-    """Validate production settings while respecting Railway's managed edge.
+def _railway_environment_name() -> str:
+    """Return Railway's explicit environment name when available."""
+    return os.getenv("RAILWAY_ENVIRONMENT_NAME", "").strip().lower()
 
-    The ordinary production profile remains fully fail-closed. On Railway only
-    controls supplied by the platform edge may be absent. Every application-level
-    validation error still aborts startup.
+
+def _railway_requires_production_profile() -> bool:
+    """Only Railway production environments must use the production app profile.
+
+    Staging environments intentionally keep APP_ENV=staging so test-only bootstrap
+    and private HTTP service-to-service traffic remain available without weakening
+    the production runtime policy.
     """
-    if _is_railway_runtime() and not settings.is_production:
+    return _railway_environment_name() in {"production", "prod"}
+
+
+def _validate_startup_security() -> None:
+    """Validate runtime settings while respecting Railway environment boundaries.
+
+    Railway production remains fail-closed and requires APP_ENV=production.
+    Railway staging may use APP_ENV=staging; its ERP egress policy still validates
+    explicit hosts, ports and private CIDRs independently.
+    """
+    if _is_railway_runtime() and _railway_requires_production_profile() and not settings.is_production:
         raise ValueError(
-            "Railway runtime requires APP_ENV=production; refusing to start "
-            "with development security defaults."
+            "Railway production requires APP_ENV=production; refusing to start "
+            "with non-production security defaults."
         )
 
     try:

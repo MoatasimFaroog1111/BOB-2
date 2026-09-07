@@ -1,0 +1,7 @@
+Date,Description,Amount,Reference
+2026-08-01,Customer receipt ACME,12000.00,ODOO-001
+2026-08-02,Supplier payment ALPHA,-5750.00,ODOO-002
+2026-08-05,STC Bill,-460.00,ODOO-003
+2026-08-05,Internal transfer in,25000.00,ODOO-004
+2026-08-06,Petty Cash-Moatasim,-850.00,ODOO-005
+2026-08-07,Unpresented cheque,-1250.00,ODOO-006

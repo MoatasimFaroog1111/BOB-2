@@ -1,0 +1,1 @@
+# stdlib-only UAT helper; file exists so Railway detects Python runtime

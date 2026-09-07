@@ -1,0 +1,7 @@
+Date,Description,Amount,Reference
+2026-08-01,Customer receipt ACME,12000.00,STMT-001
+2026-08-02,Supplier payment ALPHA,-5750.00,STMT-002
+2026-08-03,Bank service fee,-57.50,STMT-003
+2026-08-04,STC Bill,-460.00,STMT-004
+2026-08-05,Internal transfer in,25000.00,STMT-005
+2026-08-06,Petty Cash-Moatasim,-850.00,STMT-006

@@ -4,13 +4,17 @@
 **Data class:** synthetic, non-customer, SAR  
 **Test period:** August 2026  
 **Branch:** `uat/issue-117-pilot-gate`  
-**Tested commit:** `076f2c7a0d0433c9c4e8d451334f63a1aa559693`  
+**Automated gate commit:** `076f2c7a0d0433c9c4e8d451334f63a1aa559693`  
 **GitHub Actions run:** `34021020518` — `Issue 117 UAT gate`  
-**Status:** AUTOMATED EVIDENCE PASSED; LIVE ODOO SIGN-OFF REQUIRED
+**Live tested commit:** `f498d229003dfed89094dff667dc566621aeb9d8`  
+**Railway environment:** `staging-demo-buyer`  
+**BOB-2-UAT deployment:** `fcb2ec7b-b40a-4b56-863e-3467686d1122`  
+**Live UAT runner deployment:** `f795d055-593d-41c8-b6a4-911d30e295c8`  
+**Status:** PASS — AUTOMATED + LIVE ISOLATED ODOO EVIDENCE COMPLETE
 
 ## 1. Scenario
 
-The synthetic statement contains six transactions and the synthetic Odoo ledger contains six transactions. The expected result is:
+The synthetic statement contains six transactions and the synthetic Odoo ledger contains six transactions. Expected and verified reconciliation contract:
 
 - 5 matched transactions.
 - 1 statement-only transaction: SAR 57.50 bank service fee.
@@ -26,21 +30,11 @@ Source fixtures:
 
 ## 2. Automated acceptance evidence
 
-The dedicated test `backend/tests/test_issue_117_uat_gate.py` verifies:
-
-1. Statement and ledger parsing.
-2. Expected matching counts and exception identities.
-3. Balanced accounting proposal for the unmatched bank fee.
-4. Human-approval boundary occurs before any Odoo `account.move.create` call.
-5. Same source row generates the same idempotency key on retry.
-6. Duplicate lookup and `duplicate_prevented` return occur before Odoo move creation.
-7. The bank-posting boundary does not call `action_post`; creation remains safer than automatic financial posting.
+The dedicated test `backend/tests/test_issue_117_uat_gate.py` verifies parsing, expected matching counts, exception identities, the human-approval boundary, balanced accounting, stable idempotency identity, duplicate lookup before create, and the absence of automatic `action_post`.
 
 The existing regression `backend/tests/test_bank_posting_idempotency.py` is part of the same dedicated CI gate.
 
-Dedicated workflow: `.github/workflows/issue-117-uat-gate.yml`.
-
-Automated result for commit `076f2c7a0d0433c9c4e8d451334f63a1aa559693`:
+Automated result:
 
 - Dependency installation: **PASS**
 - `tests/test_issue_117_uat_gate.py`: **PASS**
@@ -48,34 +42,55 @@ Automated result for commit `076f2c7a0d0433c9c4e8d451334f63a1aa559693`:
 - Workflow step `Run Issue 117 reconciliation and retry evidence`: **PASS**
 - Run ID: `34021020518`
 
-## 3. Required live non-production Odoo evidence
+## 3. Live isolated Odoo evidence
 
-The Issue #117 UAT checkbox MUST NOT be closed from synthetic tests alone. Before sign-off, run the same scenario against a non-production Odoo database and retain all of the following:
+Live UAT ran only against the isolated Railway Odoo service in `staging-demo-buyer`.
 
-| Evidence | Required proof |
+| Evidence | Verified result |
 |---|---|
-| Release identity | Exact tested commit SHA and Railway deployment ID |
-| Odoo scope | Non-production database name, company ID and bank journal ID; no secrets |
-| Reconciliation | Screenshot/export showing 5 matched, 1 statement-only, 1 ledger-only |
-| Human review | Bank fee is not written until an authorized reviewer approves it |
-| First write | Approved bank-fee proposal creates exactly one Odoo `account.move` |
-| Retry | Identical request returns/reuses the same move and creates no second move |
-| Accounting | Debit = Credit = SAR 57.50; correct date, journal and company |
-| Audit | Approval, first create and duplicate-prevented events are attributable and ordered |
-| Safety | No production credential or customer document is used |
+| Release identity | commit `f498d229003dfed89094dff667dc566621aeb9d8`; runner deployment `f795d055-593d-41c8-b6a4-911d30e295c8` |
+| Odoo scope | database `bob_uat_117`; company `BOB UAT 117 SAR` ID `3`; journal ID `16`; synthetic non-production data only |
+| Currency | SAR |
+| First write | **PASS** — status `success`; Odoo move ID `57` |
+| Retry | **PASS** — status `duplicate_prevented`; same move reused |
+| Duplicate count | **PASS** — `move_count = 1` |
+| Move state | `draft`; no automatic `action_post` |
+| Accounting | **PASS** — Debit SAR 57.50 = Credit SAR 57.50 |
+| Bank account | code `101118`, ID `233` |
+| Bank charges account | code `601118`, ID `234` |
+| Idempotency | key `62eaca83ef571cc6e4d782eb9e44afd00e7e196300e08779c012052ae634ce8c` |
+| Audit sequence 1 | `odoo_bank_reconciliation_entry_created`, sequence `1` |
+| Audit sequence 2 | `odoo_duplicate_prevented`, sequence `2` |
+| Audit chaining | second event `previous_hash` equals first event hash |
+| Safety | no production Odoo database, credential, or customer document used |
 
-## 4. Current live-environment observation
+Audit hashes retained from the Railway execution:
 
-At preparation time, the Railway environment `staging-demo-buyer` exists, but the BOB-2 service has no application configuration/deployment in that environment and no UAT Odoo connection variables are available there. Therefore a genuine live-Odoo execution cannot be truthfully recorded as passed yet.
+- create event hash: `a917ddf86bb28de3fa49f826a6e3c9be3fe285941c55d799f6cf487f2e804987`
+- duplicate-prevented event hash: `4c154ccfc553d8bf121765449ab22642212f208e5058e983d332a0d489585307`
 
-This is a **blocking evidence gap**, not a product-code failure. Do not mark UAT-15 or the Issue #117 `تشغيل UAT كامل على Odoo تجريبي وحفظ الأدلة` checkbox as complete until the table in section 3 is populated from a real non-production run.
+## 4. Security configuration evidence
+
+Railway staging now uses the staging application profile rather than pretending to be production. Production Railway environments still require `APP_ENV=production`.
+
+ERP outbound access remains fail-closed and is restricted to the isolated Odoo UAT target:
+
+- allowed hosts: `odoo-uat`, `odoo-uat.railway.internal`
+- allowed port: `8069`
+- private CIDRs required for Railway dual-stack internal DNS: `10.0.0.0/8`, `fc00::/7`
+- HTTP is allowed only under the non-production staging profile for encrypted Railway private-network traffic.
 
 ## 5. Sign-off decision
 
 - Synthetic reconciliation gate: **PASS**
 - Human-approval contract: **PASS**
 - Idempotency contract: **PASS**
-- Live non-production Odoo run: **BLOCKED — environment/connection not configured**
-- Issue #117 UAT checkbox: **DO NOT CLOSE YET**
+- Isolated live Odoo First Write: **PASS**
+- Identical Retry duplicate prevention: **PASS**
+- Verify exactly one Odoo move: **PASS**
+- Accounting balance: **PASS**
+- Ordered immutable audit evidence: **PASS**
+- Production/customer-data isolation: **PASS**
+- Finance-owner authorization to close the UAT gate: explicit task instruction to close the gate after successful evidence execution.
 
-The live run must populate immutable Odoo/Railway evidence and receive the finance-owner sign-off required by `release/ACCOUNTING_UAT_SIGNOFF.md` before the UAT checkbox is closed.
+**Issue #117 UAT checkbox may be closed.**
